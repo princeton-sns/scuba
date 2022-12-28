@@ -9,6 +9,7 @@ use eventsource_client::SSE;
 use urlencoding::encode;
 use futures::TryStreamExt;
 use reqwest::Result;
+use reqwest::Response;
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -24,7 +25,6 @@ struct ServerComm<'a> {
   idkey   : &'a str,
   client  : reqwest::Client,
   //event emitter
-  test_toggle: bool,
   init_success: bool,
 }
 
@@ -34,7 +34,7 @@ impl<'a> ServerComm<'a> {
     port_arg: Option<&'a str>,
     //crypto: &'a OlmWrapper,
     // emitter
-    test_arg: Option<bool>,
+    idkey_arg: &'a str,
   ) -> Self {
     let ip_addr = ip_arg.unwrap_or(IP_ADDR);
     let port_num = port_arg.unwrap_or(PORT_NUM);
@@ -43,9 +43,8 @@ impl<'a> ServerComm<'a> {
       port_num: port_num,
       base_url: Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join("")).expect(""),
       //crypto: crypto,
-      idkey   : "abcd", //crypto.get_idkey(),
+      idkey   : idkey_arg, //crypto.get_idkey(),
       client  : reqwest::Client::new(),
-      test_toggle: test_arg.unwrap_or(false),
       init_success: false,
     }
   }
@@ -55,20 +54,14 @@ impl<'a> ServerComm<'a> {
     port_arg: Option<&'a str>,
     //crypto: &'a OlmWrapper,
     // emitter
-    test_arg: Option<bool>,
+    idkey_arg: &'a str,
   ) -> Result<ServerComm<'a>> {
-    let mut sc = ServerComm::new(ip_arg, port_arg, test_arg);
-    let listener = ClientBuilder::for_url(sc.base_url.as_str()).expect("")
+    let sc = ServerComm::new(ip_arg, port_arg, idkey_arg);
+    let listener = ClientBuilder::for_url(sc.base_url.join("/events").expect("").as_str()).expect("")
         .header("Authorization", &vec!["Bearer", sc.idkey].join(" ")).expect("")
         .build();
-    match sc.client.get(sc.base_url.join("/events").expect("").as_str())
-        .header("Authorization", vec!["Bearer", sc.idkey].join(" "))
-        .send().await {
-      Ok(response) => sc.init_success = true,
-      Err(e) => println!("{:?}", e),
-    }
 
-    let _ = Box::pin(listener.stream())
+    let mut stream = listener.stream()
         .map_ok(async move |event| match &event {
           SSE::Comment(comment) => println!("Got comment: {:?}", comment),
           SSE::Event(event) => {
@@ -108,58 +101,82 @@ impl<'a> ServerComm<'a> {
           },
         })
         .map_err(|e| println!("Error streaming events: {:?}", e));
-    Ok(sc)
 
+    while let Ok(Some(_)) = stream.try_next().await {
+      println!("waiting...");
+    }
+
+    Ok(sc)
   }
 
-  async fn send_message(&self, batch: HashMap::<&'a str, &'a str>) {
-    match self.client.post(self.base_url.join("/message").expect("").as_str())
+  async fn send_message(&self, batch: HashMap::<&'a str, &'a str>) -> Result<Response> {
+    self.client.post(self.base_url.join("/message").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", self.idkey].join(" "))
         .json(&batch)
         .send()
-        .await {
-      Ok(response) => println!("{:?}", response),
-      Err(e) => println!("{:?}", e),
-    }
+        .await
   }
 
-  async fn get_otkey_from_server(&self, idkey: &'a str) {
+  async fn get_otkey_from_server(&self, idkey: &'a str) -> Result<Response> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
     url.set_query(Some(&vec!["device_id", &encode(idkey)].join("=")));
-    match self.client.get(url.as_str())
+    self.client.get(url.as_str())
         .send()
         // TODO as JSON
-        .await {
-      Ok(response) => println!("{:?}", response), // TODO return otkey
-      Err(e) => println!("{:?}", e),
-    }
+        .await
+    //  Ok(response) => println!("{:?}", response), // TODO return otkey
+    //  Err(e) => println!("{:?}", e),
+    //}
   }
 }
 
 #[cfg(test)]
 mod tests {
   use crate::ServerComm;
-  //use std::collections::HashMap;
+  use std::collections::HashMap;
 
   #[actix_rt::test]
   async fn test_init_default() {
-    match ServerComm::init(None, None, None).await {
+    match ServerComm::init(None, None, "abcd").await {
       Ok(server_comm) => {
-        println!("server_comm: {:?}", server_comm);
         assert_eq!(server_comm.init_success, true);
       },
       Err(e) => println!("{:?}", e),
     }
   }
 
-  //#[test]
-  //fn test_send_simple() {
-  //  let mut batch = HashMap::<&str, &str>::new();
-  //  let payload = "hello from <abcd>";
-  //  batch.insert("abcd", payload);
-  //  println!("payload: {:?}", payload);
-  //  let server_comm = ServerComm::init(None, None, None);
-  //  server_comm.send_message(batch);
-  //}
+  #[actix_rt::test]
+  async fn test_send_simple() {
+    let mut batch = HashMap::<&str, &str>::new();
+    let payload = "hello from <abcd>";
+    batch.insert("abcd", payload);
+    match ServerComm::init(None, None, "abcd").await {
+      Ok(server_comm) => {
+        match server_comm.send_message(batch).await {
+          Ok(res) => println!("OK: {:?}", res),
+          Err(e) => println!("ERR: {:?}", e),
+        }
+      },
+      Err(e) => println!("{:?}", e),
+    }
+  }
+
+  #[actix_rt::test]
+  async fn test_get_otkey() {
+    match ServerComm::init(None, None, "abcd").await {
+      Ok(sc1) => {
+        match ServerComm::init(None, None, "efgh").await {
+          Ok(sc2) => {
+            match sc2.get_otkey_from_server(sc1.idkey).await {
+              Ok(res) => println!("OK: {:?}", res),
+              Err(e) => println!("ERR: {:?}", e),
+            }
+          },
+          Err(e2) => println!("e2: {:?}", e2),
+        }
+      },
+      Err(e1) => println!("e1: {:?}", e1),
+    }
+  }
 }

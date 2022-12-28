@@ -8,6 +8,7 @@ use eventsource_client::ClientBuilder;
 use eventsource_client::SSE;
 use urlencoding::encode;
 use futures::TryStreamExt;
+use reqwest::Result;
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -24,6 +25,7 @@ struct ServerComm<'a> {
   client  : reqwest::Client,
   //event emitter
   test_toggle: bool,
+  init_success: bool,
 }
 
 impl<'a> ServerComm<'a> {
@@ -44,23 +46,27 @@ impl<'a> ServerComm<'a> {
       idkey   : "abcd", //crypto.get_idkey(),
       client  : reqwest::Client::new(),
       test_toggle: test_arg.unwrap_or(false),
+      init_success: false,
     }
   }
 
-  fn init(
+  async fn init(
     ip_arg: Option<&'a str>,
     port_arg: Option<&'a str>,
     //crypto: &'a OlmWrapper,
     // emitter
     test_arg: Option<bool>,
-  ) -> Self {
-    let sc = ServerComm::new(ip_arg, port_arg, test_arg);
+  ) -> Result<ServerComm<'a>> {
+    let mut sc = ServerComm::new(ip_arg, port_arg, test_arg);
     let listener = ClientBuilder::for_url(sc.base_url.as_str()).expect("")
         .header("Authorization", &vec!["Bearer", sc.idkey].join(" ")).expect("")
         .build();
-    let _ = sc.client.get(sc.base_url.join("/events").expect("").as_str())
+    match sc.client.get(sc.base_url.join("/events").expect("").as_str())
         .header("Authorization", vec!["Bearer", sc.idkey].join(" "))
-        .send();
+        .send().await {
+      Ok(response) => sc.init_success = true,
+      Err(e) => println!("{:?}", e),
+    }
 
     let _ = Box::pin(listener.stream())
         .map_ok(async move |event| match &event {
@@ -102,7 +108,7 @@ impl<'a> ServerComm<'a> {
           },
         })
         .map_err(|e| println!("Error streaming events: {:?}", e));
-    sc
+    Ok(sc)
 
   }
 
@@ -136,10 +142,15 @@ mod tests {
   use crate::ServerComm;
   //use std::collections::HashMap;
 
-  #[test]
-  fn test_init_default() {
-    let server_comm = ServerComm::init(None, None, None);
-    println!("server_comm: {:?}", server_comm);
+  #[actix_rt::test]
+  async fn test_init_default() {
+    match ServerComm::init(None, None, None).await {
+      Ok(server_comm) => {
+        println!("server_comm: {:?}", server_comm);
+        assert_eq!(server_comm.init_success, true);
+      },
+      Err(e) => println!("{:?}", e),
+    }
   }
 
   //#[test]

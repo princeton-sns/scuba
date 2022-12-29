@@ -17,3 +17,7 @@ tokio = { version = "1.23.0", features = ["macros"] }
 [lib]
 name = "server_comm"
 path = "lib.rs"
+
+[[bin]]
+name = "server_comm"
+path = "main.rs"

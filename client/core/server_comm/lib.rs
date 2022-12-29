@@ -10,6 +10,7 @@ use urlencoding::encode;
 use futures::TryStreamExt;
 use reqwest::Result;
 use reqwest::Response;
+//use async_std::task;
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -102,9 +103,12 @@ impl<'a> ServerComm<'a> {
         })
         .map_err(|e| println!("Error streaming events: {:?}", e));
 
+    //let stream_task = task::spawn(async move {
     while let Ok(Some(_)) = stream.try_next().await {
       println!("waiting...");
     }
+    //});
+    //task::block_on(stream_task);
 
     Ok(sc)
   }
@@ -136,7 +140,7 @@ mod tests {
   use crate::ServerComm;
   use std::collections::HashMap;
 
-  #[actix_rt::test]
+  #[tokio::test]
   async fn test_init_default() {
     match ServerComm::init(None, None, "abcd").await {
       Ok(server_comm) => {
@@ -146,7 +150,7 @@ mod tests {
     }
   }
 
-  #[actix_rt::test]
+  #[tokio::test]
   async fn test_send_simple() {
     let mut batch = HashMap::<&str, &str>::new();
     let payload = "hello from <abcd>";
@@ -162,7 +166,7 @@ mod tests {
     }
   }
 
-  #[actix_rt::test]
+  #[tokio::test]
   async fn test_get_otkey() {
     match ServerComm::init(None, None, "abcd").await {
       Ok(sc1) => {

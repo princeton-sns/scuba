@@ -11,8 +11,8 @@ eventsource-client = "0.11.0"
 reqwest = { version = "0.11.13", features = ["json"] }
 urlencoding = "2.1.2"
 futures = "0.3.25"
-async-std = "1.12.0"
 tokio = { version = "1.23.0", features = ["macros"] }
+serde = { version = "1.0.152", features = ["derive"] }
 
 [lib]
 name = "server_comm"

@@ -815,6 +815,7 @@ dependencies = [
  "futures",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
  "url",
  "urlencoding",

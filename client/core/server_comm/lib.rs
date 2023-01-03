@@ -7,7 +7,7 @@ use eventsource_client::{Client, ClientBuilder, SSE};
 use urlencoding::encode;
 use futures::{Stream, task::{Context, Poll}};
 use reqwest::{Result, Response};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -22,41 +22,54 @@ pub enum Event {
 
 #[derive(Debug, Serialize)]
 pub struct Batch<'a> {
-  messages: Vec<Message<'a>>,
+  batch: Vec<OutgoingMessage<'a>>,
 }
 
 impl<'a> Batch<'a> {
   pub fn new() -> Self {
     Self {
-      messages: Vec::<Message>::new(),
+      batch: Vec::<OutgoingMessage>::new(),
     }
   }
 
-  pub fn from_vec(messages: Vec<Message<'a>>) -> Self {
-    Self { messages }
+  pub fn from_vec(batch: Vec<OutgoingMessage<'a>>) -> Self {
+    Self { batch }
   }
 
-  pub fn push(&mut self, message: Message<'a>) {
-    self.messages.push(message);
+  pub fn push(&mut self, message: OutgoingMessage<'a>) {
+    self.batch.push(message);
   }
 
-  pub fn pop(&mut self) -> Option<Message<'a>> {
-    self.messages.pop()
+  pub fn pop(&mut self) -> Option<OutgoingMessage<'a>> {
+    self.batch.pop()
   }
 }
 
 #[derive(Debug, Serialize)]
-pub struct Message<'a> {
-  device_id: &'a str,
+pub struct OutgoingMessage<'a> {
+  deviceId: &'a str,
   payload: &'a str,
 }
 
-impl<'a> Message<'a> {
-  pub fn new(device_id: &'a str, payload: &'a str) -> Self {
+impl<'a> OutgoingMessage<'a> {
+  pub fn new(deviceId: &'a str, payload: &'a str) -> Self {
     Self {
-      device_id,
+      deviceId,
       payload,
     }
+  }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IncomingMessage<'a> {
+  sender: &'a str,
+  encPayload: &'a str,
+  seqID: u64,
+}
+
+impl<'a> IncomingMessage<'a> {
+  pub fn from_str(msg: &'a str) -> Self {
+    serde_json::from_str(msg).unwrap()
   }
 }
 
@@ -97,7 +110,6 @@ impl<'a> ServerComm<'a> {
   }
 
   pub async fn send_message(&self, batch: Batch<'a>) -> Result<Response> {
-    println!("trying to send...");
     self.client.post(self.base_url.join("/message").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", self.idkey].join(" "))
@@ -108,7 +120,7 @@ impl<'a> ServerComm<'a> {
 
   pub async fn get_otkey_from_server(&self, idkey: &'a str) -> Result<Response> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
-    url.set_query(Some(&vec!["device_id", &encode(idkey)].join("=")));
+    url.set_query(Some(&vec!["deviceId", &encode(idkey)].join("=")));
     self.client.get(url.as_str())
         .send()
         .await
@@ -151,8 +163,7 @@ impl<'a> Stream for ServerComm<'a> {
           match event.event_type.as_str() {
             "otkey" => Poll::Ready(Some(Ok(Event::Otkey))),
             "msg" => {
-              let msg = String::from(event.data); // TODO from JSON
-              println!("Received msg: {:?}", msg);
+              let msg = String::from(event.data);
               Poll::Ready(Some(Ok(Event::Msg(msg))))
             },
             _ => Poll::Pending,
@@ -165,7 +176,7 @@ impl<'a> Stream for ServerComm<'a> {
 
 #[cfg(test)]
 mod tests {
-  use crate::{Event, ServerComm, Batch, Message};
+  use crate::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage};
   use futures::TryStreamExt;
 
   #[tokio::test]
@@ -177,8 +188,8 @@ mod tests {
   async fn test_send_simple() {
     let idkey = "abcd";
     let payload = "hello";
-    let batch = Batch::from_vec(vec![Message::new(idkey, payload)]);
-    println!("batch: {:?}", batch);
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
+    //println!("batch: {:?}", batch);
     let server_comm = ServerComm::new(None, None, idkey);
     match server_comm.send_message(batch).await {
       Ok(res) => println!("Send succeeded: {:?}", res),
@@ -190,30 +201,26 @@ mod tests {
   async fn test_init_and_send() {
     let idkey = "abcd";
     let payload = "hello";
-    let batch = Batch::from_vec(vec![Message::new(idkey, payload)]);
-    println!("batch: {:?}", batch);
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
+    //println!("batch: {:?}", batch);
+    //println!("string batch: {:?}", serde_json::to_string(&batch).unwrap());
     let mut server_comm = ServerComm::new(None, None, idkey);
-    //assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
-    match server_comm.try_next().await {
-      Ok(Some(Event::Otkey)) => println!("Got otkey back"),
-      _ => println!("Case 1 failed"),
-    }
-    println!("Proceeding to Case 2");
+    assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
     match server_comm.send_message(batch).await {
-      Ok(res) => println!("Send succeeded: {:?}", res),
-      //{
-        //println!("Send succeeded: {:?}", res);
-        //match server_comm.try_next().await {
-        //  Ok(Some(Event::Msg(msg))) => {
-        //    println!("SUCCESS got msg event");
-        //    println!("msg: {:?}", msg);
-        //    assert_eq!(msg, payload);
-        //  },
-        //  Ok(Some(Event::Otkey)) => println!("FAIL got otkey event"),
-        //  Ok(None) => println!("FAIL got none"),
-        //  Err(err) => println!("FAIL got error: {:?}", err),
-        //}
-      //},
+      Ok(res) => {
+        match server_comm.try_next().await {
+          Ok(Some(Event::Msg(msg_string))) => {
+            //println!("msg: {:?}", msg_string);
+            let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
+            //println!("msg: {:?}", msg);
+            assert_eq!(msg.sender, idkey);
+            assert_eq!(msg.encPayload, payload);
+          },
+          Ok(Some(Event::Otkey)) => println!("FAIL got otkey event"),
+          Ok(None) => println!("FAIL got none"),
+          Err(err) => println!("FAIL got error: {:?}", err),
+        }
+      },
       Err(err) => println!("Send failed: {:?}", err),
     }
   }

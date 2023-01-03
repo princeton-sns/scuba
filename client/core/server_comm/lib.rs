@@ -45,12 +45,14 @@ impl<'a> Batch<'a> {
   }
 }
 
+#[allow(non_snake_case)]
 #[derive(Debug, Serialize)]
 pub struct OutgoingMessage<'a> {
   deviceId: &'a str,
   payload: &'a str,
 }
 
+#[allow(non_snake_case)]
 impl<'a> OutgoingMessage<'a> {
   pub fn new(deviceId: &'a str, payload: &'a str) -> Self {
     Self {
@@ -60,6 +62,7 @@ impl<'a> OutgoingMessage<'a> {
   }
 }
 
+#[allow(non_snake_case)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IncomingMessage<'a> {
   sender: &'a str,
@@ -184,18 +187,18 @@ mod tests {
     assert_eq!(ServerComm::new(None, None, "abcd").try_next().await, Ok(Some(Event::Otkey)));
   }
 
-  #[tokio::test]
-  async fn test_send_simple() {
-    let idkey = "abcd";
-    let payload = "hello";
-    let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
-    //println!("batch: {:?}", batch);
-    let server_comm = ServerComm::new(None, None, idkey);
-    match server_comm.send_message(batch).await {
-      Ok(res) => println!("Send succeeded: {:?}", res),
-      Err(err) => println!("Send failed: {:?}", err),
-    }
-  }
+  //#[tokio::test]
+  //async fn test_send_simple() {
+  //  let idkey = "abcd";
+  //  let payload = "hello";
+  //  let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
+  //  //println!("batch: {:?}", batch);
+  //  let server_comm = ServerComm::new(None, None, idkey);
+  //  match server_comm.send_message(batch).await {
+  //    Ok(res) => println!("Send succeeded: {:?}", res),
+  //    Err(err) => println!("Send failed: {:?}", err),
+  //  }
+  //}
 
   #[tokio::test]
   async fn test_init_and_send() {
@@ -207,7 +210,7 @@ mod tests {
     let mut server_comm = ServerComm::new(None, None, idkey);
     assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
     match server_comm.send_message(batch).await {
-      Ok(res) => {
+      Ok(_) => {
         match server_comm.try_next().await {
           Ok(Some(Event::Msg(msg_string))) => {
             //println!("msg: {:?}", msg_string);

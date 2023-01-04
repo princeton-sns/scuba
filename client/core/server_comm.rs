@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 //use crate::crypto::OlmWrapper;
 use std::pin::Pin;
 use url::Url;
@@ -87,7 +85,7 @@ impl ToDelete {
   }
 }
 
-struct ServerComm<'a> {
+pub struct ServerComm<'a> {
   base_url: Url,
   //crypto  : &'a OlmWrapper,
   idkey   : &'a str,
@@ -190,16 +188,16 @@ impl<'a> Stream for ServerComm<'a> {
 
 #[cfg(test)]
 mod tests {
-  use crate::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
+  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
 
   #[tokio::test]
-  async fn test_init_default() {
+  async fn test_sc_init() {
     assert_eq!(ServerComm::new(None, None, "abcd").try_next().await, Ok(Some(Event::Otkey)));
   }
 
   #[tokio::test]
-  async fn test_send_message() {
+  async fn test_sc_send_message() {
     let idkey = "efgh";
     let payload = "hello";
     let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
@@ -227,7 +225,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_delete_messages() {
+  async fn test_sc_delete_messages() {
     let idkey = "ijkl";
     let payload = "hello";
     let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);

@@ -1,5 +1,5 @@
 [package]
-name = "server-comm"
+name = "noise-core"
 version = "0.1.0"
 edition = "2021"
 
@@ -16,5 +16,5 @@ serde = { version = "1.0.152", features = ["derive"] }
 serde_json = { version = "1.0.91", features = ["std"] }
 
 [lib]
-name = "server_comm"
+name = "noise_core"
 path = "lib.rs"

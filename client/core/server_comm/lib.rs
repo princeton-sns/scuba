@@ -45,34 +45,45 @@ impl<'a> Batch<'a> {
   }
 }
 
-#[allow(non_snake_case)]
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutgoingMessage<'a> {
-  deviceId: &'a str,
+  device_id: &'a str,
   payload: &'a str,
 }
 
-#[allow(non_snake_case)]
 impl<'a> OutgoingMessage<'a> {
-  pub fn new(deviceId: &'a str, payload: &'a str) -> Self {
+  pub fn new(device_id: &'a str, payload: &'a str) -> Self {
     Self {
-      deviceId,
+      device_id,
       payload,
     }
   }
 }
 
-#[allow(non_snake_case)]
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IncomingMessage<'a> {
   sender: &'a str,
-  encPayload: &'a str,
-  seqID: u64,
+  enc_payload: &'a str,
+  seq_id: u64,
 }
 
 impl<'a> IncomingMessage<'a> {
   pub fn from_str(msg: &'a str) -> Self {
     serde_json::from_str(msg).unwrap()
+  }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToDelete {
+  seq_id: u64,
+}
+
+impl ToDelete {
+  fn from_seq_id(seq_id: u64) -> Self {
+    Self { seq_id }
   }
 }
 
@@ -112,7 +123,7 @@ impl<'a> ServerComm<'a> {
     }
   }
 
-  pub async fn send_message(&self, batch: Batch<'a>) -> Result<Response> {
+  pub async fn send_message(&self, batch: &'a Batch<'a>) -> Result<Response> {
     self.client.post(self.base_url.join("/message").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", self.idkey].join(" "))
@@ -123,7 +134,7 @@ impl<'a> ServerComm<'a> {
 
   pub async fn get_otkey_from_server(&self, idkey: &'a str) -> Result<Response> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
-    url.set_query(Some(&vec!["deviceId", &encode(idkey)].join("=")));
+    url.set_query(Some(&vec!["device_id", &encode(idkey)].join("="))); // FIXME deviceId?
     self.client.get(url.as_str())
         .send()
         .await
@@ -132,11 +143,11 @@ impl<'a> ServerComm<'a> {
         // TODO return otkey
   }
 
-  async fn delete_messages_from_server(&self, msg: String) -> Result<Response> {
+  async fn delete_messages_from_server(&self, to_delete: &'a ToDelete) -> Result<Response> {
     self.client.delete(self.base_url.join("/self/messages").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", self.idkey].join(" "))
-        .body(msg) // TODO .seqID
+        .json(&to_delete)
         .send()
         .await
   }
@@ -179,7 +190,7 @@ impl<'a> Stream for ServerComm<'a> {
 
 #[cfg(test)]
 mod tests {
-  use crate::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage};
+  use crate::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
 
   #[tokio::test]
@@ -187,29 +198,16 @@ mod tests {
     assert_eq!(ServerComm::new(None, None, "abcd").try_next().await, Ok(Some(Event::Otkey)));
   }
 
-  //#[tokio::test]
-  //async fn test_send_simple() {
-  //  let idkey = "abcd";
-  //  let payload = "hello";
-  //  let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
-  //  //println!("batch: {:?}", batch);
-  //  let server_comm = ServerComm::new(None, None, idkey);
-  //  match server_comm.send_message(batch).await {
-  //    Ok(res) => println!("Send succeeded: {:?}", res),
-  //    Err(err) => println!("Send failed: {:?}", err),
-  //  }
-  //}
-
   #[tokio::test]
-  async fn test_init_and_send() {
-    let idkey = "abcd";
+  async fn test_send_message() {
+    let idkey = "efgh";
     let payload = "hello";
     let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
     //println!("batch: {:?}", batch);
     //println!("string batch: {:?}", serde_json::to_string(&batch).unwrap());
     let mut server_comm = ServerComm::new(None, None, idkey);
     assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
-    match server_comm.send_message(batch).await {
+    match server_comm.send_message(&batch).await {
       Ok(_) => {
         match server_comm.try_next().await {
           Ok(Some(Event::Msg(msg_string))) => {
@@ -217,7 +215,39 @@ mod tests {
             let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
             //println!("msg: {:?}", msg);
             assert_eq!(msg.sender, idkey);
-            assert_eq!(msg.encPayload, payload);
+            assert_eq!(msg.enc_payload, payload);
+          },
+          Ok(Some(Event::Otkey)) => println!("FAIL got otkey event"),
+          Ok(None) => println!("FAIL got none"),
+          Err(err) => println!("FAIL got error: {:?}", err),
+        }
+      },
+      Err(err) => println!("Send failed: {:?}", err),
+    }
+  }
+
+  #[tokio::test]
+  async fn test_delete_messages() {
+    let idkey = "ijkl";
+    let payload = "hello";
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
+    let mut server_comm = ServerComm::new(None, None, idkey);
+    assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
+    match server_comm.send_message(&batch).await {
+      Ok(_) => {
+        match server_comm.try_next().await {
+          Ok(Some(Event::Msg(msg_string))) => {
+            //println!("msg: {:?}", msg_string);
+            let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
+            //println!("msg: {:?}", msg);
+            assert_eq!(msg.sender, idkey);
+            assert_eq!(msg.enc_payload, payload);
+            assert!(msg.seq_id > 0);
+            println!("msg.seq_id: {:?}", msg.seq_id);
+            match server_comm.delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id)).await {
+              Ok(_) => println!("SUCCESS"),
+              Err(err) => println!("FAIL for error: {:?}", err),
+            }
           },
           Ok(Some(Event::Otkey)) => println!("FAIL got otkey event"),
           Ok(None) => println!("FAIL got none"),

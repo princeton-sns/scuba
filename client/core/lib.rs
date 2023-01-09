@@ -1,4 +1,4 @@
-//mod olm_wrapper;
+mod olm_wrapper;
 mod server_comm;
 
 use reqwest::{Result, Response};

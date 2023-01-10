@@ -6,6 +6,7 @@ use futures::{Stream, task::{Context, Poll}};
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
 //use crate::olm_wrapper::OlmWrapper;
+use std::collections::HashMap;
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -150,11 +151,11 @@ impl ServerComm {
         .await
   }
 
-  async fn add_otkeys_to_server(&self) -> Result<Response> {
+  async fn add_otkeys_to_server<'a>(&self, to_add: &'a HashMap<String, String>) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
-        .json("more otkeys") // FIXME
+        .json(&to_add)
         .send()
         .await
   }
@@ -190,6 +191,7 @@ impl Stream for ServerComm {
 mod tests {
   use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
+  use crate::olm_wrapper::OlmWrapper;
 
   #[tokio::test]
   async fn test_sc_init() {
@@ -238,7 +240,7 @@ mod tests {
             println!("msg.seq_id: {:?}", msg.seq_id);
             match server_comm.delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id)).await {
               Ok(_) => println!("SUCCESS"),
-              Err(err) => panic!("FAIL for error: {:?}", err),
+              Err(err) => panic!("FAIL got error: {:?}", err),
             }
           },
           Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
@@ -247,6 +249,24 @@ mod tests {
         }
       },
       Err(err) => panic!("Send failed: {:?}", err),
+    }
+  }
+
+  #[tokio::test]
+  async fn test_sc_add_otkeys_to_server() {
+    let olm_wrapper = OlmWrapper::new(None);
+    let idkey = olm_wrapper.get_idkey();
+    let mut server_comm = ServerComm::new(None, None, idkey);
+    match server_comm.try_next().await {
+      Ok(Some(Event::Otkey)) => {
+        let otkeys = olm_wrapper.generate_otkeys(None);
+        println!("otkeys: {:?}", otkeys);
+        match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
+          Ok(_) => println!("SUCCESS"),
+          Err(err) => panic!("FAIL got error: {:?}", err),
+        }
+      },
+      _ => panic!("Unexpected result"),
     }
   }
 }

@@ -1,4 +1,3 @@
-//use crate::crypto::OlmWrapper;
 use std::pin::Pin;
 use url::Url;
 use eventsource_client::{Client, ClientBuilder, SSE};
@@ -6,6 +5,7 @@ use urlencoding::encode;
 use futures::{Stream, task::{Context, Poll}};
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
+//use crate::olm_wrapper::OlmWrapper;
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -19,42 +19,42 @@ pub enum Event {
 }
 
 #[derive(Debug, Serialize)]
-pub struct Batch<'a> {
-  batch: Vec<OutgoingMessage<'a>>,
+pub struct Batch {
+  batch: Vec<OutgoingMessage>,
 }
 
-impl<'a> Batch<'a> {
+impl Batch {
   pub fn new() -> Self {
     Self {
       batch: Vec::<OutgoingMessage>::new(),
     }
   }
 
-  pub fn from_vec(batch: Vec<OutgoingMessage<'a>>) -> Self {
+  pub fn from_vec(batch: Vec<OutgoingMessage>) -> Self {
     Self { batch }
   }
 
-  pub fn push(&mut self, message: OutgoingMessage<'a>) {
+  pub fn push(&mut self, message: OutgoingMessage) {
     self.batch.push(message);
   }
 
-  pub fn pop(&mut self) -> Option<OutgoingMessage<'a>> {
+  pub fn pop(&mut self) -> Option<OutgoingMessage> {
     self.batch.pop()
   }
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OutgoingMessage<'a> {
-  device_id: &'a str,
-  payload: &'a str,
+pub struct OutgoingMessage {
+  device_id: String,
+  payload: String,
 }
 
-impl<'a> OutgoingMessage<'a> {
-  pub fn new(device_id: &'a str, payload: &'a str) -> Self {
+impl OutgoingMessage {
+  pub fn new<'a>(device_id: &'a str, payload: &'a str) -> Self {
     Self {
-      device_id,
-      payload,
+      device_id: device_id.to_string(),
+      payload: payload.to_string(),
     }
   }
 }
@@ -85,22 +85,22 @@ impl ToDelete {
   }
 }
 
-pub struct ServerComm<'a> {
-  base_url: Url,
-  //crypto  : &'a OlmWrapper,
-  idkey   : &'a str,
-  client  : reqwest::Client,
-  listener: Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>>>>,
+pub struct ServerComm {
+  base_url   : Url,
+  //olm_wrapper: OlmWrapper<'a>,
+  idkey      : String,
+  client     : reqwest::Client,
+  listener   : Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>>>>,
   //event emitter
 }
 
-impl<'a> ServerComm<'a> {
-  pub fn new(
+impl ServerComm {
+  pub fn new<'a>(
     ip_arg: Option<&'a str>,
     port_arg: Option<&'a str>,
-    //crypto: &'a OlmWrapper,
+    //olm_wrapper: OlmWrapper<'a>,
     //emitter
-    idkey: &'a str,
+    idkey: String,
   ) -> Self {
     let ip_addr = ip_arg.unwrap_or(IP_ADDR);
     let port_num = port_arg.unwrap_or(PORT_NUM);
@@ -108,31 +108,31 @@ impl<'a> ServerComm<'a> {
         .expect("Failed base_url construction");
     let listener = Box::new(
         ClientBuilder::for_url(base_url.join("/events").expect("Failed join of /events").as_str()).expect("Failed in ClientBuilder::for_url")
-            .header("Authorization", &vec!["Bearer", idkey].join(" ")).expect("Failed header construction")
+            .header("Authorization", &vec!["Bearer", &idkey].join(" ")).expect("Failed header construction")
             .build()
         )
         .stream();
     Self {
       base_url,
-      //crypto: crypto,
-      idkey, //: crypto.get_idkey(),
+      //olm_wrapper,
+      idkey,
       client  : reqwest::Client::new(),
       listener,
     }
   }
 
-  pub async fn send_message(&self, batch: &'a Batch<'a>) -> Result<Response> {
+  pub async fn send_message<'a>(&self, batch: &'a Batch) -> Result<Response> {
     self.client.post(self.base_url.join("/message").expect("").as_str())
         .header("Content-Type", "application/json")
-        .header("Authorization", vec!["Bearer", self.idkey].join(" "))
+        .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
         .json(&batch)
         .send()
         .await
   }
 
-  pub async fn get_otkey_from_server(&self, idkey: &'a str) -> Result<Response> {
+  pub async fn get_otkey_from_server<'a>(&self, dst_idkey: &'a str) -> Result<Response> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
-    url.set_query(Some(&vec!["device_id", &encode(idkey)].join("="))); // FIXME deviceId?
+    url.set_query(Some(&vec!["device_id", &encode(dst_idkey)].join("=")));
     self.client.get(url.as_str())
         .send()
         .await
@@ -141,10 +141,10 @@ impl<'a> ServerComm<'a> {
         // TODO return otkey
   }
 
-  async fn delete_messages_from_server(&self, to_delete: &'a ToDelete) -> Result<Response> {
+  async fn delete_messages_from_server<'a>(&self, to_delete: &'a ToDelete) -> Result<Response> {
     self.client.delete(self.base_url.join("/self/messages").expect("").as_str())
         .header("Content-Type", "application/json")
-        .header("Authorization", vec!["Bearer", self.idkey].join(" "))
+        .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
         .json(&to_delete)
         .send()
         .await
@@ -153,14 +153,14 @@ impl<'a> ServerComm<'a> {
   async fn add_otkeys_to_server(&self) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
-        .header("Authorization", vec!["Bearer", self.idkey].join(" "))
+        .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
         .json("more otkeys") // FIXME
         .send()
         .await
   }
 }
 
-impl<'a> Stream for ServerComm<'a> {
+impl Stream for ServerComm {
   type Item = eventsource_client::Result<Event>;
 
   fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -193,66 +193,60 @@ mod tests {
 
   #[tokio::test]
   async fn test_sc_init() {
-    assert_eq!(ServerComm::new(None, None, "abcd").try_next().await, Ok(Some(Event::Otkey)));
+    assert_eq!(ServerComm::new(None, None, "abcd".to_string()).try_next().await, Ok(Some(Event::Otkey)));
   }
 
   #[tokio::test]
   async fn test_sc_send_message() {
-    let idkey = "efgh";
-    let payload = "hello";
-    let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
-    //println!("batch: {:?}", batch);
-    //println!("string batch: {:?}", serde_json::to_string(&batch).unwrap());
-    let mut server_comm = ServerComm::new(None, None, idkey);
+    let idkey = String::from("efgh");
+    let payload = String::from("hello");
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(&idkey, &payload)]);
+    let mut server_comm = ServerComm::new(None, None, idkey.clone());
     assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
     match server_comm.send_message(&batch).await {
       Ok(_) => {
         match server_comm.try_next().await {
           Ok(Some(Event::Msg(msg_string))) => {
-            //println!("msg: {:?}", msg_string);
             let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
-            //println!("msg: {:?}", msg);
             assert_eq!(msg.sender, idkey);
             assert_eq!(msg.enc_payload, payload);
           },
-          Ok(Some(Event::Otkey)) => println!("FAIL got otkey event"),
-          Ok(None) => println!("FAIL got none"),
-          Err(err) => println!("FAIL got error: {:?}", err),
+          Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
+          Ok(None) => panic!("FAIL got none"),
+          Err(err) => panic!("FAIL got error: {:?}", err),
         }
       },
-      Err(err) => println!("Send failed: {:?}", err),
+      Err(err) => panic!("Send failed: {:?}", err),
     }
   }
 
   #[tokio::test]
   async fn test_sc_delete_messages() {
-    let idkey = "ijkl";
-    let payload = "hello";
-    let batch = Batch::from_vec(vec![OutgoingMessage::new(idkey, payload)]);
-    let mut server_comm = ServerComm::new(None, None, idkey);
+    let idkey = String::from("ijkl");
+    let payload = String::from("hello");
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(&idkey, &payload)]);
+    let mut server_comm = ServerComm::new(None, None, idkey.clone());
     assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
     match server_comm.send_message(&batch).await {
       Ok(_) => {
         match server_comm.try_next().await {
           Ok(Some(Event::Msg(msg_string))) => {
-            //println!("msg: {:?}", msg_string);
             let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
-            //println!("msg: {:?}", msg);
             assert_eq!(msg.sender, idkey);
             assert_eq!(msg.enc_payload, payload);
             assert!(msg.seq_id > 0);
             println!("msg.seq_id: {:?}", msg.seq_id);
             match server_comm.delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id)).await {
               Ok(_) => println!("SUCCESS"),
-              Err(err) => println!("FAIL for error: {:?}", err),
+              Err(err) => panic!("FAIL for error: {:?}", err),
             }
           },
-          Ok(Some(Event::Otkey)) => println!("FAIL got otkey event"),
-          Ok(None) => println!("FAIL got none"),
-          Err(err) => println!("FAIL got error: {:?}", err),
+          Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
+          Ok(None) => panic!("FAIL got none"),
+          Err(err) => panic!("FAIL got error: {:?}", err),
         }
       },
-      Err(err) => println!("Send failed: {:?}", err),
+      Err(err) => panic!("Send failed: {:?}", err),
     }
   }
 }

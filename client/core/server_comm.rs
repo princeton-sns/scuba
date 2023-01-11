@@ -86,6 +86,11 @@ impl ToDelete {
   }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OtkeyResponse {
+  otkey: String,
+}
+
 pub struct ServerComm {
   base_url   : Url,
   //olm_wrapper: OlmWrapper<'a>,
@@ -133,13 +138,11 @@ impl ServerComm {
 
   pub async fn get_otkey_from_server<'a>(&self, dst_idkey: &'a str) -> Result<Response> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
-    url.set_query(Some(&vec!["device_id", &encode(dst_idkey)].join("=")));
-    self.client.get(url.as_str())
-        .send()
-        .await
+    url.set_query(Some(&vec!["device_id", &encode(dst_idkey).into_owned()].join("=")));
+    self.client.get(url).send().await
+        //?
         //.json()
         //.await
-        // TODO return otkey
   }
 
   async fn delete_messages_from_server<'a>(&self, to_delete: &'a ToDelete) -> Result<Response> {
@@ -189,9 +192,10 @@ impl Stream for ServerComm {
 
 #[cfg(test)]
 mod tests {
-  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
+  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete, OtkeyResponse};
   use futures::TryStreamExt;
   use crate::olm_wrapper::OlmWrapper;
+  use urlencoding::encode;
 
   #[tokio::test]
   async fn test_sc_init() {
@@ -267,6 +271,35 @@ mod tests {
         }
       },
       _ => panic!("Unexpected result"),
+    }
+  }
+
+  #[tokio::test]
+  async fn test_sc_get_otkey_from_server() {
+    let olm_wrapper = OlmWrapper::new(None);
+    let idkey = olm_wrapper.get_idkey();
+    let mut server_comm = ServerComm::new(None, None, idkey.clone());
+    println!("IDKEY: {:?}", idkey);
+    println!("encoded idkey: {:?}", encode(&idkey));
+    match server_comm.try_next().await {
+      Ok(Some(Event::Otkey)) => {
+        let otkeys = olm_wrapper.generate_otkeys(None);
+        match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
+          Ok(_) => println!("SUCCESS"),
+          Err(err) => panic!("FAIL got error: {:?}", err),
+        }
+      },
+      _ => panic!("Unexpected result"),
+    }
+    match server_comm.get_otkey_from_server(&idkey).await {
+      Ok(res) => {
+        let otkey_res: reqwest::Result<OtkeyResponse> = res.json().await;
+        match otkey_res {
+          Ok(otkey) => println!("otkey: {:?}", otkey),
+          Err(err) => panic!("err: {:?}", err),
+        }
+      },
+      Err(err) => panic!("FAIL got error: {:?}", err),
     }
   }
 }

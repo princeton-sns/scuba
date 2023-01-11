@@ -136,13 +136,14 @@ impl ServerComm {
         .await
   }
 
-  pub async fn get_otkey_from_server<'a>(&self, dst_idkey: &'a str) -> Result<Response> {
+  pub async fn get_otkey_from_server<'a>(&self, dst_idkey: &'a str) -> Result<OtkeyResponse> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
     url.set_query(Some(&vec!["device_id", &encode(dst_idkey).into_owned()].join("=")));
-    self.client.get(url).send().await
-        //?
-        //.json()
-        //.await
+    self.client.get(url)
+        .send()
+        .await?
+        .json()
+        .await
   }
 
   async fn delete_messages_from_server<'a>(&self, to_delete: &'a ToDelete) -> Result<Response> {
@@ -192,7 +193,7 @@ impl Stream for ServerComm {
 
 #[cfg(test)]
 mod tests {
-  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete, OtkeyResponse};
+  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
   use crate::olm_wrapper::OlmWrapper;
   use urlencoding::encode;
@@ -293,11 +294,12 @@ mod tests {
     }
     match server_comm.get_otkey_from_server(&idkey).await {
       Ok(res) => {
-        let otkey_res: reqwest::Result<OtkeyResponse> = res.json().await;
-        match otkey_res {
-          Ok(otkey) => println!("otkey: {:?}", otkey),
-          Err(err) => panic!("err: {:?}", err),
-        }
+        println!("otkey: {:?}", res);
+        //let otkey_res: reqwest::Result<OtkeyResponse> = res.json().await;
+        //match otkey_res {
+        //  Ok(otkey) => println!("otkey: {:?}", otkey),
+        //  Err(err) => panic!("err: {:?}", err),
+        //}
       },
       Err(err) => panic!("FAIL got error: {:?}", err),
     }

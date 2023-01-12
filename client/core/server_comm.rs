@@ -5,7 +5,6 @@ use urlencoding::encode;
 use futures::{Stream, task::{Context, Poll}};
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
-//use crate::olm_wrapper::OlmWrapper;
 use std::collections::HashMap;
 
 const IP_ADDR    : &str = "localhost";
@@ -91,9 +90,14 @@ pub struct OtkeyResponse {
   otkey: String,
 }
 
+impl From<OtkeyResponse> for String {
+  fn from(otkey_response: OtkeyResponse) -> String {
+    otkey_response.otkey
+  }
+}
+
 pub struct ServerComm {
   base_url   : Url,
-  //olm_wrapper: OlmWrapper<'a>,
   idkey      : String,
   client     : reqwest::Client,
   listener   : Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>>>>,
@@ -104,7 +108,6 @@ impl ServerComm {
   pub fn new<'a>(
     ip_arg: Option<&'a str>,
     port_arg: Option<&'a str>,
-    //olm_wrapper: OlmWrapper<'a>,
     //emitter
     idkey: String,
   ) -> Self {
@@ -120,7 +123,6 @@ impl ServerComm {
         .stream();
     Self {
       base_url,
-      //olm_wrapper,
       idkey,
       client  : reqwest::Client::new(),
       listener,
@@ -155,7 +157,7 @@ impl ServerComm {
         .await
   }
 
-  async fn add_otkeys_to_server<'a>(&self, to_add: &'a HashMap<String, String>) -> Result<Response> {
+  pub async fn add_otkeys_to_server<'a>(&self, to_add: &'a HashMap<String, String>) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -196,7 +198,6 @@ mod tests {
   use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
   use crate::olm_wrapper::OlmWrapper;
-  use urlencoding::encode;
 
   #[tokio::test]
   async fn test_sc_init() {
@@ -218,12 +219,12 @@ mod tests {
             assert_eq!(msg.sender, idkey);
             assert_eq!(msg.enc_payload, payload);
           },
-          Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
-          Ok(None) => panic!("FAIL got none"),
-          Err(err) => panic!("FAIL got error: {:?}", err),
+          Ok(Some(Event::Otkey)) => panic!("Got otkey event"),
+          Ok(None) => panic!("Got none"),
+          Err(err) => panic!("Got error: {:?}", err),
         }
       },
-      Err(err) => panic!("Send failed: {:?}", err),
+      Err(err) => panic!("Error sending message: {:?}", err),
     }
   }
 
@@ -244,16 +245,16 @@ mod tests {
             assert!(msg.seq_id > 0);
             println!("msg.seq_id: {:?}", msg.seq_id);
             match server_comm.delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id)).await {
-              Ok(_) => println!("SUCCESS"),
-              Err(err) => panic!("FAIL got error: {:?}", err),
+              Ok(_) => println!("Sent delete-message successfully"),
+              Err(err) => panic!("Error sending delete-message: {:?}", err),
             }
           },
-          Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
-          Ok(None) => panic!("FAIL got none"),
-          Err(err) => panic!("FAIL got error: {:?}", err),
+          Ok(Some(Event::Otkey)) => panic!("Got otkey event"),
+          Ok(None) => panic!("Got none"),
+          Err(err) => panic!("Got error: {:?}", err),
         }
       },
-      Err(err) => panic!("Send failed: {:?}", err),
+      Err(err) => panic!("Error sending message: {:?}", err),
     }
   }
 
@@ -267,8 +268,8 @@ mod tests {
         let otkeys = olm_wrapper.generate_otkeys(None);
         println!("otkeys: {:?}", otkeys);
         match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
-          Ok(_) => println!("SUCCESS"),
-          Err(err) => panic!("FAIL got error: {:?}", err),
+          Ok(_) => println!("Sent otkeys successfully"),
+          Err(err) => panic!("Error sending otkeys: {:?}", err),
         }
       },
       _ => panic!("Unexpected result"),
@@ -280,14 +281,13 @@ mod tests {
     let olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let mut server_comm = ServerComm::new(None, None, idkey.clone());
-    println!("IDKEY: {:?}", idkey);
-    println!("encoded idkey: {:?}", encode(&idkey));
+    let otkeys = olm_wrapper.generate_otkeys(None);
+    let mut values = otkeys.curve25519().values().cloned();
     match server_comm.try_next().await {
       Ok(Some(Event::Otkey)) => {
-        let otkeys = olm_wrapper.generate_otkeys(None);
         match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
-          Ok(_) => println!("SUCCESS"),
-          Err(err) => panic!("FAIL got error: {:?}", err),
+          Ok(_) => println!("Sent otkeys successfully"),
+          Err(err) => panic!("Error sending otkeys: {:?}", err),
         }
       },
       _ => panic!("Unexpected result"),
@@ -295,13 +295,9 @@ mod tests {
     match server_comm.get_otkey_from_server(&idkey).await {
       Ok(res) => {
         println!("otkey: {:?}", res);
-        //let otkey_res: reqwest::Result<OtkeyResponse> = res.json().await;
-        //match otkey_res {
-        //  Ok(otkey) => println!("otkey: {:?}", otkey),
-        //  Err(err) => panic!("err: {:?}", err),
-        //}
+        assert!(values.any(|x| x.eq(&res.otkey)));
       },
-      Err(err) => panic!("FAIL got error: {:?}", err),
+      Err(err) => panic!("Error getting otkey: {:?}", err),
     }
   }
 }

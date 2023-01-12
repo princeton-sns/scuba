@@ -1,5 +1,7 @@
 use olm_rs::account::{OlmAccount, IdentityKeys, OneTimeKeys};
-use olm_rs::session::OlmMessage;
+use olm_rs::session::{OlmMessage, OlmSession};
+use std::collections::HashMap;
+use crate::server_comm::ServerComm;
 
 const NUM_OTKEYS : usize = 10;
 
@@ -8,6 +10,7 @@ pub struct OlmWrapper<'a> {
   idkeys       : IdentityKeys,
   account      : OlmAccount,
   message_queue: Vec<&'a str>,
+  sessions     : HashMap<&'a str, &'a Vec<OlmSession>>,
 }
 
 impl<'a> OlmWrapper<'a> {
@@ -18,6 +21,7 @@ impl<'a> OlmWrapper<'a> {
       idkeys: account.parsed_identity_keys(),
       account,
       message_queue: Vec::new(),
+      sessions: HashMap::new(),
     }
   }
 
@@ -30,6 +34,23 @@ impl<'a> OlmWrapper<'a> {
 
   pub fn get_idkey(&self) -> String {
     self.idkeys.curve25519().to_string()
+  }
+
+  async fn new_outbound_session(
+      &mut self,
+      server_comm: ServerComm,
+      dst_idkey: &'a str
+  ) -> OlmSession {
+    let dst_otkey;
+    match server_comm.get_otkey_from_server(dst_idkey).await {
+      Ok(res) => dst_otkey = res,
+      Err(err) => panic!("Error getting otkey from server: {:?}", err),
+    }
+    println!("dst_otkey: {:?}", dst_otkey);
+    match self.account.create_outbound_session(dst_idkey, &String::from(dst_otkey)) {
+      Ok(new_session) => return new_session,
+      Err(err) => panic!("Error creating outbound session: {:?}", err),
+    }
   }
 
   pub fn encrypt(
@@ -86,6 +107,8 @@ impl<'a> OlmWrapper<'a> {
 mod tests {
   use super::{OlmWrapper, NUM_OTKEYS};
   use olm_rs::session::OlmMessage;
+  use crate::server_comm::{ServerComm, Event};
+  use futures::TryStreamExt;
 
   #[test]
   fn test_ow_init() {
@@ -156,5 +179,25 @@ mod tests {
     let decrypted = olm_wrapper.decrypt(ciphertext.clone(), &idkey);
     assert_eq!(empty, ciphertext.to_tuple().1);
     assert_eq!(plaintext, decrypted);
+  }
+
+  #[tokio::test]
+  async fn test_ow_self_outbound_session() {
+    let mut olm_wrapper = OlmWrapper::new(None);
+    let idkey = olm_wrapper.get_idkey();
+    let mut server_comm = ServerComm::new(None, None, idkey.clone());
+    match server_comm.try_next().await {
+      Ok(Some(Event::Otkey)) => {
+        let otkeys = olm_wrapper.generate_otkeys(None);
+        match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
+          Ok(_) => println!("Sent otkeys successfully"),
+          Err(err) => panic!("Error sending otkeys: {:?}", err),
+        }
+      },
+      _ => panic!("Unexpected result"),
+    }
+    let session = olm_wrapper.new_outbound_session(server_comm, &idkey).await;
+    println!("New session: {:?}", session);
+    println!("New session ID: {:?}", session.session_id());
   }
 }

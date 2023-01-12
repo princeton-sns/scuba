@@ -3,9 +3,11 @@ use url::Url;
 use eventsource_client::{Client, ClientBuilder, SSE};
 use urlencoding::encode;
 use futures::{Stream, task::{Context, Poll}};
+use futures::TryStreamExt;
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::olm_wrapper::OlmWrapper;
 
 const IP_ADDR    : &str = "localhost";
 const PORT_NUM   : &str = "8080";
@@ -129,6 +131,27 @@ impl ServerComm {
     }
   }
 
+  pub async fn init<'a>(
+    ip_arg: Option<&'a str>,
+    port_arg: Option<&'a str>,
+    //emitter
+    olm_wrapper: &'a OlmWrapper<'a>,
+  ) -> Self {
+    let mut server_comm = ServerComm::new(ip_arg, port_arg, olm_wrapper.get_idkey());
+    match server_comm.try_next().await {
+      Ok(Some(Event::Otkey)) => {
+        let otkeys = olm_wrapper.generate_otkeys(None);
+        println!("otkeys: {:?}", otkeys);
+        match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
+          Ok(_) => println!("Sent otkeys successfully"),
+          Err(err) => panic!("Error sending otkeys: {:?}", err),
+        }
+      },
+      _ => panic!("Unexpected result"),
+    }
+    server_comm
+  }
+
   pub async fn send_message<'a>(&self, batch: &'a Batch) -> Result<Response> {
     self.client.post(self.base_url.join("/message").expect("").as_str())
         .header("Content-Type", "application/json")
@@ -157,7 +180,7 @@ impl ServerComm {
         .await
   }
 
-  pub async fn add_otkeys_to_server<'a>(&self, to_add: &'a HashMap<String, String>) -> Result<Response> {
+  async fn add_otkeys_to_server<'a>(&self, to_add: &'a HashMap<String, String>) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -200,8 +223,15 @@ mod tests {
   use crate::olm_wrapper::OlmWrapper;
 
   #[tokio::test]
-  async fn test_sc_init() {
+  async fn test_sc_new() {
     assert_eq!(ServerComm::new(None, None, "abcd".to_string()).try_next().await, Ok(Some(Event::Otkey)));
+  }
+
+  #[tokio::test]
+  async fn test_sc_init() {
+    let olm_wrapper = OlmWrapper::new(None);
+    let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
+    println!("server_comm.idkey: {:?}", server_comm.idkey);
   }
 
   #[tokio::test]
@@ -280,9 +310,9 @@ mod tests {
   async fn test_sc_get_otkey_from_server() {
     let olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
-    let mut server_comm = ServerComm::new(None, None, idkey.clone());
     let otkeys = olm_wrapper.generate_otkeys(None);
     let mut values = otkeys.curve25519().values().cloned();
+    let mut server_comm = ServerComm::new(None, None, idkey.clone());
     match server_comm.try_next().await {
       Ok(Some(Event::Otkey)) => {
         match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {

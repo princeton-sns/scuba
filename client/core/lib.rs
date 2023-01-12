@@ -9,9 +9,9 @@ struct Core<'a> {
 }
 
 impl<'a> Core<'a> {
-  fn new() -> Self {
+  async fn new() -> Core<'a> {
     let olm_wrapper = olm_wrapper::OlmWrapper::new(None);
-    let server_comm = server_comm::ServerComm::new(None, None, olm_wrapper.get_idkey());
+    let server_comm = server_comm::ServerComm::init(None, None, &olm_wrapper).await;
     Self {
       olm_wrapper,
       server_comm,
@@ -37,18 +37,16 @@ mod tests {
   use futures::TryStreamExt;
 
   #[tokio::test]
-  async fn test_core_init() {
-    let mut core = Core::new();
-    assert_eq!(core.server_comm.try_next().await, Ok(Some(server_comm::Event::Otkey)));
+  async fn test_core_new() {
+    let _ = Core::new().await;
   }
 
   #[tokio::test]
   async fn test_core_send_message() {
     let payload = String::from("hello from me");
-    let mut core = Core::new();
+    let mut core = Core::new().await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey];
-    assert_eq!(core.server_comm.try_next().await, Ok(Some(server_comm::Event::Otkey)));
     match core.send_message(recipients, &payload).await {
       Ok(res) => println!("response: {:?}", res),
       Err(err) => panic!("error: {:?}", err),

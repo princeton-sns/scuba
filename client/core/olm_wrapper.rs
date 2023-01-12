@@ -5,18 +5,13 @@ use crate::server_comm::ServerComm;
 
 const NUM_OTKEYS : usize = 10;
 
-//struct PairwiseSessionList {
-//  fn set_active_session
-//  fn get_active_session
-//}
-
 // TODO persist natively
 pub struct OlmWrapper<'a> {
   toggle_off   : bool,
   idkeys       : IdentityKeys,
   account      : OlmAccount,
   message_queue: Vec<&'a str>,
-  sessions     : HashMap<&'a str, &'a Vec<OlmSession>>,
+  sessions     : HashMap<&'a str, Vec<OlmSession>>,
 }
 
 impl<'a> OlmWrapper<'a> {
@@ -43,14 +38,13 @@ impl<'a> OlmWrapper<'a> {
   }
 
   async fn new_outbound_session(
-      &mut self,
-      server_comm: ServerComm,
+      &self,
+      server_comm: &'a ServerComm,
       dst_idkey: &'a str
   ) -> OlmSession {
     match server_comm.get_otkey_from_server(dst_idkey).await {
       Ok(dst_otkey) => {
         match self.account.create_outbound_session(dst_idkey, &String::from(dst_otkey)) {
-          // TODO update self.sessions with new_session as active session
           Ok(new_session) => return new_session,
           Err(err) => panic!("Error creating outbound session: {:?}", err),
         }
@@ -60,11 +54,10 @@ impl<'a> OlmWrapper<'a> {
   }
 
   fn new_inbound_session(
-      &mut self,
+      &self,
       prekey_msg: PreKeyMessage
   ) -> OlmSession {
     match self.account.create_inbound_session(prekey_msg) {
-      // TODO update self.sessions with new_session as active session
       Ok(new_session) => return new_session,
       Err(err) => panic!("Error creating inbound session: {:?}", err),
     }
@@ -72,11 +65,24 @@ impl<'a> OlmWrapper<'a> {
 
   async fn get_active_session(
       &mut self,
-      server_comm: ServerComm,
+      server_comm: &'a ServerComm,
       dst_idkey: &'a str
-  ) -> OlmSession {
-    // TODO store + check stored sessions
-    self.new_outbound_session(server_comm, dst_idkey).await
+  ) -> &OlmSession {
+    let mut need_new_session = false;
+    if let Some(sessions_list) = self.sessions.get_mut(dst_idkey) {
+      if sessions_list.is_empty() || !sessions_list[sessions_list.len() - 1].has_received_message() {
+        need_new_session = true;
+      }
+    } else {
+      self.sessions.insert(dst_idkey, vec![self.new_outbound_session(server_comm, dst_idkey).await]);
+    }
+    // put here for the borrow checker
+    if need_new_session {
+      let session = self.new_outbound_session(server_comm, dst_idkey).await;
+      self.sessions.get_mut(dst_idkey).unwrap().push(session);
+    }
+    let sessions_list = self.sessions.get(dst_idkey).unwrap();
+    &sessions_list[sessions_list.len() - 1]
   }
 
   fn find_active_session(
@@ -93,7 +99,7 @@ impl<'a> OlmWrapper<'a> {
 
   pub async fn encrypt(
       &mut self,
-      server_comm: ServerComm,
+      server_comm: &'a ServerComm,
       plaintext: &'a str,
       dst_idkey: &'a str
   ) -> OlmMessage {
@@ -105,7 +111,7 @@ impl<'a> OlmWrapper<'a> {
 
   async fn encrypt_helper(
       &mut self,
-      server_comm: ServerComm,
+      server_comm: &'a ServerComm,
       plaintext: &'a str,
       dst_idkey: &'a str
   ) -> OlmMessage {
@@ -187,7 +193,7 @@ mod tests {
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext: &str = "hello";
-    let ciphertext = olm_wrapper.encrypt(server_comm, plaintext, &idkey)
+    let ciphertext = olm_wrapper.encrypt(&server_comm, plaintext, &idkey)
         .await.to_tuple().1;
     assert_eq!(plaintext, ciphertext);
   }
@@ -199,7 +205,7 @@ mod tests {
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext: &str = "hello";
     let empty: &str = "";
-    let ciphertext = olm_wrapper.encrypt(server_comm, plaintext, &idkey)
+    let ciphertext = olm_wrapper.encrypt(&server_comm, plaintext, &idkey)
         .await.to_tuple().1;
     assert_eq!(empty, ciphertext);
     assert_eq!(plaintext, olm_wrapper.message_queue.pop().unwrap());
@@ -222,7 +228,7 @@ mod tests {
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext: &str = "hello";
     let empty: &str = "";
-    let ciphertext = olm_wrapper.encrypt(server_comm, plaintext, &idkey).await;
+    let ciphertext = olm_wrapper.encrypt(&server_comm, plaintext, &idkey).await;
     let decrypted = olm_wrapper.decrypt(ciphertext.clone(), &idkey);
     assert_eq!(empty, ciphertext.to_tuple().1);
     assert_eq!(plaintext, decrypted);
@@ -233,7 +239,7 @@ mod tests {
     let mut olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
-    let session = olm_wrapper.new_outbound_session(server_comm, &idkey).await;
+    let session = olm_wrapper.new_outbound_session(&server_comm, &idkey).await;
     println!("New session: {:?}", session);
     println!("New session ID: {:?}", session.session_id());
     assert!(!session.has_received_message());
@@ -253,7 +259,7 @@ mod tests {
 
     let plaintext = "testing testing one two three";
 
-    let ciphertext = ow1.encrypt(sc1, plaintext, &idkey2).await;
+    let ciphertext = ow1.encrypt(&sc1, plaintext, &idkey2).await;
     let decrypted = ow2.decrypt(ciphertext.clone(), &idkey1);
 
     assert_eq!(plaintext, decrypted);

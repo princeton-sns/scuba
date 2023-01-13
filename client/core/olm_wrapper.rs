@@ -63,23 +63,24 @@ impl<'a> OlmWrapper<'a> {
     }
   }
 
+  // TODO how many sessions with the same session_id should exist at one time? (for decrypting delayed messages)
+
   async fn get_active_session(
       &mut self,
       server_comm: &'a ServerComm,
       dst_idkey: &'a str
   ) -> &OlmSession {
-    let mut need_new_session = false;
-    if let Some(sessions_list) = self.sessions.get_mut(dst_idkey) {
-      if sessions_list.is_empty() || !sessions_list[sessions_list.len() - 1].has_received_message() {
-        need_new_session = true;
-      }
+    if let None = self.sessions.get(dst_idkey) {
+      self.sessions.insert(
+          dst_idkey,
+          vec![self.new_outbound_session(server_comm, dst_idkey).await]
+      );
     } else {
-      self.sessions.insert(dst_idkey, vec![self.new_outbound_session(server_comm, dst_idkey).await]);
-    }
-    // put here for the borrow checker
-    if need_new_session {
-      let session = self.new_outbound_session(server_comm, dst_idkey).await;
-      self.sessions.get_mut(dst_idkey).unwrap().push(session);
+      let sessions_list = self.sessions.get_mut(dst_idkey).unwrap();
+      if sessions_list.is_empty() || !sessions_list[sessions_list.len() - 1].has_received_message() {
+        let session = self.new_outbound_session(server_comm, dst_idkey).await;
+        self.sessions.get_mut(dst_idkey).unwrap().push(session);
+      }
     }
     let sessions_list = self.sessions.get(dst_idkey).unwrap();
     &sessions_list[sessions_list.len() - 1]
@@ -89,11 +90,31 @@ impl<'a> OlmWrapper<'a> {
       &mut self,
       ciphertext: OlmMessage,
       sender: &'a str
-  ) -> OlmSession {
-    println!("sender: {:?}", sender);
+  ) -> &OlmSession {
     match ciphertext {
-      OlmMessage::Message(_) => panic!("Not yet implemented"),
-      OlmMessage::PreKey(prekey) => return self.new_inbound_session(prekey),
+      OlmMessage::Message(msg) => {
+        if let None = self.sessions.get(sender) {
+          panic!("No pairwise sessions exist for idkey {:?}", sender);
+        } else {
+          let sessions_list = self.sessions.get_mut(sender).unwrap();
+          return &sessions_list[sessions_list.len() - 1];
+          //for (i, session) in sessions_list.iter().enumerate() {
+          //}
+        }
+      },
+      OlmMessage::PreKey(prekey) => {
+        if let None = self.sessions.get(sender) {
+          self.sessions.insert(
+              sender,
+              vec![self.new_inbound_session(prekey)]
+          );
+        } else {
+          let new_session = self.new_inbound_session(prekey);
+          self.sessions.get_mut(sender).unwrap().push(new_session);
+        }
+        let sessions_list = self.sessions.get(sender).unwrap();
+        &sessions_list[sessions_list.len() - 1]
+      },
     }
   }
 
@@ -120,6 +141,7 @@ impl<'a> OlmWrapper<'a> {
       return OlmMessage::from_type_and_ciphertext(1, "".to_string()).unwrap();
     }
     let session = self.get_active_session(server_comm, dst_idkey).await;
+    println!("ENCRYPTING w SESS ID: {:?}", session.session_id());
     session.encrypt(plaintext)
   }
 
@@ -147,6 +169,7 @@ impl<'a> OlmWrapper<'a> {
     let session = self.find_active_session(ciphertext.clone(), sender);
     match session.decrypt(ciphertext) {
       Ok(plaintext) => return plaintext,
+      // TODO iterate through all sessions in case this message was delayed
       Err(err) => panic!("Error decrypting ciphertext: {:?}", err),
     }
   }
@@ -236,7 +259,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_ow_self_outbound_session() {
-    let mut olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
     let session = olm_wrapper.new_outbound_session(&server_comm, &idkey).await;
@@ -262,6 +285,63 @@ mod tests {
     let ciphertext = ow1.encrypt(&sc1, plaintext, &idkey2).await;
     let decrypted = ow2.decrypt(ciphertext.clone(), &idkey1);
 
+    assert_eq!(plaintext, decrypted);
+  }
+
+  // TODO more fine-grained testing (w asserts) of get/find_active_sess
+
+  #[tokio::test]
+  async fn test_ow_use_new_session() {
+    let mut ow1 = OlmWrapper::new(None);
+    let idkey1 = ow1.get_idkey();
+    println!("idkey1: {:?}", idkey1);
+    let sc1 = ServerComm::init(None, None, &ow1).await;
+
+    let mut ow2 = OlmWrapper::new(None);
+    let idkey2 = ow2.get_idkey();
+    println!("idkey2: {:?}", idkey2);
+    let _ = ServerComm::init(None, None, &ow2).await;
+
+    let plaintext = "testing testing one two three";
+
+    // 1 -> 2
+    let ciphertext = ow1.encrypt(&sc1, plaintext, &idkey2).await;
+    let decrypted = ow2.decrypt(ciphertext.clone(), &idkey1);
+    assert_eq!(plaintext, decrypted);
+
+    // 1 -> 2
+    let ciphertext = ow1.encrypt(&sc1, plaintext, &idkey2).await;
+    let decrypted = ow2.decrypt(ciphertext.clone(), &idkey1);
+    assert_eq!(plaintext, decrypted);
+  }
+
+  #[tokio::test]
+  async fn test_ow_use_existing_session() {
+    let mut ow1 = OlmWrapper::new(None);
+    let idkey1 = ow1.get_idkey();
+    println!("idkey1: {:?}", idkey1);
+    let sc1 = ServerComm::init(None, None, &ow1).await;
+
+    let mut ow2 = OlmWrapper::new(None);
+    let idkey2 = ow2.get_idkey();
+    println!("idkey2: {:?}", idkey2);
+    let sc2 = ServerComm::init(None, None, &ow2).await;
+
+    let plaintext = "testing testing one two three";
+
+    // 1 -> 2
+    let ciphertext = ow1.encrypt(&sc1, plaintext, &idkey2).await;
+    let decrypted = ow2.decrypt(ciphertext.clone(), &idkey1);
+    assert_eq!(plaintext, decrypted);
+
+    // 2 -> 1
+    let ciphertext = ow2.encrypt(&sc2, plaintext, &idkey1).await;
+    let decrypted = ow1.decrypt(ciphertext.clone(), &idkey2);
+    assert_eq!(plaintext, decrypted);
+
+    // 2 -> 1
+    let ciphertext = ow2.encrypt(&sc2, plaintext, &idkey1).await;
+    let decrypted = ow1.decrypt(ciphertext.clone(), &idkey2);
     assert_eq!(plaintext, decrypted);
   }
 }

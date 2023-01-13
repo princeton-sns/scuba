@@ -141,7 +141,6 @@ impl ServerComm {
     match server_comm.try_next().await {
       Ok(Some(Event::Otkey)) => {
         let otkeys = olm_wrapper.generate_otkeys(None);
-        println!("otkeys: {:?}", otkeys);
         match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
           Ok(_) => println!("Sent otkeys successfully"),
           Err(err) => panic!("Error sending otkeys: {:?}", err),

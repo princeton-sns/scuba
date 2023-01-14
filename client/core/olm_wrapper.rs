@@ -65,7 +65,7 @@ impl<'a> OlmWrapper<'a> {
 
   // TODO how many sessions with the same session_id should exist at one time? (for decrypting delayed messages)
 
-  async fn get_active_session(
+  async fn get_outbound_session(
       &mut self,
       server_comm: &'a ServerComm,
       dst_idkey: &'a str
@@ -86,7 +86,7 @@ impl<'a> OlmWrapper<'a> {
     &sessions_list[sessions_list.len() - 1]
   }
 
-  fn find_matching_session(
+  fn get_inbound_session(
       &mut self,
       ciphertext: OlmMessage,
       sender: &'a str
@@ -141,7 +141,7 @@ impl<'a> OlmWrapper<'a> {
       self.message_queue.push(plaintext);
       return OlmMessage::from_type_and_ciphertext(1, "".to_string()).unwrap();
     }
-    let session = self.get_active_session(server_comm, dst_idkey).await;
+    let session = self.get_outbound_session(server_comm, dst_idkey).await;
     session.encrypt(plaintext)
   }
 
@@ -166,7 +166,7 @@ impl<'a> OlmWrapper<'a> {
       // unwrap will panic
       return self.message_queue.pop().unwrap().to_string();
     }
-    let session = self.find_matching_session(ciphertext.clone(), sender);
+    let session = self.get_inbound_session(ciphertext.clone(), sender);
     match session.decrypt(ciphertext) {
       Ok(plaintext) => return plaintext,
       // TODO iterate through all sessions in case this message was delayed
@@ -307,11 +307,11 @@ mod tests {
     assert_eq!(None, ow1.sessions.get(&idkey2.borrow()));
     assert_eq!(None, ow2.sessions.get(&idkey1.borrow()));
 
-    let ob_session = ow1.get_active_session(&sc1, &idkey2).await;
+    let ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let ciphertext = ob_session.encrypt(plaintext);
 
     // using prekey
-    let ib_session = ow2.find_matching_session(ciphertext.clone(), &idkey1);
+    let ib_session = ow2.get_inbound_session(ciphertext.clone(), &idkey1);
 
     assert_eq!(ob_session.session_id(), ib_session.session_id());
 
@@ -342,10 +342,10 @@ mod tests {
     assert_eq!(None, ow1.sessions.get(&idkey2.borrow()));
     assert_eq!(None, ow2.sessions.get(&idkey1.borrow()));
 
-    let first_ob_session = ow1.get_active_session(&sc1, &idkey2).await;
+    let first_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let ciphertext = first_ob_session.encrypt(plaintext);
     // using prekey
-    let first_ib_session = ow2.find_matching_session(ciphertext.clone(), &idkey1);
+    let first_ib_session = ow2.get_inbound_session(ciphertext.clone(), &idkey1);
 
     // decrypt() sets flag for has_received_message()
     let decrypted = first_ib_session.decrypt(ciphertext.clone()).unwrap();
@@ -355,10 +355,10 @@ mod tests {
     let first_ib_id = first_ib_session.session_id().clone();
 
     // 1 -> 2 again
-    let second_ob_session = ow1.get_active_session(&sc1, &idkey2).await;
+    let second_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let ciphertext = second_ob_session.encrypt(plaintext);
     // using prekey
-    let second_ib_session = ow2.find_matching_session(ciphertext.clone(), &idkey1);
+    let second_ib_session = ow2.get_inbound_session(ciphertext.clone(), &idkey1);
 
     let second_ob_id = second_ob_session.session_id().clone();
     let second_ib_id = second_ib_session.session_id().clone();
@@ -387,10 +387,10 @@ mod tests {
     assert_eq!(None, ow1.sessions.get(&idkey2.borrow()));
     assert_eq!(None, ow2.sessions.get(&idkey1.borrow()));
 
-    let first_ob_session = ow1.get_active_session(&sc1, &idkey2).await;
+    let first_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let first_ciphertext = first_ob_session.encrypt(plaintext);
     // using prekey
-    let first_ib_session = ow2.find_matching_session(first_ciphertext.clone(), &idkey1);
+    let first_ib_session = ow2.get_inbound_session(first_ciphertext.clone(), &idkey1);
 
     // decrypt() sets flag for has_received_message()
     let decrypted = first_ib_session.decrypt(first_ciphertext.clone()).unwrap();
@@ -400,10 +400,10 @@ mod tests {
     let first_ib_id = first_ib_session.session_id().clone();
 
     // 2 -> 1
-    let second_ob_session = ow2.get_active_session(&sc2, &idkey1).await;
+    let second_ob_session = ow2.get_outbound_session(&sc2, &idkey1).await;
     let second_ciphertext = second_ob_session.encrypt(plaintext);
     // using message
-    let second_ib_session = ow1.find_matching_session(second_ciphertext.clone(), &idkey2);
+    let second_ib_session = ow1.get_inbound_session(second_ciphertext.clone(), &idkey2);
 
     let second_ob_id = second_ob_session.session_id().clone();
     let second_ib_id = second_ib_session.session_id().clone();

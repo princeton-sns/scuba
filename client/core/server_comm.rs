@@ -222,19 +222,19 @@ mod tests {
   use crate::olm_wrapper::OlmWrapper;
 
   #[tokio::test]
-  async fn test_sc_new() {
+  async fn test_new() {
     assert_eq!(ServerComm::new(None, None, "abcd".to_string()).try_next().await, Ok(Some(Event::Otkey)));
   }
 
   #[tokio::test]
-  async fn test_sc_init() {
+  async fn test_init() {
     let olm_wrapper = OlmWrapper::new(None);
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
     println!("server_comm.idkey: {:?}", server_comm.idkey);
   }
 
   #[tokio::test]
-  async fn test_sc_send_message() {
+  async fn test_send_message() {
     let idkey = String::from("efgh");
     let payload = String::from("hello");
     let batch = Batch::from_vec(vec![OutgoingMessage::new(&idkey, &payload)]);
@@ -258,7 +258,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_sc_delete_messages() {
+  async fn test_delete_messages() {
     let idkey = String::from("ijkl");
     let payload = String::from("hello");
     let batch = Batch::from_vec(vec![OutgoingMessage::new(&idkey, &payload)]);
@@ -288,7 +288,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_sc_add_otkeys_to_server() {
+  async fn test_add_otkeys_to_server() {
     let olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let mut server_comm = ServerComm::new(None, None, idkey);
@@ -306,7 +306,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_sc_get_otkey_from_server() {
+  async fn test_get_otkey_from_server() {
     let olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let otkeys = olm_wrapper.generate_otkeys(None);

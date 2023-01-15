@@ -205,19 +205,19 @@ mod tests {
   use std::borrow::Borrow;
 
   #[test]
-  fn test_ow_new() {
+  fn test_new() {
     let olm_wrapper = OlmWrapper::new(None);
     assert_eq!(olm_wrapper.toggle_off, false);
   }
 
   #[test]
-  fn test_ow_idkey() {
+  fn test_idkey() {
     let olm_wrapper = OlmWrapper::new(None);
     println!("idkey: {:?}", olm_wrapper.get_idkey());
   }
 
   #[test]
-  fn test_ow_gen_otkeys() {
+  fn test_gen_otkeys() {
     let olm_wrapper = OlmWrapper::new(None);
     let otkeys = olm_wrapper.generate_otkeys(None);
     assert_eq!(NUM_OTKEYS, otkeys.curve25519().len());
@@ -225,7 +225,7 @@ mod tests {
   }
 
   #[test]
-  fn test_ow_gen_otkeys_custom_num() {
+  fn test_gen_otkeys_custom_num() {
     let num = 7;
     let olm_wrapper = OlmWrapper::new(None);
     let otkeys = olm_wrapper.generate_otkeys(Some(num));
@@ -234,7 +234,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_dummy_encrypt() {
+  async fn test_dummy_encrypt() {
     let mut olm_wrapper = OlmWrapper::new(Some(true));
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
@@ -245,7 +245,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_self_encrypt() {
+  async fn test_self_encrypt() {
     let mut olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
@@ -258,7 +258,7 @@ mod tests {
   }
 
   #[test]
-  fn test_ow_dummy_decrypt() {
+  fn test_dummy_decrypt() {
     let mut olm_wrapper = OlmWrapper::new(Some(true));
     let idkey = olm_wrapper.get_idkey();
     let plaintext: &str = "hello";
@@ -268,7 +268,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_self_decrypt() {
+  async fn test_self_decrypt() {
     let mut olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
@@ -281,7 +281,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_self_outbound_session() {
+  async fn test_self_outbound_session() {
     let olm_wrapper = OlmWrapper::new(None);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
@@ -292,7 +292,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_encrypt_and_decrypt_once() {
+  async fn test_encrypt_and_decrypt_once() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -312,7 +312,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_get_session_init() {
+  async fn test_get_session_init() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -347,7 +347,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_get_session_without_received_msg() {
+  async fn test_get_session_without_received_msg() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -392,7 +392,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_get_session_with_received_msg() {
+  async fn test_get_session_with_received_msg() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -437,7 +437,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_encrypt_and_decrypt_without_received_msg() {
+  async fn test_encrypt_and_decrypt_without_received_msg() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -462,7 +462,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_encrypt_and_decrypt_with_received_msg() {
+  async fn test_encrypt_and_decrypt_with_received_msg() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -487,7 +487,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_delayed_message() {
+  async fn test_delayed_message() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
@@ -521,7 +521,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_ow_very_delayed_message() {
+  async fn test_very_delayed_message() {
     let mut ow1 = OlmWrapper::new(None);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);

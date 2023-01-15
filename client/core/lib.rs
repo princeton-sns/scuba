@@ -1,5 +1,6 @@
 mod olm_wrapper;
 mod server_comm;
+mod hash_vectors;
 
 use reqwest::{Result, Response};
 
@@ -37,12 +38,12 @@ mod tests {
   use futures::TryStreamExt;
 
   #[tokio::test]
-  async fn test_core_new() {
+  async fn test_new() {
     let _ = Core::new().await;
   }
 
   #[tokio::test]
-  async fn test_core_send_message() {
+  async fn test_send_message() {
     let payload = String::from("hello from me");
     let mut core = Core::new().await;
     let idkey = core.olm_wrapper.get_idkey();

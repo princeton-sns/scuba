@@ -7,19 +7,25 @@ use reqwest::{Result, Response};
 struct Core<'a> {
   olm_wrapper: olm_wrapper::OlmWrapper<'a>,
   server_comm: server_comm::ServerComm,
+  hash_vectors: hash_vectors::HashVectors,
 }
+
+// TODO event emitter
 
 impl<'a> Core<'a> {
   async fn new() -> Core<'a> {
     let olm_wrapper = olm_wrapper::OlmWrapper::new(None);
     let server_comm = server_comm::ServerComm::init(None, None, &olm_wrapper).await;
-    Self {
+    let hash_vectors = hash_vectors::HashVectors::new(olm_wrapper.get_idkey());
+    Core {
       olm_wrapper,
       server_comm,
+      hash_vectors
     }
   }
 
-  async fn send_message(&self, dst_idkeys: Vec<String>, payload: &String) -> Result<Response> {
+  async fn send_message(&mut self, dst_idkeys: Vec<String>, payload: &String) -> Result<Response> {
+    //let (common_payload, recipient_payloads) = self.hash_vectors.prepare_message(payload, dst_idkeys.clone());
     let mut batch = server_comm::Batch::new();
     for idkey in dst_idkeys {
       batch.push(server_comm::OutgoingMessage::new(&idkey, &payload.to_string()));

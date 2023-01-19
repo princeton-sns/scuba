@@ -1,3 +1,5 @@
+#![feature(is_sorted)]
+
 mod olm_wrapper;
 mod server_comm;
 mod hash_vectors;

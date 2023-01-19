@@ -3,6 +3,8 @@ use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use std::collections::HashMap;
 use crate::server_comm::ServerComm;
 
+// TODO sender-key optimization
+
 const NUM_OTKEYS : usize = 10;
 
 // TODO persist natively
@@ -13,6 +15,8 @@ pub struct OlmWrapper<'a> {
   message_queue: Vec<&'a str>,
   sessions     : HashMap<&'a str, Vec<OlmSession>>,
 }
+
+// TODO impl Error enum
 
 impl<'a> OlmWrapper<'a> {
   pub fn new(toggle_arg: Option<bool>) -> Self {
@@ -127,7 +131,7 @@ impl<'a> OlmWrapper<'a> {
     let sessions_list = self.sessions.get(sender).unwrap();
 
     // skip the len - 1'th session since that was already tried
-    for (_, session) in sessions_list.iter().rev().enumerate().skip(1) {
+    for session in sessions_list.iter().rev().skip(1) {
       match session.decrypt(ciphertext.clone()) {
         Ok(plaintext) => return plaintext,
         _ => continue,

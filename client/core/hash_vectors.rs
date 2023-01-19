@@ -6,6 +6,14 @@ pub type DeviceId = String;
 pub type Hash     = [u8; 32];
 pub type Message  = String;
 
+#[derive(Debug)]
+pub enum Error {
+  InvalidRecipientsOrder,
+  TooFewRecipients,
+  MissingSelfRecipient,
+  OwnMessageInvalidReordered,
+}
+
 fn hash_message<BD: Borrow<DeviceId>>(
   prev_digest: Option<&Hash>,
   // TODO Sorted/Ord constraint?
@@ -40,6 +48,12 @@ fn hash_message<BD: Borrow<DeviceId>>(
 struct VectorEntry {
   local_seq: usize,
   digest: Hash,
+}
+
+impl VectorEntry {
+  fn new(local_seq: usize, digest: Hash) -> Self {
+    VectorEntry { local_seq, digest }
+  }
 }
 
 #[derive(Debug, PartialEq)]
@@ -89,9 +103,9 @@ impl RecipientPayload {
     }
   }
 
-  fn set_consistency_loopback(&mut self) -> bool {
+  fn set_consistency_loopback(&mut self, consistency_loopback: bool) -> bool {
     let prev = self.consistency_loopback;
-    self.consistency_loopback = true;
+    self.consistency_loopback = consistency_loopback;
     prev
   }
 
@@ -130,6 +144,8 @@ impl HashVectors {
     }
   }
 
+  // TODO Vec<DeviceId> -> Vec<&DeviceId>
+
   pub fn prepare_message(
       &mut self,
       mut recipients: Vec<DeviceId>,
@@ -147,7 +163,7 @@ impl HashVectors {
       recipients.push(self.own_device.clone());
     }
 
-    recipients.clone().as_mut_slice().sort();
+    recipients.sort();
     self.register_message(recipients.clone(), message.clone());
 
     let mut recipient_payloads = HashMap::<DeviceId, RecipientPayload>::new();
@@ -155,7 +171,7 @@ impl HashVectors {
       let mut recipient_payload = RecipientPayload::new();
 
       if self.own_device.eq(recipient) {
-        recipient_payload.set_consistency_loopback();
+        recipient_payload.set_consistency_loopback(consistency_loopback);
       }
 
       match self.get_validation_payload(recipient) {
@@ -186,9 +202,112 @@ impl HashVectors {
     self.pending_messages.push_back(message_hash_entry);
   }
 
-  //fn insert_message() {}
-  //fn validate_vector() {}
-  //fn validate_trim_vector() {}
+  fn parse_message(
+      &mut self,
+      sender: &DeviceId,
+      common_payload: CommonPayload,
+      recipient_payload: &RecipientPayload,
+  ) -> Result<Option<(usize, Message)>, Error> {
+    println!("common_payload: {:?}", common_payload);
+    println!("recipient_payload: {:?}", recipient_payload);
+
+    // Recipients list is sorted sending-side
+    if !common_payload.recipients.iter().is_sorted() {
+      return Err(Error::InvalidRecipientsOrder);
+    }
+
+    match self.insert_message(
+        sender,
+        common_payload.recipients,
+        common_payload.message.clone(),
+    ) {
+      Ok(local_seq) => {
+        //let num_trimmed_entries = self.validate_trim_vector(
+        //    sender,
+        //    recipient_payload.validation_seq,
+        //    recipient_payload.validation_digest,
+        //);
+        //log::debug!("num_trimmed_entries: {:?}", num_trimmed_entries);
+
+        if *sender == self.own_device && recipient_payload.consistency_loopback {
+          // This message has been sent back to us just for the consistency
+          // validation, discard it
+          return Ok(None);
+        }
+
+        return Ok(Some((local_seq, common_payload.message)));
+      },
+      Err(err) => return Err(err),
+    }
+  }
+
+  fn insert_message(
+      &mut self,
+      sender: &DeviceId,
+      mut recipients: Vec<DeviceId>,
+      message: Message,
+  ) -> Result<usize, Error> {
+    if recipients.len() < 1 {
+      return Err(Error::TooFewRecipients);
+    }
+    let cloned_recipients = recipients.clone();
+    let mut recipients_iter = cloned_recipients.iter();
+    if !recipients_iter.clone().is_sorted() {
+      return Err(Error::InvalidRecipientsOrder);
+    }
+    if !recipients_iter.any(|x| x.eq(&self.own_device)) {
+      return Err(Error::MissingSelfRecipient);
+    }
+
+    // If this message was sent by us, ensure that it matches the
+    // head of the pending_messages queue. If it does not, the
+    // server must have reordered it or changed its contents or
+    // recipients
+    if *sender == self.own_device {
+      // We must have at least two elements in the VecDeque: the
+      // base (default) hash and the resulting (expected) message hash
+      let mut pending_messages_iter = self.pending_messages.iter();
+      let base_hash = pending_messages_iter.next().unwrap();
+      let expected_hash = pending_messages_iter
+          .next()
+          .ok_or(Error::OwnMessageInvalidReordered)?;
+
+      let calculated_hash = hash_message(
+        Some(base_hash),
+        &mut recipients,
+        message.clone(),
+      );
+
+      if *expected_hash != calculated_hash {
+        return Err(Error::OwnMessageInvalidReordered);
+      }
+
+      self.pending_messages.pop_front();
+    }
+
+    // Assign this message a sequence number from the device-global
+    // sequence space
+    let local_seq = self.local_seq;
+    self.local_seq += 1;
+
+    // Hash the message in the context of all its recipients'
+    // pairwise hash vectors
+    for recipient in recipients_iter.filter(
+        |r| **r != self.own_device) {
+      let vector = self.vectors.entry(recipient.to_string())
+          .or_insert_with(|| DeviceState::default());
+
+      let message_hash_entry = hash_message(
+        vector.vector.back().map(|entry| &entry.digest),
+        &mut recipients,
+        message.clone(),
+      );
+
+      vector.vector.push_back(VectorEntry::new(local_seq, message_hash_entry));
+    }
+
+    Ok(local_seq)
+  }
 
   fn get_validation_payload(&self, recipient: &DeviceId) -> Option<(usize, Hash)> {
     let recipient_vector = self.vectors.get(recipient)?;
@@ -197,6 +316,9 @@ impl HashVectors {
       recipient_vector.vector.back()?.digest.clone(),
     ))
   }
+
+  //fn validate_vector() {}
+  //fn validate_trim_vector() {}
 }
 
 #[cfg(test)]
@@ -222,7 +344,7 @@ mod test {
     let mut hash_vectors = HashVectors::new(idkey.clone());
     let mut recipients = vec![idkey];
 
-    let message_1 = String::from("first registered message");
+    let message_1 = String::from("first message");
     let hashed_message_1 = hash_message(
       Some(hash_vectors.pending_messages.back().unwrap()),
       &mut recipients,
@@ -234,7 +356,7 @@ mod test {
     let pending_messages_1 = VecDeque::from(vec![Hash::default(), hashed_message_1]);
     assert_eq!(hash_vectors.pending_messages, pending_messages_1);
 
-    let message_2 = String::from("second registered message");
+    let message_2 = String::from("second message");
     let hashed_message_2 = hash_message(
       Some(hash_vectors.pending_messages.back().unwrap()),
       &mut recipients,
@@ -256,21 +378,180 @@ mod test {
   }
 
   #[test]
-  fn test_prepare_first_message() {
+  fn test_prepare_first_message_to_self_only() {
     let idkey = String::from("0");
     let mut hash_vectors = HashVectors::new(idkey.clone());
     let recipients = vec![idkey.clone()];
-    let message = String::from("prepared message");
+    let message = String::from("test message");
 
     let (common_payload, recipient_payloads) = hash_vectors.prepare_message(recipients.clone(), message.clone());
     assert_eq!(common_payload, CommonPayload::new(recipients, message));
 
     let mut expected_recipient_payloads = HashMap::<DeviceId, RecipientPayload>::new();
     expected_recipient_payloads.insert(idkey, RecipientPayload {
-      consistency_loopback: true,
+      consistency_loopback: false,
       validation_seq: None,
       validation_digest: None,
     });
     assert_eq!(recipient_payloads, expected_recipient_payloads);
+  }
+
+  #[test]
+  fn test_prepare_first_message_to_self_and_others() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors = HashVectors::new(idkey_0.clone());
+    let recipients = vec![idkey_0.clone(), idkey_1.clone()];
+    let message = String::from("test message");
+
+    let (common_payload, recipient_payloads) = hash_vectors.prepare_message(recipients.clone(), message.clone());
+    assert_eq!(common_payload, CommonPayload::new(recipients, message));
+
+    let mut expected_recipient_payloads = HashMap::<DeviceId, RecipientPayload>::new();
+    expected_recipient_payloads.insert(idkey_0, RecipientPayload {
+      consistency_loopback: false,
+      validation_seq: None,
+      validation_digest: None,
+    });
+    expected_recipient_payloads.insert(idkey_1, RecipientPayload {
+      consistency_loopback: false,
+      validation_seq: None,
+      validation_digest: None,
+    });
+    assert_eq!(recipient_payloads, expected_recipient_payloads);
+  }
+
+  #[test]
+  fn test_prepare_first_message_to_others_only() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors = HashVectors::new(idkey_0.clone());
+    let recipients = vec![idkey_1.clone()];
+    let loopback_recipients = vec![idkey_0.clone(), idkey_1.clone()];
+    let message = String::from("test message");
+
+    let (common_payload, recipient_payloads) = hash_vectors.prepare_message(recipients.clone(), message.clone());
+    assert_eq!(common_payload, CommonPayload::new(loopback_recipients, message));
+
+    let mut expected_recipient_payloads = HashMap::<DeviceId, RecipientPayload>::new();
+    expected_recipient_payloads.insert(idkey_0, RecipientPayload {
+      consistency_loopback: true,
+      validation_seq: None,
+      validation_digest: None,
+    });
+    expected_recipient_payloads.insert(idkey_1, RecipientPayload {
+      consistency_loopback: false,
+      validation_seq: None,
+      validation_digest: None,
+    });
+    assert_eq!(recipient_payloads, expected_recipient_payloads);
+  }
+
+  //#[test]
+  //fn test_prepare_message_to_self_only() {}
+
+  //#[test]
+  //fn test_prepare_message_to_self_and_others() {}
+
+  //#[test]
+  //fn test_prepare_message_to_others_only() {}
+
+  #[test]
+  fn test_insert_first_message_to_self_only() {
+    let idkey = String::from("0");
+    let mut hash_vectors = HashVectors::new(idkey.clone());
+    let recipients = vec![idkey.clone()];
+    let message = String::from("test message");
+
+    let (_, _) = hash_vectors.prepare_message(recipients.clone(), message.clone());
+
+    match hash_vectors.insert_message(&idkey, recipients, message) {
+      Ok(seq) => assert_eq!(seq, 0),
+      Err(err) => panic!("Error inserting message: {:?}", err),
+    }
+  }
+
+  #[test]
+  fn test_insert_first_message_to_self_and_others() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors = HashVectors::new(idkey_0.clone());
+    let recipients = vec![idkey_0.clone(), idkey_1.clone()];
+    let message = String::from("test message");
+
+    let (_, _) = hash_vectors.prepare_message(recipients.clone(), message.clone());
+
+    match hash_vectors.insert_message(&idkey_0, recipients, message) {
+      Ok(seq) => assert_eq!(seq, 0),
+      Err(err) => panic!("Error inserting message: {:?}", err),
+    }
+  }
+
+  #[test]
+  fn test_insert_first_message_to_others_only() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
+    let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
+    let recipients = vec![idkey_1.clone()];
+    let message = String::from("test message");
+
+    let (_, _) = hash_vectors_0.prepare_message(recipients.clone(), message.clone());
+
+    match hash_vectors_1.insert_message(&idkey_0, recipients, message) {
+      Ok(seq) => assert_eq!(seq, 0),
+      Err(err) => panic!("Error inserting message: {:?}", err),
+    }
+  }
+
+  //#[test]
+  //fn test_insert_message_to_self_only() {}
+
+  //#[test]
+  //fn test_insert_message_to_self_and_others() {}
+
+  //#[test]
+  //fn test_insert_message_to_others_only() {}
+
+  //#[test]
+  //fn test_get_validation_payload() {}
+
+  #[test]
+  fn test_parse_first_message_to_self_only() {
+    let idkey = String::from("0");
+    let mut hash_vectors = HashVectors::new(idkey.clone());
+    let recipients = vec![idkey.clone()];
+    let message = String::from("test message");
+
+    let (common_payload, recipient_payloads) = hash_vectors.prepare_message(recipients.clone(), message.clone());
+
+    assert_eq!(hash_vectors.parse_message(&idkey, common_payload, recipient_payloads.get(&idkey).unwrap()).unwrap(), Some((0, message)));
+  }
+
+  #[test]
+  fn test_parse_first_message_to_self_and_others() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors = HashVectors::new(idkey_0.clone());
+    let recipients = vec![idkey_0.clone(), idkey_1.clone()];
+    let message = String::from("test message");
+
+    let (common_payload, recipient_payloads) = hash_vectors.prepare_message(recipients.clone(), message.clone());
+
+    assert_eq!(hash_vectors.parse_message(&idkey_0, common_payload, recipient_payloads.get(&idkey_1).unwrap()).unwrap(), Some((0, message)));
+  }
+
+  #[test]
+  fn test_parse_first_message_to_others_only() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
+    let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
+    let recipients = vec![idkey_1.clone()];
+    let message = String::from("test message");
+
+    let (common_payload, recipient_payloads) = hash_vectors_0.prepare_message(recipients.clone(), message.clone());
+
+    assert_eq!(hash_vectors_1.parse_message(&idkey_0, common_payload, recipient_payloads.get(&idkey_1).unwrap()).unwrap(), Some((0, message)));
   }
 }

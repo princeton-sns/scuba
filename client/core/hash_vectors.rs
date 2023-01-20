@@ -153,7 +153,7 @@ impl HashVectors {
   ) -> (CommonPayload, HashMap<DeviceId, RecipientPayload>) {
     let mut consistency_loopback = true;
     for recipient in recipients.iter() {
-      if self.own_device.eq(recipient) {
+      if self.own_device == *recipient {
         consistency_loopback = false;
         break;
       }
@@ -168,24 +168,35 @@ impl HashVectors {
 
     let mut recipient_payloads = HashMap::<DeviceId, RecipientPayload>::new();
     for recipient in recipients.iter() {
-      let mut recipient_payload = RecipientPayload::new();
-
-      if self.own_device.eq(recipient) {
-        recipient_payload.set_consistency_loopback(consistency_loopback);
-      }
-
-      match self.get_validation_payload(recipient) {
-        Some(validation_payload) => {
-          recipient_payload.set_validation_seq(validation_payload.0);
-          recipient_payload.set_validation_digest(validation_payload.1);
-        },
-        None => log::debug!("no validation payload"),
-      }
-
-      recipient_payloads.insert(recipient.to_string(), recipient_payload);
+      recipient_payloads.insert(
+          recipient.to_string(),
+          self.construct_payload(recipient, consistency_loopback)
+      );
     }
 
     (CommonPayload::new(recipients, message), recipient_payloads)
+  }
+
+  fn construct_payload(
+      &self,
+      recipient: &DeviceId,
+      consistency_loopback: bool,
+  ) -> RecipientPayload {
+    let mut recipient_payload = RecipientPayload::new();
+
+    if self.own_device == *recipient {
+      recipient_payload.set_consistency_loopback(consistency_loopback);
+    }
+
+    match self.get_validation_payload(recipient) {
+      Some(validation_payload) => {
+        recipient_payload.set_validation_seq(validation_payload.0);
+        recipient_payload.set_validation_digest(validation_payload.1);
+      },
+      None => log::debug!("no validation payload"),
+    }
+
+    recipient_payload
   }
 
   fn register_message(
@@ -255,7 +266,7 @@ impl HashVectors {
     if !recipients_iter.clone().is_sorted() {
       return Err(Error::InvalidRecipientsOrder);
     }
-    if !recipients_iter.any(|x| x.eq(&self.own_device)) {
+    if !recipients_iter.any(|x| x == &self.own_device) {
       return Err(Error::MissingSelfRecipient);
     }
 

@@ -398,12 +398,10 @@ mod test {
     let recipients = vec![idkey.clone()];
     let message = String::from("test message");
 
-    println!("hash_vectors: {:?}", hash_vectors);
     let (common_payload, recipient_payloads) = hash_vectors.prepare_message(
         recipients.clone(),
         message.clone()
     );
-    println!("hash_vectors: {:?}", hash_vectors);
     assert_eq!(common_payload, CommonPayload::new(recipients, message));
 
     let mut expected_recipient_payloads = HashMap::<DeviceId, RecipientPayload>::new();
@@ -716,6 +714,96 @@ mod test {
             recipient_payloads.get(&idkey_0).unwrap()
         ).unwrap(),
         None
+    );
+  }
+
+  #[test]
+  fn test_multiple_prepares_and_parses() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
+    let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
+
+    let message_1 = String::from("first message");
+    let message_2 = String::from("second message");
+    let message_3 = String::from("third message");
+
+    // 0 sends first msg to 1
+    let (common_payload_1, recipient_payloads_1) = hash_vectors_0.prepare_message(
+      vec![idkey_1.clone()],
+      message_1.clone()
+    );
+
+    // 1 receives first msg from 0
+    assert_eq!(
+        hash_vectors_1.parse_message(
+            &idkey_0,
+            common_payload_1.clone(),
+            recipient_payloads_1.get(&idkey_1).unwrap()
+        ).unwrap(),
+        Some((0, message_1.clone()))
+    );
+
+    // 0 receives first msg back (loopback)
+    assert_eq!(
+        hash_vectors_0.parse_message(
+            &idkey_0,
+            common_payload_1.clone(),
+            recipient_payloads_1.get(&idkey_0).unwrap()
+        ).unwrap(),
+        None
+    );
+
+    // 1 sends second msg to 1
+    let (common_payload_2, recipient_payloads_2) = hash_vectors_1.prepare_message(
+      vec![idkey_0.clone()],
+      message_2.clone()
+    );
+
+    // 0 receives second msg from 1
+    assert_eq!(
+        hash_vectors_0.parse_message(
+            &idkey_1,
+            common_payload_2.clone(),
+            recipient_payloads_2.get(&idkey_0).unwrap()
+        ).unwrap(),
+        Some((1, message_2.clone()))
+    );
+
+    // 1 receives second msg back (loopback)
+    assert_eq!(
+        hash_vectors_1.parse_message(
+            &idkey_1,
+            common_payload_2.clone(),
+            recipient_payloads_2.get(&idkey_1).unwrap()
+        ).unwrap(),
+        None
+    );
+
+    // 0 sends third msg to 0 and 1
+    let (common_payload_3, recipient_payloads_3) = hash_vectors_0.prepare_message(
+      vec![idkey_0.clone(), idkey_1.clone()],
+      message_3.clone()
+    );
+
+    // 1 receives third msg from 0
+    assert_eq!(
+        hash_vectors_1.parse_message(
+            &idkey_0,
+            common_payload_3.clone(),
+            recipient_payloads_3.get(&idkey_1).unwrap()
+        ).unwrap(),
+        Some((2, message_3.clone()))
+    );
+
+    // 0 receives third msg back (not loopback)
+    assert_eq!(
+        hash_vectors_0.parse_message(
+            &idkey_0,
+            common_payload_3.clone(),
+            recipient_payloads_3.get(&idkey_0).unwrap()
+        ).unwrap(),
+        Some((2, message_3.clone()))
     );
   }
 }

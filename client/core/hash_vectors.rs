@@ -11,6 +11,7 @@ pub enum Error {
   TooFewRecipients,
   MissingSelfRecipient,
   OwnMessageInvalidReordered,
+  InvariantViolated,
 }
 
 fn hash_message(
@@ -227,12 +228,17 @@ impl HashVectors {
         common_payload.message.clone(),
     ) {
       Ok(local_seq) => {
-        //let num_trimmed_entries = self.validate_trim_vector(
-        //    sender,
-        //    recipient_payload.validation_seq,
-        //    recipient_payload.validation_digest,
-        //);
-        //log::debug!("num_trimmed_entries: {:?}", num_trimmed_entries);
+        let validation_payload = match 
+            (recipient_payload.validation_seq, recipient_payload.validation_digest) {
+          (Some(seq), Some(digest)) => Some((seq, digest)),
+          (None, None) => None,
+          (_, _) => panic!("Invalid arguments to validate_trim_vector"),
+        };
+        let num_trimmed_entries = self.validate_trim_vector(
+            sender,
+            validation_payload,
+        );
+        log::debug!("num_trimmed_entries: {:?}", num_trimmed_entries);
 
         if *sender == self.own_device && recipient_payload.consistency_loopback {
           // This message has been sent back to us just for the consistency
@@ -327,8 +333,113 @@ impl HashVectors {
     ))
   }
 
-  //fn validate_vector() {}
-  //fn validate_trim_vector() {}
+  fn validate_vector(
+      &mut self,
+      validation_sender: &DeviceId,
+      validation_payload: Option<(usize, Hash)>,
+  ) -> Result<(), Error> {
+    // We never send validation payloads to ourselves and hence
+    // can never use loopback messages to trim any hash vectors
+    if *validation_sender == self.own_device {
+      assert!(validation_payload.is_none());
+      return Ok(());
+    }
+
+    // TODO return Error if did not receive a validation payload
+    // when one was expected
+    let (seq, hash) = match validation_payload {
+      Some((seq, hash)) => (seq, hash),
+      None => return Ok(()),
+    };
+
+    // If this vp comes from a sender we have not yet interacted
+    // with, an invariant has been violated
+    let pairwise_vector = self.vectors.get_mut(validation_sender)
+        .ok_or_else(|| {
+          log::debug!(
+              "validate_vector: invariant violated - validation \
+              payload from unknown sender ({:?})",
+              validation_sender
+          );
+          Error::InvariantViolated
+        })?;
+
+    // If this vp refers to a sequence number we haven't seen yet or have
+    // already trimmed, an invariant has been violated
+    if seq < pairwise_vector.offset
+        || seq > (pairwise_vector.offset + pairwise_vector.vector.len()) {
+      log::debug!(
+          "validate_vector: invariant violated - validation payload \
+          sent by {:?} refers to invalid sequence number {}. Valid \
+          sequence numbers are within [{}; {})",
+          validation_sender,
+          seq,
+          pairwise_vector.offset,
+          pairwise_vector.offset + pairwise_vector.vector.len()
+      );
+      return Err(Error::InvariantViolated);
+    }
+
+    // Referenced sequence number is valid, so check that hashes match
+    println!(
+        "{:?}: Validating {}, {:?} vs {:?}",
+        self.own_device,
+        seq,
+        &pairwise_vector.vector[seq - pairwise_vector.offset],
+        hash
+    );
+
+    if pairwise_vector.vector[seq - pairwise_vector.offset].digest != hash {
+      log::debug!(
+          "validate_vector: invariant violated - validation payload \
+          send by {:?} has incorrect hash for sequence number {}: \
+          expected: {:?}, actual: {:?}",
+          validation_sender,
+          seq,
+          pairwise_vector.vector[seq - pairwise_vector.offset],
+          hash
+      );
+      return Err(Error::InvariantViolated);
+    }
+
+    // Hashes match; update local sequence number (points to the first 
+    // non-validated local sequence number)
+    pairwise_vector.validated_local_seq = std::cmp::max(
+      pairwise_vector.validated_local_seq,
+      pairwise_vector.vector[seq - pairwise_vector.offset].local_seq,
+    ) + 1;
+
+    Ok(())
+  }
+
+  fn validate_trim_vector(
+      &mut self,
+      validation_sender: &DeviceId,
+      validation_payload: Option<(usize, Hash)>,
+  ) -> Result<usize, Error> {
+    // Validate if validation payload should be accepted
+    self.validate_vector(
+        validation_sender,
+        validation_payload,
+    )?;
+
+    // Trim the hash vectors
+    if let Some((seq, _)) = validation_payload {
+      let pairwise_vector = self.vectors.get_mut(validation_sender).unwrap();
+
+      // Trim the vector up to, but excluding, the referenced seq num
+      let mut trimmed = 0;
+      while pairwise_vector.offset < seq {
+        trimmed += 1;
+        pairwise_vector.offset += 1;
+        pairwise_vector.vector.pop_front();
+      }
+      Ok(trimmed)
+
+    } else {
+      Ok(0)
+    }
+  }
 }
 
 #[cfg(test)]
@@ -347,6 +458,8 @@ mod test {
     assert_eq!(hash_vectors.vectors, HashMap::new());
     assert_eq!(hash_vectors.local_seq, 0);
   }
+
+  /* register_message tests */
 
   #[test]
   fn test_register_first_message_to_self_only() {
@@ -383,6 +496,8 @@ mod test {
     assert_eq!(hash_vectors.pending_messages, pending_messages);
   }
 
+  /* get_validation_payload tests */
+
   #[test]
   fn test_get_validation_payload_empty() {
     let idkey = String::from("0");
@@ -390,6 +505,8 @@ mod test {
     let validation_payload = hash_vectors.get_validation_payload(&idkey);
     assert_eq!(validation_payload, None);
   }
+
+  /* prepare_message tests */
 
   #[test]
   fn test_prepare_first_message_to_self_only() {
@@ -469,6 +586,8 @@ mod test {
     });
     assert_eq!(recipient_payloads, expected_recipient_payloads);
   }
+
+  /* insert_message tests */
 
   #[test]
   fn test_insert_first_message_to_self_only() {
@@ -629,6 +748,8 @@ mod test {
     }
   }
 
+  /* parse_message tests */
+
   #[test]
   fn test_parse_first_message_to_self_only() {
     let idkey = String::from("0");
@@ -716,6 +837,114 @@ mod test {
         None
     );
   }
+
+  /* validate_trim_vector tests */
+
+  #[test]
+  fn test_validate_trim_vector() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
+    let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
+    let recipients = vec![idkey_0.clone(), idkey_1.clone()];
+
+    let message_1 = String::from("first message");
+    let message_2 = String::from("second message");
+    let message_3 = String::from("third message");
+
+    // 0 -> 1
+    assert!(hash_vectors_0.get_validation_payload(&idkey_1).is_none());
+    let (_, recipient_payloads_0) =
+        hash_vectors_0.prepare_message(recipients.clone(), message_1.clone());
+
+    // 1 receives message from 0
+    assert_eq!(recipient_payloads_0.get(&idkey_1).unwrap().validation_seq, None);
+    assert_eq!(recipient_payloads_0.get(&idkey_1).unwrap().validation_digest, None);
+    let trimmed = hash_vectors_1.validate_trim_vector(
+        &idkey_0,
+        None::<(usize, Hash)>,
+    ).unwrap();
+    assert_eq!(trimmed, 0);
+    hash_vectors_1.insert_message(
+      &idkey_0,
+      recipients.clone(),
+      message_1.clone(),
+    ).unwrap();
+
+    // 0 receives own message
+    assert_eq!(recipient_payloads_0.get(&idkey_0).unwrap().validation_seq, None);
+    assert_eq!(recipient_payloads_0.get(&idkey_0).unwrap().validation_digest, None);
+    let trimmed = hash_vectors_0.validate_trim_vector(
+        &idkey_0,
+        None::<(usize, Hash)>,
+    ).unwrap();
+    assert_eq!(trimmed, 0);
+    hash_vectors_0.insert_message(
+      &idkey_0,
+      recipients.clone(),
+      message_1.clone(),
+    ).unwrap();
+
+    // 1 -> 0
+    let message_2_vp = hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
+    assert_eq!(message_2_vp.0, 0);
+    hash_vectors_1.prepare_message(recipients.clone(), message_2.clone());
+
+    // 1 receives own message
+    let trimmed = hash_vectors_1.validate_trim_vector(
+        &idkey_1,
+        None::<(usize, Hash)>,
+    ).unwrap();
+    assert_eq!(trimmed, 0);
+    hash_vectors_1.insert_message(
+      &idkey_1,
+      recipients.clone(),
+      message_2.clone(),
+    ).unwrap();
+
+    // 0 receives message from 1
+    let trimmed = hash_vectors_0.validate_trim_vector(
+        &idkey_1,
+        None::<(usize, Hash)>,
+    ).unwrap();
+    assert_eq!(trimmed, 0);
+    hash_vectors_0.insert_message(
+      &idkey_1,
+      recipients.clone(),
+      message_2,
+    ).unwrap();
+
+    // 0 -> 1
+    let message_3_vp = hash_vectors_0.get_validation_payload(&idkey_1).unwrap();
+    assert_eq!(message_3_vp.0, 1);
+    hash_vectors_0.prepare_message(recipients.clone(), message_3.clone());
+
+    // 0 receives own message
+    let trimmed = hash_vectors_0.validate_trim_vector(
+      &idkey_0,
+      None::<(usize, Hash)>,
+    ).unwrap();
+    assert_eq!(trimmed, 0);
+    hash_vectors_0.insert_message(
+      &idkey_0,
+      recipients.clone(),
+      message_3.clone(),
+    ).unwrap();
+
+    // 1 receives message from 0
+    let trimmed = hash_vectors_1.validate_trim_vector(
+      &idkey_0,
+      Some((message_3_vp.0, message_3_vp.1))
+    ).unwrap();
+    assert_eq!(trimmed, 1);
+    hash_vectors_1.insert_message(
+      &idkey_0,
+      recipients.clone(),
+      message_3
+    ).unwrap();
+  }
+
+  /* more complex tests */
 
   #[test]
   fn test_multiple_prepares_and_parses() {
@@ -805,5 +1034,92 @@ mod test {
         ).unwrap(),
         Some((2, message_3.clone()))
     );
+  }
+
+  #[test]
+  fn test_send_and_trim_base() {
+    let idkey_0 = String::from("0");
+    let idkey_1 = String::from("1");
+    let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
+    let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
+    let recipients = vec![idkey_0.clone(), idkey_1.clone()];
+
+    // 0 -> 1 (no validation payload)
+    let message_0 = String::from("Hi Bob!");
+    let (common_payload_0, recipient_payloads_0) = 
+        hash_vectors_0.prepare_message(recipients.clone(), message_0.clone());
+
+    // 1 receives message from 0
+    let (seq, received_msg_0) = hash_vectors_1.parse_message(
+        &idkey_0,
+        common_payload_0.clone(),
+        recipient_payloads_0.get(&idkey_1).unwrap()
+    ).unwrap().unwrap();
+    assert_eq!(seq, 0);
+    assert_eq!(received_msg_0, message_0);
+
+    // 0 receives own message
+    let (seq, received_msg_0) = hash_vectors_0.parse_message(
+        &idkey_0,
+        common_payload_0,
+        recipient_payloads_0.get(&idkey_1).unwrap()
+    ).unwrap().unwrap();
+    assert_eq!(seq, 0);
+    assert_eq!(received_msg_0, message_0);
+
+    // 1 replies to 0 (with validation payload)
+    let message_1 = String::from("Hey Alice, how are you?");
+    let message_1_vp = hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
+    // seq num
+    assert_eq!(message_1_vp.0, 0);
+    let (common_payload_1, recipient_payloads_1) = 
+        hash_vectors_1.prepare_message(recipients.clone(), message_1.clone());
+
+    // 1 receives own message
+    let (seq, received_msg_1) = hash_vectors_1.parse_message(
+        &idkey_1,
+        common_payload_1.clone(),
+        recipient_payloads_1.get(&idkey_1).unwrap()
+    ).unwrap().unwrap();
+    assert_eq!(seq, 1);
+    assert_eq!(received_msg_1, message_1);
+
+    // 0 receives message from 1 (nothing trimmed yet)
+    let (seq, received_msg_1) = hash_vectors_0.parse_message(
+        &idkey_1,
+        common_payload_1.clone(),
+        recipient_payloads_1.get(&idkey_1).unwrap()
+    ).unwrap().unwrap();
+    assert_eq!(seq, 1);
+    assert_eq!(received_msg_1, message_1);
+
+    // 0 replies to 1 (with validation payload)
+    let message_2 = String::from("I'm good, thanks for asking!");
+    let message_2_vp = hash_vectors_0.get_validation_payload(&idkey_1).unwrap();
+    // seq num
+    assert_eq!(message_2_vp.0, 1);
+    let (common_payload_2, recipient_payloads_2) =
+        hash_vectors_0.prepare_message(recipients.clone(), message_2.clone());
+
+    // 0 receives own message
+    let (seq, received_msg_2) = hash_vectors_0.parse_message(
+        &idkey_0,
+        common_payload_2.clone(),
+        recipient_payloads_2.get(&idkey_0).unwrap()
+    ).unwrap().unwrap();
+    assert_eq!(seq, 2);
+    assert_eq!(received_msg_2, message_2);
+
+    // 1 receives message from 0 (trims the first message)
+    println!("hash_vecs_1: {:?}", hash_vectors_1.vectors);
+    let (seq, received_msg_2) = hash_vectors_1.parse_message(
+        &idkey_0,
+        common_payload_2.clone(),
+        recipient_payloads_2.get(&idkey_1).unwrap()
+    ).unwrap().unwrap();
+    assert_eq!(seq, 2);
+    assert_eq!(received_msg_2, message_2);
+    // TODO check trimmed state
+    println!("hash_vecs_1: {:?}", hash_vectors_1.vectors);
   }
 }

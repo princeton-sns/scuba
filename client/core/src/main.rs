@@ -1,6 +1,15 @@
-//use noise_core_lib::core::Core;
+use noise_core_lib::core::Core;
 
 fn main() {
-  //let core = Core::new().await;
-  println!("in main");
+  let mut core = Core::new();
+
+  tokio::runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()
+      .unwrap()
+      .block_on(async {
+        loop {
+          core.handle_events().await;
+        }
+      })
 }

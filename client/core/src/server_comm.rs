@@ -107,12 +107,12 @@ impl IncomingMessage {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ToDelete {
+pub struct ToDelete {
   seq_id: u64,
 }
 
 impl ToDelete {
-  fn from_seq_id(seq_id: u64) -> Self {
+  pub fn from_seq_id(seq_id: u64) -> Self {
     Self { seq_id }
   }
 }
@@ -200,7 +200,7 @@ impl ServerComm {
         .await
   }
 
-  async fn delete_messages_from_server(&self, to_delete: &ToDelete) -> Result<Response> {
+  pub async fn delete_messages_from_server(&self, to_delete: &ToDelete) -> Result<Response> {
     self.client.delete(self.base_url.join("/self/messages").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -209,7 +209,7 @@ impl ServerComm {
         .await
   }
 
-  async fn add_otkeys_to_server<'a>(&self, to_add: &HashMap<String, String>) -> Result<Response> {
+  pub async fn add_otkeys_to_server<'a>(&self, to_add: &HashMap<String, String>) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))

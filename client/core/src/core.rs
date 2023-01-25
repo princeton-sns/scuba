@@ -2,7 +2,7 @@ use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::olm_wrapper::OlmWrapper;
-use crate::server_comm::{ServerComm, Batch, OutgoingMessage, Payload, Event, IncomingMessage};
+use crate::server_comm::{ServerComm, Batch, OutgoingMessage, Payload, Event, IncomingMessage, ToDelete};
 use crate::hash_vectors::{HashVectors, CommonPayload, RecipientPayload};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,15 +50,21 @@ pub struct Core {
 // TODO event emitter
 
 impl Core {
-  pub async fn new() -> Core {
+  pub fn new() -> Core {
+    let olm_wrapper = OlmWrapper::new(None);
+    let idkey = olm_wrapper.get_idkey();
+    let server_comm = ServerComm::new(None, None, idkey.clone());
+    let hash_vectors = HashVectors::new(idkey);
+
+    Core { olm_wrapper, server_comm, hash_vectors }
+  }
+
+  pub async fn new_and_init() -> Core {
     let olm_wrapper = OlmWrapper::new(None);
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
     let hash_vectors = HashVectors::new(olm_wrapper.get_idkey());
-    Core {
-      olm_wrapper,
-      server_comm,
-      hash_vectors
-    }
+
+    Core { olm_wrapper, server_comm, hash_vectors }
   }
 
   async fn send_message(
@@ -95,7 +101,7 @@ impl Core {
     self.server_comm.send_message(&batch).await
   }
 
-  async fn get_events(&mut self) {
+  pub async fn handle_events(&mut self) {
     use futures::TryStreamExt;
 
     match self.server_comm.try_next().await {
@@ -110,10 +116,20 @@ impl Core {
 
         let full_payload = FullPayload::from_string(decrypted);
         println!("full_payload: {:?}", full_payload);
+
+        match self.server_comm.delete_messages_from_server(
+            &ToDelete::from_seq_id(msg.seq_id())
+        ).await {
+          Ok(_) => println!("Sent delete-message successfully"),
+          Err(err) => panic!("Error sending delete-message: {:?}", err),
+        }
       },
       Ok(Some(Event::Otkey)) => {
-        // TODO add otkeys
-        println!("TODO need more otkeys");
+        let otkeys = self.olm_wrapper.generate_otkeys(None);
+        match self.server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
+          Ok(_) => println!("Sent otkeys successfully"),
+          Err(err) => panic!("Error sending otkeys: {:?}", err),
+        }
       },
       Ok(None) => panic!("Got <None> event from server"),
       Err(err) => panic!("Got error while awaiting events from server: {:?}", err),
@@ -125,18 +141,22 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-  use super::{Core, Event, IncomingMessage, FullPayload};
   use futures::TryStreamExt;
 
   #[tokio::test]
   async fn test_new() {
-    let _ = Core::new().await;
+    let _ = Core::new();
+  }
+
+  #[tokio::test]
+  async fn test_new_and_init() {
+    let _ = Core::new_and_init().await;
   }
 
   #[tokio::test]
   async fn test_send_message_to_self() {
     let payload = String::from("hello from me");
-    let mut core = Core::new().await;
+    let mut core = Core::new_and_init().await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey];
 
@@ -154,6 +174,13 @@ mod tests {
 
             let full_payload = FullPayload::from_string(decrypted);
             assert_eq!(*full_payload.common().message(), payload);
+
+            match core.server_comm.delete_messages_from_server(
+                &ToDelete::from_seq_id(msg.seq_id())
+            ).await {
+              Ok(_) => println!("Sent delete-message successfully"),
+              Err(err) => panic!("Error sending delete-message: {:?}", err),
+            }
           },
           Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
           Ok(None) => panic!("FAIL got none"),
@@ -167,8 +194,8 @@ mod tests {
   #[tokio::test]
   async fn test_send_message_to_other() {
     let payload = String::from("hello from me");
-    let mut core_0 = Core::new().await;
-    let mut core_1 = Core::new().await;
+    let mut core_0 = Core::new_and_init().await;
+    let mut core_1 = Core::new_and_init().await;
     let idkey_1 = core_1.olm_wrapper.get_idkey();
     let recipients = vec![idkey_1];
 

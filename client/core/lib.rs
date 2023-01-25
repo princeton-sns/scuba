@@ -163,13 +163,11 @@ mod tests {
     }
   }
 
-  /*
   #[tokio::test]
   async fn test_send_message_to_other() {
     let payload = String::from("hello from me");
     let mut core_0 = Core::new().await;
     let mut core_1 = Core::new().await;
-    //let idkey_0 = core_0.olm_wrapper.get_idkey();
     let idkey_1 = core_1.olm_wrapper.get_idkey();
     let recipients = vec![idkey_1];
 
@@ -177,7 +175,17 @@ mod tests {
       Ok(_) => {
         match core_1.server_comm.try_next().await {
           Ok(Some(server_comm::Event::Msg(msg_string))) => {
-            println!("msg_string: {:?}", msg_string);
+            let msg: server_comm::IncomingMessage = 
+                server_comm::IncomingMessage::from_string(msg_string);
+
+            let decrypted = core_1.olm_wrapper.decrypt(
+              msg.payload().c_type(),
+              &msg.payload().ciphertext(),
+              &msg.sender()
+            );
+
+            let full_payload = FullPayload::from_string(decrypted);
+            assert_eq!(*full_payload.common().message(), payload);
           },
           Ok(Some(server_comm::Event::Otkey)) => panic!("FAIL got otkey event"),
           Ok(None) => panic!("FAIL got none"),
@@ -187,5 +195,4 @@ mod tests {
       Err(err) => panic!("error: {:?}", err),
     }
   }
-  */
 }

@@ -5,7 +5,7 @@ use crate::server_comm::ServerComm;
 
 // TODO sender-key optimization
 
-const NUM_OTKEYS : usize = 10;
+const NUM_OTKEYS : usize = 20;
 
 // TODO persist natively
 pub struct OlmWrapper {

@@ -40,8 +40,29 @@ impl Batch {
     self.batch.push(message);
   }
 
-  pub fn pop(&mut self) -> Option<OutgoingMessage> {
-    self.batch.pop()
+  //pub fn pop(&mut self) -> Option<OutgoingMessage> {
+  //  self.batch.pop()
+  //}
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Payload {
+  c_type: usize,
+  ciphertext: String,
+}
+
+impl Payload {
+  pub fn new(c_type: usize, ciphertext: String) -> Payload {
+    Self { c_type, ciphertext }
+  }
+
+  pub fn c_type(&self) -> usize {
+    self.c_type
+  }
+
+  pub fn ciphertext(&self) -> &String {
+    &self.ciphertext
   }
 }
 
@@ -49,29 +70,38 @@ impl Batch {
 #[serde(rename_all = "camelCase")]
 pub struct OutgoingMessage {
   device_id: String,
-  payload: String,
+  payload: Payload,
 }
 
 impl OutgoingMessage {
-  pub fn new<'a>(device_id: &'a str, payload: &'a str) -> Self {
-    Self {
-      device_id: device_id.to_string(),
-      payload: payload.to_string(),
-    }
+  pub fn new(device_id: String, payload: Payload) -> OutgoingMessage {
+    Self { device_id, payload }
   }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IncomingMessage<'a> {
-  sender: &'a str,
-  enc_payload: &'a str,
+pub struct IncomingMessage {
+  sender: String,
+  payload: Payload,
   seq_id: u64,
 }
 
-impl<'a> IncomingMessage<'a> {
-  pub fn from_str(msg: &'a str) -> Self {
-    serde_json::from_str(msg).unwrap()
+impl IncomingMessage {
+  pub fn from_string(msg: String) -> Self {
+    serde_json::from_str(msg.as_str()).unwrap()
+  }
+
+  pub fn sender(&self) -> &String {
+    &self.sender
+  }
+
+  pub fn payload(&self) -> &Payload {
+    &self.payload
+  }
+
+  pub fn seq_id(&self) -> u64 {
+    self.seq_id
   }
 }
 
@@ -135,7 +165,7 @@ impl ServerComm {
     ip_arg: Option<&'a str>,
     port_arg: Option<&'a str>,
     //emitter
-    olm_wrapper: &'a OlmWrapper<'a>,
+    olm_wrapper: &OlmWrapper,
   ) -> Self {
     let mut server_comm = ServerComm::new(ip_arg, port_arg, olm_wrapper.get_idkey());
     match server_comm.try_next().await {
@@ -146,12 +176,12 @@ impl ServerComm {
           Err(err) => panic!("Error sending otkeys: {:?}", err),
         }
       },
-      _ => panic!("Unexpected result"),
+      _ => panic!("Unexpected event from server"),
     }
     server_comm
   }
 
-  pub async fn send_message<'a>(&self, batch: &'a Batch) -> Result<Response> {
+  pub async fn send_message(&self, batch: &Batch) -> Result<Response> {
     self.client.post(self.base_url.join("/message").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -170,7 +200,7 @@ impl ServerComm {
         .await
   }
 
-  async fn delete_messages_from_server<'a>(&self, to_delete: &'a ToDelete) -> Result<Response> {
+  async fn delete_messages_from_server(&self, to_delete: &ToDelete) -> Result<Response> {
     self.client.delete(self.base_url.join("/self/messages").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -179,7 +209,7 @@ impl ServerComm {
         .await
   }
 
-  async fn add_otkeys_to_server<'a>(&self, to_add: &'a HashMap<String, String>) -> Result<Response> {
+  async fn add_otkeys_to_server<'a>(&self, to_add: &HashMap<String, String>) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -217,7 +247,7 @@ impl Stream for ServerComm {
 
 #[cfg(test)]
 mod tests {
-  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete};
+  use super::{Event, ServerComm, Batch, OutgoingMessage, IncomingMessage, ToDelete, Payload};
   use futures::TryStreamExt;
   use crate::olm_wrapper::OlmWrapper;
 
@@ -237,16 +267,22 @@ mod tests {
   async fn test_send_message() {
     let idkey = String::from("efgh");
     let payload = String::from("hello");
-    let batch = Batch::from_vec(vec![OutgoingMessage::new(&idkey, &payload)]);
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(
+        idkey.clone(),
+        Payload::new(0, payload.clone())
+    )]);
+
     let mut server_comm = ServerComm::new(None, None, idkey.clone());
     assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
+
     match server_comm.send_message(&batch).await {
       Ok(_) => {
         match server_comm.try_next().await {
           Ok(Some(Event::Msg(msg_string))) => {
-            let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
+            let msg: IncomingMessage =
+                serde_json::from_str(msg_string.as_str()).unwrap();
             assert_eq!(msg.sender, idkey);
-            assert_eq!(msg.enc_payload, payload);
+            assert_eq!(msg.payload.ciphertext, payload);
           },
           Ok(Some(Event::Otkey)) => panic!("Got otkey event"),
           Ok(None) => panic!("Got none"),
@@ -261,18 +297,25 @@ mod tests {
   async fn test_delete_messages() {
     let idkey = String::from("ijkl");
     let payload = String::from("hello");
-    let batch = Batch::from_vec(vec![OutgoingMessage::new(&idkey, &payload)]);
+    let batch = Batch::from_vec(vec![OutgoingMessage::new(
+        idkey.clone(),
+        Payload::new(0, payload.clone())
+    )]);
+
     let mut server_comm = ServerComm::new(None, None, idkey.clone());
     assert_eq!(server_comm.try_next().await, Ok(Some(Event::Otkey)));
+
     match server_comm.send_message(&batch).await {
       Ok(_) => {
         match server_comm.try_next().await {
           Ok(Some(Event::Msg(msg_string))) => {
-            let msg: IncomingMessage<'_> = serde_json::from_str(msg_string.as_str()).unwrap();
+            let msg: IncomingMessage =
+                serde_json::from_str(msg_string.as_str()).unwrap();
             assert_eq!(msg.sender, idkey);
-            assert_eq!(msg.enc_payload, payload);
+            assert_eq!(msg.payload.ciphertext, payload);
             assert!(msg.seq_id > 0);
             println!("msg.seq_id: {:?}", msg.seq_id);
+
             match server_comm.delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id)).await {
               Ok(_) => println!("Sent delete-message successfully"),
               Err(err) => panic!("Error sending delete-message: {:?}", err),

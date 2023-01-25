@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use serde::{Deserialize, Serialize};
 
 pub type DeviceId = String;
 pub type Hash     = [u8; 32];
@@ -75,7 +76,7 @@ impl Default for DeviceState {
   }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CommonPayload {
   recipients: Vec<DeviceId>,
   message: Message,
@@ -85,9 +86,13 @@ impl CommonPayload {
   fn new(recipients: Vec<DeviceId>, message: Message) -> Self {
     CommonPayload { recipients, message }
   }
+
+  pub fn message(&self) -> &Message {
+    &self.message
+  }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecipientPayload {
   consistency_loopback: bool,
   validation_seq: Option<usize>,

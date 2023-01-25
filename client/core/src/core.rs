@@ -1,15 +1,9 @@
-#![feature(is_sorted)]
-
-mod olm_wrapper;
-mod server_comm;
-mod hash_vectors;
-
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
 
-use olm_wrapper::OlmWrapper;
-use server_comm::{ServerComm, Batch, OutgoingMessage, Payload};
-use hash_vectors::{HashVectors, CommonPayload, RecipientPayload};
+use crate::olm_wrapper::OlmWrapper;
+use crate::server_comm::{ServerComm, Batch, OutgoingMessage, Payload, Event, IncomingMessage};
+use crate::hash_vectors::{HashVectors, CommonPayload, RecipientPayload};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FullPayload {
@@ -47,7 +41,7 @@ impl FullPayload {
   }
 }
 
-struct Core {
+pub struct Core {
   olm_wrapper: OlmWrapper,
   server_comm: ServerComm,
   hash_vectors: HashVectors,
@@ -56,7 +50,7 @@ struct Core {
 // TODO event emitter
 
 impl Core {
-  async fn new() -> Core {
+  pub async fn new() -> Core {
     let olm_wrapper = OlmWrapper::new(None);
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
     let hash_vectors = HashVectors::new(olm_wrapper.get_idkey());
@@ -101,29 +95,37 @@ impl Core {
     self.server_comm.send_message(&batch).await
   }
 
-  /*async fn get_events(&mut self) {
+  async fn get_events(&mut self) {
     use futures::TryStreamExt;
 
     match self.server_comm.try_next().await {
-      Ok(Some(server_comm::Event::Msg(msg))) => {
-        // TODO deserialize message
-        println!("msg: {:?}", msg);
+      Ok(Some(Event::Msg(msg_string))) => {
+        let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
+
+        let decrypted = self.olm_wrapper.decrypt(
+          msg.payload().c_type(),
+          &msg.payload().ciphertext(),
+          &msg.sender()
+        );
+
+        let full_payload = FullPayload::from_string(decrypted);
+        println!("full_payload: {:?}", full_payload);
       },
-      Ok(Some(server_comm::Event::Otkey)) => {
+      Ok(Some(Event::Otkey)) => {
         // TODO add otkeys
         println!("TODO need more otkeys");
       },
       Ok(None) => panic!("Got <None> event from server"),
       Err(err) => panic!("Got error while awaiting events from server: {:?}", err),
     }
-  }*/
+  }
 }
 
 // TODO in all fxn signatures, have sender/idkeys come first in param list
 
 #[cfg(test)]
 mod tests {
-  use super::{Core, server_comm, FullPayload};
+  use super::{Core, Event, IncomingMessage, FullPayload};
   use futures::TryStreamExt;
 
   #[tokio::test]
@@ -141,9 +143,8 @@ mod tests {
     match core.send_message(recipients, &payload).await {
       Ok(_) => {
         match core.server_comm.try_next().await {
-          Ok(Some(server_comm::Event::Msg(msg_string))) => {
-            let msg: server_comm::IncomingMessage = 
-                server_comm::IncomingMessage::from_string(msg_string);
+          Ok(Some(Event::Msg(msg_string))) => {
+            let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
             let decrypted = core.olm_wrapper.decrypt(
               msg.payload().c_type(),
@@ -154,7 +155,7 @@ mod tests {
             let full_payload = FullPayload::from_string(decrypted);
             assert_eq!(*full_payload.common().message(), payload);
           },
-          Ok(Some(server_comm::Event::Otkey)) => panic!("FAIL got otkey event"),
+          Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
           Ok(None) => panic!("FAIL got none"),
           Err(err) => panic!("FAIL got error: {:?}", err),
         }
@@ -174,9 +175,8 @@ mod tests {
     match core_0.send_message(recipients, &payload).await {
       Ok(_) => {
         match core_1.server_comm.try_next().await {
-          Ok(Some(server_comm::Event::Msg(msg_string))) => {
-            let msg: server_comm::IncomingMessage = 
-                server_comm::IncomingMessage::from_string(msg_string);
+          Ok(Some(Event::Msg(msg_string))) => {
+            let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
             let decrypted = core_1.olm_wrapper.decrypt(
               msg.payload().c_type(),
@@ -187,7 +187,7 @@ mod tests {
             let full_payload = FullPayload::from_string(decrypted);
             assert_eq!(*full_payload.common().message(), payload);
           },
-          Ok(Some(server_comm::Event::Otkey)) => panic!("FAIL got otkey event"),
+          Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
           Ok(None) => panic!("FAIL got none"),
           Err(err) => panic!("FAIL got error: {:?}", err),
         }

@@ -1,0 +1,27 @@
+[package]
+name = "noise-core"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+url = "2.3.1"
+eventsource-client = "0.11.0"
+reqwest = { version = "0.11.13", features = ["json"] }
+urlencoding = "2.1.2"
+futures = "0.3.25"
+tokio = { version = "1.23.0", features = ["macros"] }
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = { version = "1.0.91", features = ["std"] }
+olm-rs = "2.2.0"
+log = "0.4.17"
+sha2 = "0.10.6"
+
+[lib]
+name = "noise_core_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "noise_core_bin"
+path = "src/main.rs"

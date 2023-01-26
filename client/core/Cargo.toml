@@ -17,11 +17,3 @@ serde_json = { version = "1.0.91", features = ["std"] }
 olm-rs = "2.2.0"
 log = "0.4.17"
 sha2 = "0.10.6"
-
-[lib]
-name = "noise_core_lib"
-path = "src/lib.rs"
-
-[[bin]]
-name = "noise_core_bin"
-path = "src/main.rs"

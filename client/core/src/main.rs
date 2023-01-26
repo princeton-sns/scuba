@@ -1,4 +1,4 @@
-use noise_core_lib::core::Core;
+use noise_core::core::Core;
 
 fn main() {
   let mut core = Core::new();

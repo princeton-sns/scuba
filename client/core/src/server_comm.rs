@@ -133,14 +133,12 @@ pub struct ServerComm {
   idkey      : String,
   client     : reqwest::Client,
   listener   : Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>>>>,
-  //event emitter
 }
 
 impl ServerComm {
   pub fn new<'a>(
     ip_arg: Option<&'a str>,
     port_arg: Option<&'a str>,
-    //emitter
     idkey: String,
   ) -> Self {
     let ip_addr = ip_arg.unwrap_or(IP_ADDR);
@@ -164,7 +162,6 @@ impl ServerComm {
   pub async fn init<'a>(
     ip_arg: Option<&'a str>,
     port_arg: Option<&'a str>,
-    //emitter
     olm_wrapper: &OlmWrapper,
   ) -> Self {
     let mut server_comm = ServerComm::new(ip_arg, port_arg, olm_wrapper.get_idkey());
@@ -190,7 +187,7 @@ impl ServerComm {
         .await
   }
 
-  pub async fn get_otkey_from_server<'a>(&self, dst_idkey: &'a str) -> Result<OtkeyResponse> {
+  pub async fn get_otkey_from_server(&self, dst_idkey: &String) -> Result<OtkeyResponse> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
     url.set_query(Some(&vec!["device_id", &encode(dst_idkey).into_owned()].join("=")));
     self.client.get(url)

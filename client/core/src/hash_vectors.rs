@@ -281,12 +281,7 @@ impl HashVectors {
     // recipients
     if *sender == self.own_device {
       // We must have at least two elements in the VecDeque: the
-      // base (default) hash and the resulting (expected) message hash
-
-      // FIXME the base (default) hash is popped after one iteration
-      // if this if block, should still have at least two messages but 
-      // the base (default) hash will only be present the first time
-      // this if block is executed
+      // base hash and the resulting (expected) message hash
       let mut pending_messages_iter = self.pending_messages.iter();
       let base_hash = pending_messages_iter.next().unwrap();
       let expected_hash = pending_messages_iter

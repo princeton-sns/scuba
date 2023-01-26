@@ -93,8 +93,8 @@ impl OlmWrapper {
 
   fn get_inbound_session(
       &mut self,
+      sender: &String,
       ciphertext: &OlmMessage,
-      sender: &String
   ) -> &OlmSession {
     match ciphertext {
       OlmMessage::Message(_) => {
@@ -123,8 +123,8 @@ impl OlmWrapper {
 
   fn try_all_sessions_decrypt(
       &mut self,
+      sender: &String,
       ciphertext: &OlmMessage,
-      sender: &String
   ) -> String {
     // as long as get_inbound_session is called before this function the result
     // will never be None/empty
@@ -143,20 +143,20 @@ impl OlmWrapper {
   pub async fn encrypt(
       &mut self,
       server_comm: &ServerComm,
+      dst_idkey: &String,
       plaintext: &String,
-      dst_idkey: &String
   ) -> (usize, String) {
     if self.toggle_off {
       return (1, plaintext.to_string());
     }
-    self.encrypt_helper(server_comm, plaintext, dst_idkey).await
+    self.encrypt_helper(server_comm, dst_idkey, plaintext).await
   }
 
   async fn encrypt_helper(
       &mut self,
       server_comm: &ServerComm,
+      dst_idkey: &String,
       plaintext: &String,
-      dst_idkey: &String
   ) -> (usize, String) {
     if *dst_idkey == self.get_idkey() {
       self.message_queue.push(plaintext.to_string());
@@ -169,39 +169,39 @@ impl OlmWrapper {
 
   pub fn decrypt(
       &mut self,
+      sender: &String,
       c_type: usize,
       ciphertext: &String,
-      sender: &String
   ) -> String {
     if self.toggle_off {
       return ciphertext.to_string();
     }
     self.decrypt_helper(
+        sender,
         &OlmMessage::from_type_and_ciphertext(
             c_type,
             ciphertext.to_string()
         ).unwrap(),
-        sender
     )
   }
 
   fn decrypt_helper(
       &mut self,
+      sender: &String,
       ciphertext: &OlmMessage,
-      sender: &String
   ) -> String {
     if *sender == self.get_idkey() {
       // FIXME handle dos attack where client poses as "self" - this
       // unwrap will panic
       return self.message_queue.pop().unwrap().to_string();
     }
-    let session = self.get_inbound_session(ciphertext, sender);
+    let session = self.get_inbound_session(sender, ciphertext);
     match session.decrypt(ciphertext.clone()) {
       Ok(plaintext) => return plaintext,
       Err(err) => {
         match ciphertext {
           // iterate through all sessions in case this message was delayed
-          OlmMessage::Message(_) => return self.try_all_sessions_decrypt(ciphertext, sender),
+          OlmMessage::Message(_) => return self.try_all_sessions_decrypt(sender, ciphertext),
           OlmMessage::PreKey(_) => panic!("Error creating inbound session from prekey message: {:?}", err),
         }
       }
@@ -249,7 +249,7 @@ mod tests {
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
-    let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &plaintext, &idkey)
+    let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext)
         .await;
     assert_eq!(plaintext, ciphertext);
   }
@@ -261,7 +261,7 @@ mod tests {
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
     let empty = String::from("");
-    let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &plaintext, &idkey)
+    let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext)
         .await;
     assert_eq!(empty, ciphertext);
     assert_eq!(plaintext, olm_wrapper.message_queue.pop().unwrap());
@@ -272,7 +272,7 @@ mod tests {
     let mut olm_wrapper = OlmWrapper::new(Some(true));
     let idkey = olm_wrapper.get_idkey();
     let plaintext: &str = "hello";
-    let decrypted = olm_wrapper.decrypt(1, &plaintext.to_string(), &idkey);
+    let decrypted = olm_wrapper.decrypt(&idkey, 1, &plaintext.to_string());
     assert_eq!(plaintext, decrypted);
   }
 
@@ -283,8 +283,8 @@ mod tests {
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
     let empty = String::from("");
-    let (c_type, ciphertext) = olm_wrapper.encrypt(&server_comm, &plaintext, &idkey).await;
-    let decrypted = olm_wrapper.decrypt(c_type, &ciphertext, &idkey);
+    let (c_type, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext).await;
+    let decrypted = olm_wrapper.decrypt(&idkey, c_type, &ciphertext);
     assert_eq!(empty, ciphertext);
     assert_eq!(plaintext, decrypted);
   }
@@ -314,8 +314,8 @@ mod tests {
 
     let plaintext = String::from("testing testing one two three");
 
-    let (c_type, ciphertext) = ow1.encrypt(&sc1, &plaintext, &idkey2).await;
-    let decrypted = ow2.decrypt(c_type, &ciphertext, &idkey1);
+    let (c_type, ciphertext) = ow1.encrypt(&sc1, &idkey2, &plaintext).await;
+    let decrypted = ow2.decrypt(&idkey1, c_type, &ciphertext);
 
     assert_eq!(plaintext, decrypted);
   }
@@ -342,7 +342,7 @@ mod tests {
     let ciphertext = ob_session.encrypt(plaintext);
 
     // using prekey
-    let ib_session = ow2.get_inbound_session(&ciphertext, &idkey1);
+    let ib_session = ow2.get_inbound_session(&idkey1, &ciphertext);
 
     assert_eq!(ob_session.session_id(), ib_session.session_id());
 
@@ -376,7 +376,7 @@ mod tests {
     let first_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let ciphertext = first_ob_session.encrypt(plaintext);
     // using prekey
-    let first_ib_session = ow2.get_inbound_session(&ciphertext, &idkey1);
+    let first_ib_session = ow2.get_inbound_session(&idkey1, &ciphertext);
 
     // decrypt() sets flag for has_received_message()
     let decrypted = first_ib_session.decrypt(ciphertext.clone()).unwrap();
@@ -389,7 +389,7 @@ mod tests {
     let second_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let ciphertext = second_ob_session.encrypt(plaintext);
     // using prekey
-    let second_ib_session = ow2.get_inbound_session(&ciphertext, &idkey1);
+    let second_ib_session = ow2.get_inbound_session(&idkey1, &ciphertext);
 
     let second_ob_id = second_ob_session.session_id().clone();
     let second_ib_id = second_ib_session.session_id().clone();
@@ -421,7 +421,7 @@ mod tests {
     let first_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
     let first_ciphertext = first_ob_session.encrypt(plaintext);
     // using prekey
-    let first_ib_session = ow2.get_inbound_session(&first_ciphertext, &idkey1);
+    let first_ib_session = ow2.get_inbound_session(&idkey1, &first_ciphertext);
 
     // decrypt() sets flag for has_received_message()
     let decrypted = first_ib_session.decrypt(first_ciphertext.clone()).unwrap();
@@ -434,7 +434,7 @@ mod tests {
     let second_ob_session = ow2.get_outbound_session(&sc2, &idkey1).await;
     let second_ciphertext = second_ob_session.encrypt(plaintext);
     // using message
-    let second_ib_session = ow1.get_inbound_session(&second_ciphertext, &idkey2);
+    let second_ib_session = ow1.get_inbound_session(&idkey2, &second_ciphertext);
 
     let second_ob_id = second_ob_session.session_id().clone();
     let second_ib_id = second_ib_session.session_id().clone();
@@ -459,14 +459,14 @@ mod tests {
 
     // 1 -> 2
     let first_plaintext = String::from("testing testing one two three");
-    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &first_plaintext, &idkey2).await;
-    let first_decrypted = ow2.decrypt(first_ctype, &first_ciphertext, &idkey1);
+    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &idkey2, &first_plaintext).await;
+    let first_decrypted = ow2.decrypt(&idkey1, first_ctype, &first_ciphertext);
     assert_eq!(first_plaintext, first_decrypted);
 
     // 1 -> 2
     let second_plaintext = String::from("three two one testing testing");
-    let (second_ctype, second_ciphertext) = ow1.encrypt(&sc1, &second_plaintext, &idkey2).await;
-    let second_decrypted = ow2.decrypt(second_ctype, &second_ciphertext, &idkey1);
+    let (second_ctype, second_ciphertext) = ow1.encrypt(&sc1, &idkey2, &second_plaintext).await;
+    let second_decrypted = ow2.decrypt(&idkey1, second_ctype, &second_ciphertext);
     assert_eq!(second_plaintext, second_decrypted);
   }
 
@@ -484,14 +484,14 @@ mod tests {
 
     // 1 -> 2
     let first_plaintext = String::from("testing testing one two three");
-    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &first_plaintext, &idkey2).await;
-    let first_decrypted = ow2.decrypt(first_ctype, &first_ciphertext, &idkey1);
+    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &idkey2, &first_plaintext).await;
+    let first_decrypted = ow2.decrypt(&idkey1, first_ctype, &first_ciphertext);
     assert_eq!(first_plaintext, first_decrypted);
 
     // 2 -> 1
     let second_plaintext = String::from("three two one testing testing");
-    let (second_ctype, second_ciphertext) = ow2.encrypt(&sc2, &second_plaintext, &idkey1).await;
-    let second_decrypted = ow1.decrypt(second_ctype, &second_ciphertext, &idkey2);
+    let (second_ctype, second_ciphertext) = ow2.encrypt(&sc2, &idkey1, &second_plaintext).await;
+    let second_decrypted = ow1.decrypt(&idkey2, second_ctype, &second_ciphertext);
     assert_eq!(second_plaintext, second_decrypted);
   }
 
@@ -509,23 +509,23 @@ mod tests {
 
     // encrypt 1 -> 2 and "send" (decrypt)
     let first_plaintext = String::from("testing testing one two three");
-    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &first_plaintext, &idkey2).await;
-    let first_decrypted = ow2.decrypt(first_ctype, &first_ciphertext, &idkey1);
+    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &idkey2, &first_plaintext).await;
+    let first_decrypted = ow2.decrypt(&idkey1, first_ctype, &first_ciphertext);
     assert_eq!(first_plaintext, first_decrypted);
 
     // encrypt another 1 -> 2 without "sending" (decrypting) - uses a diff session
     // b/c has not yet received a response
     let second_plaintext = String::from("three two one testing testing");
-    let (second_ctype, second_ciphertext) = ow1.encrypt(&sc1, &second_plaintext, &idkey2).await;
+    let (second_ctype, second_ciphertext) = ow1.encrypt(&sc1, &idkey2, &second_plaintext).await;
 
     // encrypt 2 -> 1 and "send" (decrypt)
     let third_plaintext = String::from("one testing three testing two");
-    let (third_ctype, third_ciphertext) = ow2.encrypt(&sc2, &third_plaintext, &idkey1).await;
-    let third_decrypted = ow1.decrypt(third_ctype, &third_ciphertext, &idkey2);
+    let (third_ctype, third_ciphertext) = ow2.encrypt(&sc2, &idkey1, &third_plaintext).await;
+    let third_decrypted = ow1.decrypt(&idkey2, third_ctype, &third_ciphertext);
     assert_eq!(third_plaintext, third_decrypted);
 
     // "send" (decrypt) second message
-    let second_decrypted = ow2.decrypt(second_ctype, &second_ciphertext, &idkey1);
+    let second_decrypted = ow2.decrypt(&idkey1, second_ctype, &second_ciphertext);
     assert_eq!(second_plaintext, second_decrypted);
   }
 
@@ -544,36 +544,36 @@ mod tests {
     let plaintext = String::from("testing testing one two three");
 
     // encrypt 1 -> 2 and "send" (decrypt)
-    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &plaintext, &idkey2).await;
-    let first_decrypted = ow2.decrypt(first_ctype, &first_ciphertext, &idkey1);
+    let (first_ctype, first_ciphertext) = ow1.encrypt(&sc1, &idkey2, &plaintext).await;
+    let first_decrypted = ow2.decrypt(&idkey1, first_ctype, &first_ciphertext);
     assert_eq!(plaintext, first_decrypted);
 
     // encrypt another 1 -> 2 without "sending" (decrypting) - uses a diff session
     // b/c has not yet received a response
-    let (second_ctype, second_ciphertext) = ow1.encrypt(&sc1, &plaintext, &idkey2).await;
+    let (second_ctype, second_ciphertext) = ow1.encrypt(&sc1, &idkey2, &plaintext).await;
 
     // encrypt 2 -> 1 and "send" (decrypt)
-    let (third_ctype, third_ciphertext) = ow2.encrypt(&sc2, &plaintext, &idkey1).await;
-    let third_decrypted = ow1.decrypt(third_ctype, &third_ciphertext, &idkey2);
+    let (third_ctype, third_ciphertext) = ow2.encrypt(&sc2, &idkey1, &plaintext).await;
+    let third_decrypted = ow1.decrypt(&idkey2, third_ctype, &third_ciphertext);
     assert_eq!(plaintext, third_decrypted);
 
     // encrypt another 2 -> 1 and "send" (decrypt)
-    let (fourth_ctype, fourth_ciphertext) = ow2.encrypt(&sc2, &plaintext, &idkey1).await;
-    let fourth_decrypted = ow1.decrypt(fourth_ctype, &fourth_ciphertext, &idkey2);
+    let (fourth_ctype, fourth_ciphertext) = ow2.encrypt(&sc2, &idkey1, &plaintext).await;
+    let fourth_decrypted = ow1.decrypt(&idkey2, fourth_ctype, &fourth_ciphertext);
     assert_eq!(plaintext, fourth_decrypted);
 
     // encrypt another 2 -> 1 and "send" (decrypt)
-    let (fifth_ctype, fifth_ciphertext) = ow2.encrypt(&sc2, &plaintext, &idkey1).await;
-    let fifth_decrypted = ow1.decrypt(fifth_ctype, &fifth_ciphertext, &idkey2);
+    let (fifth_ctype, fifth_ciphertext) = ow2.encrypt(&sc2, &idkey1, &plaintext).await;
+    let fifth_decrypted = ow1.decrypt(&idkey2, fifth_ctype, &fifth_ciphertext);
     assert_eq!(plaintext, fifth_decrypted);
 
     // encrypt another 2 -> 1 and "send" (decrypt)
-    let (sixth_ctype, sixth_ciphertext) = ow2.encrypt(&sc2, &plaintext, &idkey1).await;
-    let sixth_decrypted = ow1.decrypt(sixth_ctype, &sixth_ciphertext, &idkey2);
+    let (sixth_ctype, sixth_ciphertext) = ow2.encrypt(&sc2, &idkey1, &plaintext).await;
+    let sixth_decrypted = ow1.decrypt(&idkey2, sixth_ctype, &sixth_ciphertext);
     assert_eq!(plaintext, sixth_decrypted);
 
     // "send" (decrypt) second message
-    let second_decrypted = ow2.decrypt(second_ctype, &second_ciphertext, &idkey1);
+    let second_decrypted = ow2.decrypt(&idkey1, second_ctype, &second_ciphertext);
     assert_eq!(plaintext, second_decrypted);
   }
 }

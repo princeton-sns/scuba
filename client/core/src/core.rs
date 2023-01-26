@@ -5,6 +5,8 @@ use crate::olm_wrapper::OlmWrapper;
 use crate::server_comm::{ServerComm, Batch, OutgoingMessage, Payload, Event, IncomingMessage, ToDelete};
 use crate::hash_vectors::{HashVectors, CommonPayload, RecipientPayload};
 
+// TODO persist natively
+
 #[derive(Debug, Serialize, Deserialize)]
 struct FullPayload {
   common: CommonPayload,
@@ -47,8 +49,6 @@ pub struct Core {
   hash_vectors: HashVectors,
 }
 
-// TODO event emitter
-
 impl Core {
   pub fn new() -> Core {
     let olm_wrapper = OlmWrapper::new(None);
@@ -86,8 +86,8 @@ impl Core {
 
       let (c_type, ciphertext) = self.olm_wrapper.encrypt(
           &self.server_comm,
-          &full_payload,
           &idkey,
+          &full_payload,
       ).await;
 
       batch.push(
@@ -109,9 +109,9 @@ impl Core {
         let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
         let decrypted = self.olm_wrapper.decrypt(
+          &msg.sender(),
           msg.payload().c_type(),
           &msg.payload().ciphertext(),
-          &msg.sender()
         );
 
         let full_payload = FullPayload::from_string(decrypted);
@@ -137,10 +137,10 @@ impl Core {
   }
 }
 
-// TODO in all fxn signatures, have sender/idkeys come first in param list
-
 #[cfg(test)]
 mod tests {
+  use crate::core::{Core, FullPayload};
+  use crate::server_comm::{Event, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
 
   #[tokio::test]
@@ -167,9 +167,9 @@ mod tests {
             let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
             let decrypted = core.olm_wrapper.decrypt(
+              &msg.sender(),
               msg.payload().c_type(),
               &msg.payload().ciphertext(),
-              &msg.sender()
             );
 
             let full_payload = FullPayload::from_string(decrypted);
@@ -206,9 +206,9 @@ mod tests {
             let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
             let decrypted = core_1.olm_wrapper.decrypt(
+              &msg.sender(),
               msg.payload().c_type(),
               &msg.payload().ciphertext(),
-              &msg.sender()
             );
 
             let full_payload = FullPayload::from_string(decrypted);

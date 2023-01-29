@@ -227,6 +227,26 @@ impl Groups {
     }
     false
   }
+
+  pub fn add_members(
+      &mut self,
+      base_group_id: &String,
+      ids_to_add: Vec<&String>,
+  ) {
+    for id_to_add in ids_to_add {
+      self.link_groups(base_group_id, id_to_add);
+    }
+  }
+
+  pub fn remove_members(
+      &mut self,
+      base_group_id: &String,
+      ids_to_remove: Vec<&String>,
+  ) {
+    for id_to_remove in ids_to_remove {
+      self.unlink_groups(base_group_id, id_to_remove);
+    }
+  }
 }
 
 mod tests {
@@ -340,6 +360,97 @@ mod tests {
 
     assert_eq!(groups.get_group(&group_0.group_id), None);
     assert_eq!(groups.get_group(&group_1.group_id).unwrap(), &group_1);
+  }
+
+  #[test]
+  fn test_add_members() {
+    let base_group = Group::new(None, None, true, true);
+    let group_0 = Group::new(None, None, true, false);
+    let group_1 = Group::new(None, None, true, false);
+    let group_2 = Group::new(None, None, true, false);
+
+    let mut groups = Groups::new();
+
+    groups.set_group(base_group.group_id.clone(), base_group.clone());
+    groups.set_group(group_0.group_id.clone(), group_0.clone());
+    groups.set_group(group_1.group_id.clone(), group_1.clone());
+    groups.set_group(group_2.group_id.clone(), group_2.clone());
+
+    groups.add_members(
+        base_group.group_id(),
+        vec![group_0.group_id(), group_1.group_id(), group_2.group_id()]
+    );
+
+    let new_base_group = groups.get_group(base_group.group_id()).unwrap();
+    assert_eq!(
+        new_base_group.children.as_ref().unwrap(),
+        &HashSet::from([
+            group_0.group_id.clone(),
+            group_1.group_id.clone(),
+            group_2.group_id.clone(),
+        ]),
+    );
+
+    assert_eq!(
+        groups.get_group(group_0.group_id()).unwrap().parents,
+        HashSet::from([base_group.group_id.clone()])
+    );
+
+    assert_eq!(
+        groups.get_group(group_1.group_id()).unwrap().parents,
+        HashSet::from([base_group.group_id.clone()])
+    );
+
+    assert_eq!(
+        groups.get_group(group_2.group_id()).unwrap().parents,
+        HashSet::from([base_group.group_id.clone()])
+    );
+  }
+
+  #[test]
+  fn test_remove_members() {
+    let base_group = Group::new(None, None, true, true);
+    let group_0 = Group::new(None, None, true, false);
+    let group_1 = Group::new(None, None, true, false);
+    let group_2 = Group::new(None, None, true, false);
+
+    let mut groups = Groups::new();
+
+    groups.set_group(base_group.group_id.clone(), base_group.clone());
+    groups.set_group(group_0.group_id.clone(), group_0.clone());
+    groups.set_group(group_1.group_id.clone(), group_1.clone());
+    groups.set_group(group_2.group_id.clone(), group_2.clone());
+
+    groups.add_members(
+        base_group.group_id(),
+        vec![group_0.group_id(), group_1.group_id(), group_2.group_id()]
+    );
+
+    groups.remove_members(
+        base_group.group_id(),
+        vec![group_0.group_id(), group_2.group_id()]
+    );
+
+    let new_base_group = groups.get_group(base_group.group_id()).unwrap();
+    assert_eq!(
+        new_base_group.children.as_ref().unwrap(),
+        &HashSet::from([group_1.group_id.clone()]),
+    );
+
+    assert_eq!(
+        groups.get_group(group_0.group_id()).unwrap().parents,
+        HashSet::new()
+    );
+
+    assert_eq!(
+        groups.get_group(group_1.group_id()).unwrap().parents,
+        HashSet::from([base_group.group_id.clone()])
+    );
+
+    assert_eq!(
+        groups.get_group(group_2.group_id()).unwrap().parents,
+        HashSet::new()
+    );
   }
 }
 

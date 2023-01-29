@@ -75,7 +75,7 @@ impl OlmWrapper {
       server_comm: &ServerComm,
       dst_idkey: &String
   ) -> &OlmSession {
-    if let None = self.sessions.get(dst_idkey) {
+    if self.sessions.get(dst_idkey).is_none() {
       self.sessions.insert(
           dst_idkey.to_string(),
           vec![self.new_outbound_session(server_comm, dst_idkey).await]
@@ -98,7 +98,7 @@ impl OlmWrapper {
   ) -> &OlmSession {
     match ciphertext {
       OlmMessage::Message(_) => {
-        if let None = self.sessions.get(sender) {
+        if self.sessions.get(sender).is_none() {
           panic!("No pairwise sessions exist for idkey {:?}", sender);
         } else {
           let sessions_list = self.sessions.get_mut(sender).unwrap();
@@ -106,7 +106,7 @@ impl OlmWrapper {
         }
       },
       OlmMessage::PreKey(prekey) => {
-        if let None = self.sessions.get(sender) {
+        if self.sessions.get(sender).is_none() {
           self.sessions.insert(
               sender.to_string(),
               vec![self.new_inbound_session(&prekey)]

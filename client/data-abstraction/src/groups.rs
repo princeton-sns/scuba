@@ -247,6 +247,51 @@ impl Groups {
       self.unlink_groups(base_group_id, id_to_remove);
     }
   }
+
+  pub fn resolve_ids<'a>(
+      &'a self,
+      ids: Vec<&'a String>,
+  ) -> HashSet<&String> {
+    let mut resolved_ids = HashSet::<&String>::new();
+    let mut visited = HashSet::<&String>::new();
+
+    for id in ids {
+      self.resolve_ids_helper(
+          &mut resolved_ids,
+          &mut visited,
+          id
+      );
+    }
+
+    resolved_ids
+  }
+
+  fn resolve_ids_helper<'a>(
+      &'a self,
+      resolved_ids: &mut HashSet<&'a String>,
+      visited: &mut HashSet<&'a String>,
+      id: &'a String,
+  ) {
+    let mut to_visit = Vec::<&String>::new();
+    to_visit.push(id);
+
+    while !to_visit.is_empty() {
+      let cur_id = to_visit.pop().unwrap();
+
+      if visited.get(cur_id).is_some() {
+        break;
+      }
+
+      visited.insert(cur_id);
+      if let Some(children) = &self.get_group(cur_id).unwrap().children {
+        for child in children {
+          to_visit.push(&child);
+        }
+      } else {
+        resolved_ids.insert(cur_id);
+      }
+    }
+  }
 }
 
 mod tests {
@@ -451,6 +496,64 @@ mod tests {
         groups.get_group(group_2.group_id()).unwrap().parents,
         HashSet::new()
     );
+  }
+
+  #[test]
+  fn test_resolve_ids() {
+    let base_group = Group::new(None, None, true, true);
+    let group_0 = Group::new(None, None, true, true);
+    let group_0a = Group::new(None, None, true, false);
+    let group_0b = Group::new(None, None, true, false);
+    let group_1 = Group::new(None, None, true, true);
+    let group_1a = Group::new(None, None, true, false);
+    let group_1b = Group::new(None, None, true, false);
+
+    let mut groups = Groups::new();
+
+    groups.set_group(base_group.group_id.clone(), base_group.clone());
+    groups.set_group(group_0.group_id.clone(), group_0.clone());
+    groups.set_group(group_0a.group_id.clone(), group_0a.clone());
+    groups.set_group(group_0b.group_id.clone(), group_0b.clone());
+    groups.set_group(group_1.group_id.clone(), group_1.clone());
+    groups.set_group(group_1a.group_id.clone(), group_1a.clone());
+    groups.set_group(group_1b.group_id.clone(), group_1b.clone());
+
+    groups.add_members(
+        base_group.group_id(),
+        vec![group_0.group_id(), group_1.group_id()]
+    );
+
+    groups.add_members(
+        group_0.group_id(),
+        vec![group_0a.group_id(), group_0b.group_id()]
+    );
+
+    groups.add_members(
+        group_1.group_id(),
+        vec![group_1a.group_id(), group_1b.group_id()]
+    );
+
+    let expected_ids = HashSet::from([
+        group_0a.group_id(),
+        group_0b.group_id(),
+        group_1a.group_id(),
+        group_1b.group_id(),
+    ]);
+
+    assert_eq!(
+      groups.resolve_ids(vec![base_group.group_id()]),
+      expected_ids
+    );
+
+    assert_eq!(
+      groups.resolve_ids(vec![group_0.group_id(), group_1.group_id()]),
+      expected_ids
+    );
+  }
+
+  #[test]
+  fn test_resolve_ids_cycles() {
+    // TODO
   }
 }
 

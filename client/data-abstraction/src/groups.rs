@@ -279,7 +279,7 @@ impl Groups {
       let cur_id = to_visit.pop().unwrap();
 
       if visited.get(cur_id).is_some() {
-        break;
+        continue;
       }
 
       visited.insert(cur_id);
@@ -292,6 +292,48 @@ impl Groups {
       }
     }
   }
+
+  pub fn get_all_groups(&self) -> &HashMap<String, Group> {
+    &self.stored
+  }
+
+  //pub fn get_all_subgroups() {}
+
+  pub fn is_group_member<'a>(
+      &'a self,
+      is_member_id: &'a String,
+      group_id: &'a String,
+  ) -> bool {
+    let mut visited = HashSet::<&String>::new();
+    let mut to_visit = Vec::<&String>::new();
+    to_visit.push(group_id);
+
+    while !to_visit.is_empty() {
+      let cur_id = to_visit.pop().unwrap();
+
+      if visited.get(cur_id).is_some() {
+        continue
+      }
+
+      if cur_id == is_member_id {
+        return true;
+      }
+
+      visited.insert(cur_id);
+      if let Some(children) = &self.get_group(cur_id).unwrap().children {
+        for child in children {
+          to_visit.push(&child);
+        }
+      }
+    }
+
+    false
+  }
+
+  // TODO
+  // fn group_replace()
+  // fn group_contains()
+  // fn is_member()
 }
 
 mod tests {
@@ -555,5 +597,8 @@ mod tests {
   fn test_resolve_ids_cycles() {
     // TODO
   }
+
+  #[test]
+  fn test_is_member() {}
 }
 

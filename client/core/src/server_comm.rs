@@ -255,7 +255,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_init() {
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
     println!("server_comm.idkey: {:?}", server_comm.idkey);
   }
@@ -329,7 +329,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_add_otkeys_to_server() {
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let mut server_comm = ServerComm::new(None, None, idkey);
     match server_comm.try_next().await {
@@ -347,7 +347,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_get_otkey_from_server() {
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let otkeys = olm_wrapper.generate_otkeys(None);
     let mut values = otkeys.curve25519().values().cloned();

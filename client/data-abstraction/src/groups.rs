@@ -297,7 +297,7 @@ impl Groups {
     &self.stored
   }
 
-  //pub fn get_all_subgroups() {}
+  //pub fn get_all_subgroups() -> HashMap<String, Group> {}
 
   pub fn is_group_member<'a>(
       &'a self,
@@ -329,11 +329,6 @@ impl Groups {
 
     false
   }
-
-  // TODO
-  // fn group_replace()
-  // fn group_contains()
-  // fn is_member()
 }
 
 mod tests {

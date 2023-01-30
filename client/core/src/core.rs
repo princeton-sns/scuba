@@ -50,18 +50,26 @@ pub struct Core {
 }
 
 impl Core {
-  pub fn new() -> Core {
-    let olm_wrapper = OlmWrapper::new(None);
+  pub fn new<'a>(
+      ip_arg: Option<&'a str>,
+      port_arg: Option<&'a str>,
+      turn_encryption_off_arg: bool,
+  ) -> Core {
+    let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
     let idkey = olm_wrapper.get_idkey();
-    let server_comm = ServerComm::new(None, None, idkey.clone());
+    let server_comm = ServerComm::new(ip_arg, port_arg, idkey.clone());
     let hash_vectors = HashVectors::new(idkey);
 
     Core { olm_wrapper, server_comm, hash_vectors }
   }
 
-  pub async fn new_and_init() -> Core {
-    let olm_wrapper = OlmWrapper::new(None);
-    let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
+  pub async fn new_and_init<'a>(
+      ip_arg: Option<&'a str>,
+      port_arg: Option<&'a str>,
+      turn_encryption_off_arg: bool,
+  ) -> Core {
+    let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
+    let server_comm = ServerComm::init(ip_arg, port_arg, &olm_wrapper).await;
     let hash_vectors = HashVectors::new(olm_wrapper.get_idkey());
 
     Core { olm_wrapper, server_comm, hash_vectors }
@@ -145,18 +153,18 @@ mod tests {
 
   #[tokio::test]
   async fn test_new() {
-    let _ = Core::new();
+    let _ = Core::new(None, None, false);
   }
 
   #[tokio::test]
   async fn test_new_and_init() {
-    let _ = Core::new_and_init().await;
+    let _ = Core::new_and_init(None, None, false).await;
   }
 
   #[tokio::test]
   async fn test_send_message_to_self() {
     let payload = String::from("hello from me");
-    let mut core = Core::new_and_init().await;
+    let mut core = Core::new_and_init(None, None, false).await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey];
 
@@ -194,8 +202,8 @@ mod tests {
   #[tokio::test]
   async fn test_send_message_to_other() {
     let payload = String::from("hello from me");
-    let mut core_0 = Core::new_and_init().await;
-    let mut core_1 = Core::new_and_init().await;
+    let mut core_0 = Core::new_and_init(None, None, false).await;
+    let mut core_1 = Core::new_and_init(None, None, false).await;
     let idkey_1 = core_1.olm_wrapper.get_idkey();
     let recipients = vec![idkey_1];
 

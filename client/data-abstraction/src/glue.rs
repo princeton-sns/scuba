@@ -9,14 +9,14 @@ enum Message {
 //  ConfirmUpdateLinked,
 //  RequestContact,
 //  ConfirmContact,
+  UpdateGroup(String, Group),
   LinkGroups(String, String),
   AddParent(String, String),
-  AddChild(String, String),
-//  AddPermission,
   RemoveParent(String, String),
+  AddChild(String, String),
   RemoveChild(String, String),
+//  AddPermission,
 //  RemovePermission,
-  UpdateGroup(String, Group),
 //  UpdateData,
 //  DeleteGroup,
 //  DeleteData,
@@ -24,19 +24,17 @@ enum Message {
 }
 
 impl Message {
-  fn to_string(msg: &Message) -> String {
-    serde_json::to_string(msg).unwrap()
+  fn to_string(msg: &Message) -> Result<String, serde_json::Error> {
+    serde_json::to_string(msg)
   }
 
-  fn from_string(msg: String) -> Message {
-    serde_json::from_str(msg.as_str()).unwrap()
+  fn from_string(msg: String) -> Result<Message, serde_json::Error> {
+    serde_json::from_str(msg.as_str())
   }
 }
 
 #[derive(Debug, PartialEq, Error)]
 enum Error {
-  #[error("")]
-  UnknownMessageType,
   #[error("")]
   InsufficientPermissionsForAction,
   #[error("")]
@@ -47,16 +45,14 @@ enum Error {
   DataInvariantViolated,
   #[error("")]
   SelfIsInvalidContact,
+  #[error("")]
+  StringConversionErr(String),
   #[error(transparent)]
   GroupErr {
     #[from]
     source: crate::groups::Error,
   },
 }
-
-//impl Error {
-//  fn to_glue_error(res: Result<(), 
-//}
 
 /* Categories of operations ~= potentially separate structs */
 
@@ -151,8 +147,8 @@ impl Glue {
       &mut self,
       dst_idkeys: Vec<String>,
       payload: &String,
-  ) {
-    self.core.send_message(dst_idkeys, payload).await;
+  ) -> reqwest::Result<reqwest::Response> {
+    self.core.send_message(dst_idkeys, payload).await
   }
 
   async fn on_message(
@@ -160,15 +156,19 @@ impl Glue {
       sender: &String,
       payload: String,
   ) -> Result<(), Error> {
-    let message: Message = Message::from_string(payload);
-    match self.check_permissions(sender, &message) {
-      Ok(_) => {
-        // TODO validate data invariants
+    match Message::from_string(payload) {
+      Ok(message) => {
+        match self.check_permissions(sender, &message) {
+          Ok(_) => {
+            // TODO validate data invariants
 
-        // call the demultiplexed function
-        self.demux(sender, message) 
+            // call the demultiplexed function
+            self.demux(sender, message) 
+          },
+          Err(err) => Err(err),
+        }
       },
-      Err(err) => Err(err),
+      Err(err) => Err(Error::StringConversionErr(err.to_string())),
     }
   }
 
@@ -182,24 +182,23 @@ impl Glue {
       Message::UpdateGroup(group_id, group_val) => {
         Ok(())
       },
+      Message::LinkGroups(parent_id, child_id) => {
+        Ok(())
+      },
       // TODO are add/remove parent/child ever used outside the context
       // of linking groups?
       Message::AddParent(group_id, parent_id) => {
         Ok(())
       },
-      Message::AddChild(group_id, child_id) => {
+      Message::RemoveParent(group_id, parent_id) => {
         Ok(())
       },
-      Message::RemoveParent(group_id, parent_id) => {
+      Message::AddChild(group_id, child_id) => {
         Ok(())
       },
       Message::RemoveChild(group_id, child_id) => {
         Ok(())
       },
-      Message::LinkGroups(parent_id, child_id) => {
-        Ok(())
-      },
-      _ => Err(Error::UnknownMessageType),
     }
   }
 
@@ -217,22 +216,21 @@ impl Glue {
         self.groups.set_group(group_id, group_val);
         Ok(())
       },
+      Message::LinkGroups(parent_id, child_id) => {
+        self.groups.link_groups(&parent_id, &child_id).map_err(Error::from)
+      },
       Message::AddParent(group_id, parent_id) => {
         self.groups.add_parent(&group_id, &parent_id).map_err(Error::from)
-      },
-      Message::AddChild(group_id, child_id) => {
-        self.groups.add_child(&group_id, &child_id).map_err(Error::from)
       },
       Message::RemoveParent(group_id, parent_id) => {
         self.groups.remove_parent(&group_id, &parent_id).map_err(Error::from)
       },
+      Message::AddChild(group_id, child_id) => {
+        self.groups.add_child(&group_id, &child_id).map_err(Error::from)
+      },
       Message::RemoveChild(group_id, child_id) => {
         self.groups.remove_child(&group_id, &child_id).map_err(Error::from)
       },
-      Message::LinkGroups(parent_id, child_id) => {
-        self.groups.link_groups(&parent_id, &child_id).map_err(Error::from)
-      },
-      _ => Err(Error::UnknownMessageType),
     }
   }
 }
@@ -257,7 +255,7 @@ mod tests {
 
     assert_eq!(Ok(()), glue.on_message(
         &dummy_sender,
-        Message::to_string(&update_group_0_msg)
+        Message::to_string(&update_group_0_msg).unwrap()
     ).await);
     assert_eq!(
         glue.groups.get_group(group_0.group_id()).unwrap(),
@@ -271,7 +269,7 @@ mod tests {
 
     assert_eq!(Ok(()), glue.on_message(
         &dummy_sender,
-        Message::to_string(&update_group_1_msg)
+        Message::to_string(&update_group_1_msg).unwrap()
     ).await);
     assert_eq!(
         glue.groups.get_group(group_1.group_id()).unwrap(),
@@ -285,7 +283,7 @@ mod tests {
 
     assert_eq!(Ok(()), glue.on_message(
         &dummy_sender,
-        Message::to_string(&add_parent_msg)
+        Message::to_string(&add_parent_msg).unwrap()
     ).await);
     assert_ne!(
         glue.groups.get_group(group_0.group_id()).unwrap(),
@@ -303,7 +301,7 @@ mod tests {
 
     assert_eq!(Ok(()), glue.on_message(
         &dummy_sender,
-        Message::to_string(&remove_parent_msg)
+        Message::to_string(&remove_parent_msg).unwrap()
     ).await);
     assert_eq!(
         glue.groups.get_group(group_0.group_id()).unwrap(),

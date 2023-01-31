@@ -201,10 +201,12 @@ impl Groups {
     }
 
     let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
-    base_group.add_child(to_child_id.to_string());
-    self.set_group(base_group_id.to_string(), base_group);
-
-    Ok(())
+    base_group.add_child(to_child_id.to_string())
+        .map(|_| {
+          self.set_group(base_group_id.to_string(), base_group);
+          Ok(())
+        })
+        .unwrap()
   }
 
   pub fn remove_child(
@@ -221,10 +223,12 @@ impl Groups {
     }
 
     let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
-    base_group.remove_child(child_id);
-    self.set_group(base_group_id.to_string(), base_group);
-
-    Ok(())
+    base_group.remove_child(child_id)
+        .map(|_| {
+          self.set_group(base_group_id.to_string(), base_group);
+          Ok(())
+        })
+        .unwrap()
   }
 
   pub fn link_groups(

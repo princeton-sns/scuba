@@ -216,7 +216,7 @@ impl HashVectors {
     self.pending_messages.push_back(message_hash_entry);
   }
 
-  fn parse_message(
+  pub fn parse_message(
       &mut self,
       sender: &DeviceId,
       common_payload: CommonPayload,

@@ -8,7 +8,7 @@ use crate::hash_vectors::{HashVectors, CommonPayload, RecipientPayload};
 // TODO persist natively
 
 #[derive(Debug, Serialize, Deserialize)]
-struct FullPayload {
+pub struct FullPayload {
   common: CommonPayload,
   per_recipient: RecipientPayload,
 }
@@ -75,7 +75,7 @@ impl Core {
     Core { olm_wrapper, server_comm, hash_vectors }
   }
 
-  async fn send_message(
+  pub async fn send_message(
       &mut self,
       dst_idkeys: Vec<String>,
       payload: &String
@@ -125,11 +125,28 @@ impl Core {
         let full_payload = FullPayload::from_string(decrypted);
         println!("full_payload: {:?}", full_payload);
 
-        match self.server_comm.delete_messages_from_server(
-            &ToDelete::from_seq_id(msg.seq_id())
-        ).await {
-          Ok(_) => println!("Sent delete-message successfully"),
-          Err(err) => panic!("Error sending delete-message: {:?}", err),
+        // validate
+        match self.hash_vectors.parse_message(
+            &msg.sender(),
+            full_payload.common,
+            &full_payload.per_recipient
+        ) {
+          Ok(None) => println!("Validation succeeded, no message to process"),
+          Ok(Some((seq, message))) => {
+            // TODO forward message
+            //rest::Rest::on_message(&msg.sender(), message);
+
+            println!("msg.seq_id(): {:?}", msg.seq_id());
+            println!("seq: {:?}", seq);
+
+            match self.server_comm.delete_messages_from_server(
+                &ToDelete::from_seq_id(msg.seq_id())
+            ).await {
+              Ok(_) => println!("Sent delete-message successfully"),
+              Err(err) => panic!("Error sending delete-message: {:?}", err),
+            }
+          },
+          Err(err) => panic!("Validation failed: {:?}", err),
         }
       },
       Ok(Some(Event::Otkey)) => {

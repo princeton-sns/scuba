@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use uuid::Uuid;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Error {
   GroupHasNoChildren,
   GroupDoesNotExist,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
   group_id: String,
   group_name: Option<String>,
@@ -143,13 +144,47 @@ impl Groups {
     self.stored.insert(group_id, group_val)
   }
 
+  pub fn add_parent(
+      &mut self,
+      base_group_id: &String,
+      to_parent_id: &String,
+  ) -> Result<(), Error> {
+    if self.get_group(base_group_id).is_none()
+        || self.get_group(to_parent_id).is_none() {
+      return Err(Error::GroupDoesNotExist);
+    }
+
+    let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+    base_group.add_parent(to_parent_id.to_string());
+    self.set_group(base_group_id.to_string(), base_group);
+
+    Ok(())
+  }
+
+  pub fn remove_parent(
+      &mut self,
+      base_group_id: &String,
+      parent_id: &String,
+  ) -> Result<(), Error> {
+    if self.get_group(base_group_id).is_none()
+        || self.get_group(parent_id).is_none() {
+      return Err(Error::GroupDoesNotExist);
+    }
+
+    let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+    base_group.remove_parent(parent_id);
+    self.set_group(base_group_id.to_string(), base_group);
+
+    Ok(())
+  }
+
   pub fn link_groups(
       &mut self,
       to_parent_id: &String,
       to_child_id: &String,
   ) -> Result<(), Error> {
     if self.get_group(to_parent_id).is_none()
-        && self.get_group(to_child_id).is_none() {
+        || self.get_group(to_child_id).is_none() {
       return Err(Error::GroupDoesNotExist);
     }
 
@@ -329,6 +364,10 @@ impl Groups {
 
     false
   }
+
+  // TODO
+  // fn group_replace()
+  // fn group_contains()
 }
 
 mod tests {

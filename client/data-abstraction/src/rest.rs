@@ -8,7 +8,7 @@ enum Message {
 //  ConfirmUpdateLinked,
 //  RequestContact,
 //  ConfirmContact,
-//  LinkGroups,
+  LinkGroups(String, String),
   AddParent(String, String),
   AddChild(String, String),
 //  AddPermission,
@@ -95,6 +95,8 @@ impl Rest {
       Message::UpdateGroup(group_id, group_val) => {
         Ok(())
       },
+      // TODO are add/remove parent/child ever used outside the context
+      // of linking groups?
       Message::AddParent(group_id, parent_id) => {
         Ok(())
       },
@@ -105,6 +107,9 @@ impl Rest {
         Ok(())
       },
       Message::RemoveChild(group_id, child_id) => {
+        Ok(())
+      },
+      Message::LinkGroups(parent_id, child_id) => {
         Ok(())
       },
       _ => Err(Error::UnknownMessageType),
@@ -135,6 +140,9 @@ impl Rest {
       },
       Message::RemoveChild(group_id, child_id) => {
         self.remove_child_locally(group_id, child_id)
+      },
+      Message::LinkGroups(parent_id, child_id) => {
+        self.link_groups_locally(parent_id, child_id)
       },
       _ => Err(Error::UnknownMessageType),
     }
@@ -188,6 +196,17 @@ impl Rest {
       child_id: String,
   ) -> Result<(), Error> {
     match self.groups.remove_child(&group_id, &child_id) {
+      Ok(()) => Ok(()),
+      Err(err) => Err(Error::GroupModErr(err)),
+    }
+  }
+
+  fn link_groups_locally(
+      &mut self,
+      parent_id: String,
+      child_id: String,
+  ) -> Result<(), Error> {
+    match self.groups.link_groups(&parent_id, &child_id) {
       Ok(()) => Ok(()),
       Err(err) => Err(Error::GroupModErr(err)),
     }

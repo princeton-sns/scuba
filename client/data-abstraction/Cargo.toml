@@ -11,3 +11,4 @@ noise-core = { path = "../core" }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = { version = "1.0.91", features = ["std"] }
 tokio = { version = "1.23.0", features = ["macros"] }
+thiserror = "1.0.38"

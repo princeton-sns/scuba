@@ -2,11 +2,14 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
+use thiserror::Error;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Error)]
 pub enum Error {
-  GroupHasNoChildren,
-  GroupDoesNotExist,
+  #[error("group {0} has no children")]
+  GroupHasNoChildren(String),
+  #[error("group {0} does not exist")]
+  GroupDoesNotExist(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,7 +101,7 @@ impl Group {
         self.children.as_mut().unwrap().insert(child_id);
         Ok(())
       },
-      None => Err(Error::GroupHasNoChildren),
+      None => Err(Error::GroupHasNoChildren(self.group_id().to_string())),
     }
   }
 
@@ -108,7 +111,7 @@ impl Group {
         self.children.as_mut().unwrap().remove(child_id);
         Ok(())
       },
-      None => Err(Error::GroupHasNoChildren),
+      None => Err(Error::GroupHasNoChildren(self.group_id().to_string())),
     }
   }
 }
@@ -149,9 +152,12 @@ impl Groups {
       base_group_id: &String,
       to_parent_id: &String,
   ) -> Result<(), Error> {
-    if self.get_group(base_group_id).is_none()
-        || self.get_group(to_parent_id).is_none() {
-      return Err(Error::GroupDoesNotExist);
+    if self.get_group(base_group_id).is_none() {
+      return Err(Error::GroupDoesNotExist(base_group_id.to_string()));
+    }
+
+    if self.get_group(to_parent_id).is_none() {
+      return Err(Error::GroupDoesNotExist(to_parent_id.to_string()));
     }
 
     let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
@@ -166,9 +172,12 @@ impl Groups {
       base_group_id: &String,
       parent_id: &String,
   ) -> Result<(), Error> {
-    if self.get_group(base_group_id).is_none()
-        || self.get_group(parent_id).is_none() {
-      return Err(Error::GroupDoesNotExist);
+    if self.get_group(base_group_id).is_none() {
+      return Err(Error::GroupDoesNotExist(base_group_id.to_string()));
+    }
+
+    if self.get_group(parent_id).is_none() {
+      return Err(Error::GroupDoesNotExist(parent_id.to_string()));
     }
 
     let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
@@ -183,9 +192,12 @@ impl Groups {
       base_group_id: &String,
       to_child_id: &String,
   ) -> Result<(), Error> {
-    if self.get_group(base_group_id).is_none()
-        || self.get_group(to_child_id).is_none() {
-      return Err(Error::GroupDoesNotExist);
+    if self.get_group(base_group_id).is_none() {
+      return Err(Error::GroupDoesNotExist(base_group_id.to_string()));
+    }
+
+    if self.get_group(to_child_id).is_none() {
+      return Err(Error::GroupDoesNotExist(to_child_id.to_string()));
     }
 
     let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
@@ -200,9 +212,12 @@ impl Groups {
       base_group_id: &String,
       child_id: &String,
   ) -> Result<(), Error> {
-    if self.get_group(base_group_id).is_none()
-        || self.get_group(child_id).is_none() {
-      return Err(Error::GroupDoesNotExist);
+    if self.get_group(base_group_id).is_none() {
+      return Err(Error::GroupDoesNotExist(base_group_id.to_string()));
+    }
+
+    if self.get_group(child_id).is_none() {
+      return Err(Error::GroupDoesNotExist(child_id.to_string()));
     }
 
     let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
@@ -217,15 +232,18 @@ impl Groups {
       to_parent_id: &String,
       to_child_id: &String,
   ) -> Result<(), Error> {
-    if self.get_group(to_parent_id).is_none()
-        || self.get_group(to_child_id).is_none() {
-      return Err(Error::GroupDoesNotExist);
+    if self.get_group(to_parent_id).is_none() {
+      return Err(Error::GroupDoesNotExist(to_parent_id.to_string()));
+    }
+
+    if self.get_group(to_child_id).is_none() {
+      return Err(Error::GroupDoesNotExist(to_child_id.to_string()));
     }
 
     // set child of to_parent group
     let mut to_parent_group = self.get_group_mut(to_parent_id).unwrap().clone();
     if to_parent_group.children.is_none() {
-      return Err(Error::GroupHasNoChildren);
+      return Err(Error::GroupHasNoChildren(to_parent_id.to_string()));
     }
     to_parent_group.add_child(to_child_id.to_string());
     self.set_group(to_parent_id.to_string(), to_parent_group);
@@ -243,15 +261,18 @@ impl Groups {
       parent_id: &String,
       child_id: &String,
   ) -> Result<(), Error> {
-    if self.get_group(parent_id).is_none()
-        && self.get_group(child_id).is_none() {
-      return Err(Error::GroupDoesNotExist);
+    if self.get_group(parent_id).is_none() {
+      return Err(Error::GroupDoesNotExist(parent_id.to_string()));
+    }
+
+    if self.get_group(child_id).is_none() {
+      return Err(Error::GroupDoesNotExist(child_id.to_string()));
     }
 
     // unset child of parent group
     let mut parent_group = self.get_group_mut(parent_id).unwrap().clone();
     if parent_group.children.is_none() {
-      return Err(Error::GroupHasNoChildren);
+      return Err(Error::GroupHasNoChildren(parent_id.to_string()));
     }
     parent_group.remove_child(child_id);
     self.set_group(parent_id.to_string(), parent_group);

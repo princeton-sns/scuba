@@ -178,6 +178,40 @@ impl Groups {
     Ok(())
   }
 
+  pub fn add_child(
+      &mut self,
+      base_group_id: &String,
+      to_child_id: &String,
+  ) -> Result<(), Error> {
+    if self.get_group(base_group_id).is_none()
+        || self.get_group(to_child_id).is_none() {
+      return Err(Error::GroupDoesNotExist);
+    }
+
+    let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+    base_group.add_child(to_child_id.to_string());
+    self.set_group(base_group_id.to_string(), base_group);
+
+    Ok(())
+  }
+
+  pub fn remove_child(
+      &mut self,
+      base_group_id: &String,
+      child_id: &String,
+  ) -> Result<(), Error> {
+    if self.get_group(base_group_id).is_none()
+        || self.get_group(child_id).is_none() {
+      return Err(Error::GroupDoesNotExist);
+    }
+
+    let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+    base_group.remove_child(child_id);
+    self.set_group(base_group_id.to_string(), base_group);
+
+    Ok(())
+  }
+
   pub fn link_groups(
       &mut self,
       to_parent_id: &String,

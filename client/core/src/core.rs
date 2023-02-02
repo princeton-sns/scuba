@@ -271,8 +271,9 @@ mod tests {
   async fn test_handle_events() {
     let payload = String::from("hello from me");
     let (sender, mut receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    // TODO test receiver
     let mut core = Core::new(None, None, false, sender.clone());
+    // otkey
+    core.handle_server_events().await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey.clone()];
 
@@ -290,7 +291,5 @@ mod tests {
       },
       None => panic!("Got no message"),
     }
-
-    println!("here");
   }
 }

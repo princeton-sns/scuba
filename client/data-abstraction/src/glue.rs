@@ -14,8 +14,8 @@ const BUFFER_SIZE: usize = 20;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum Message {
   UpdateLinked(String, String, HashMap<String, Group>),
-  // TODO second param: HashMap<String, Data>
-  ConfirmUpdateLinked(HashMap<String, Group>),
+  // TODO last param: HashMap<String, Data>
+  ConfirmUpdateLinked(String, HashMap<String, Group>),
 //  UpdateContact,
 //  ConfirmUpdatedContact,
   SetGroup(String, Group),
@@ -188,7 +188,7 @@ impl Glue {
       Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
         Ok(())
       },
-      Message::ConfirmUpdateLinked(new_groups) => {
+      Message::ConfirmUpdateLinked(new_linked_name, new_groups) => {
         Ok(())
       },
       Message::SetGroup(group_id, group_val) => {
@@ -232,11 +232,14 @@ impl Glue {
             .await
             .map_err(Error::from)
       },
-      Message::ConfirmUpdateLinked(new_groups) => {
+      Message::ConfirmUpdateLinked(new_linked_name, new_groups) => {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .confirm_update_linked_group(new_groups)
+            .confirm_update_linked_group(
+                new_linked_name,
+                new_groups
+            )
             .map_err(Error::from)
       },
       Message::SetGroup(group_id, group_val) => {
@@ -305,17 +308,19 @@ impl Glue {
     self.device_mut()
         .as_mut()
         .unwrap()
-        .update_linked_group(sender.clone(), temp_linked_name, members_to_add)
+        .update_linked_group(sender.clone(), temp_linked_name.clone(), members_to_add)
         .map_err(Error::from);
+    let perm_linked_name = self.device().as_ref().unwrap().linked_name().to_string();
 
-    // TODO send all data to new members
+    // send all groups (TODO and data) to new members
     let message = Message::ConfirmUpdateLinked(
-      self.device()
-          .as_ref()
-          .unwrap()
-          .groups()
-          .get_all_groups()
-          .clone()
+        perm_linked_name,
+        self.device()
+            .as_ref()
+            .unwrap()
+            .groups()
+            .get_all_groups()
+            .clone()
     );
     self.send_message(
         vec![sender],

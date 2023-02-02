@@ -127,9 +127,14 @@ impl Device {
 
   pub fn confirm_update_linked_group(
       &mut self,
+      new_linked_name: String,
       new_groups: HashMap<String, Group>,
   ) -> Result<(), Error> {
-    println!("in CONFIRM_UPDATE_LINEKD");
+    self.linked_name = new_linked_name;
+    for (group_id, group_val) in new_groups.iter() {
+      self.groups.set_group(group_id.to_string(), group_val.clone());
+    }
+
     Ok(())
   }
 }
@@ -173,8 +178,8 @@ mod tests {
     assert_ne!(device_1.linked_name(), &linked_name);
   }
 
-  #[tokio::test]
-  async fn test_update_linked_group() {
+  #[test]
+  fn test_update_linked_group() {
     let idkey_0 = String::from("0");
     let mut device_0 = Device::new(idkey_0.clone(), None, None);
     let linked_name_0 = device_0.linked_name().clone();
@@ -201,6 +206,59 @@ mod tests {
     }
 
     let merged_linked_members = device_0.groups().get_all_subgroups(&linked_name_0);
+    assert_eq!(merged_linked_members.len(), 3);
+
+    let merged_linked_group = merged_linked_members.get(&linked_name_0).unwrap();
+    assert_eq!(merged_linked_group.group_id(), &linked_name_0);
+    assert_eq!(merged_linked_group.parents(), &HashSet::<String>::new());
+    assert_eq!(merged_linked_group.children().as_ref(),
+        Some(&HashSet::<String>::from([idkey_1.clone(), idkey_0.clone()])));
+
+    let merged_idkey_0_group = merged_linked_members.get(&idkey_0).unwrap();
+    assert_eq!(merged_idkey_0_group.group_id(), &idkey_0);
+    assert_eq!(merged_idkey_0_group.parents(),
+        &HashSet::<String>::from([linked_name_0.clone()]));
+    assert_eq!(merged_idkey_0_group.children(), &None);
+
+    let merged_idkey_1_group = merged_linked_members.get(&idkey_1).unwrap();
+    assert_eq!(merged_idkey_1_group.group_id(), &idkey_1);
+    assert_eq!(merged_idkey_1_group.parents(),
+        &HashSet::<String>::from([linked_name_0.clone()]));
+    assert_eq!(merged_idkey_1_group.children(), &None);
+  }
+
+  #[test]
+  fn test_confirm_update_linked() {
+    let idkey_0 = String::from("0");
+    let mut device_0 = Device::new(idkey_0.clone(), None, None);
+    let linked_name_0 = device_0.linked_name().clone();
+    let linked_members_0 = device_0.groups().get_all_subgroups(&linked_name_0);
+
+    let idkey_1 = String::from("1");
+    let mut device_1 = Device::new(idkey_1.clone(), None, Some(device_0.linked_name().to_string()));
+    let linked_name_1 = device_1.linked_name().clone();
+    let linked_members_1 = device_1.groups().get_all_subgroups(&linked_name_1);
+
+    // simulate send and receive of UpdateLinked message
+    match device_0.update_linked_group(
+        idkey_1.clone(),
+        linked_name_1.clone(),
+        linked_members_1.clone(),
+    ) {
+      Ok(_) => println!("Update succeeded"),
+      Err(err) => panic!("Error updating linked group: {:?}", err),
+    }
+
+    // simulate send and receive of ConfirmUpdateLinked message
+    match device_1.confirm_update_linked_group(
+        linked_name_0.clone(),
+        device_0.groups().get_all_groups().clone()
+    ) {
+      Ok(_) => println!("Update succeeded"),
+      Err(err) => panic!("Error confirming update of linked group: {:?}", err),
+    }
+
+    let merged_linked_members = device_1.groups().get_all_subgroups(&linked_name_0);
     assert_eq!(merged_linked_members.len(), 3);
 
     let merged_linked_group = merged_linked_members.get(&linked_name_0).unwrap();

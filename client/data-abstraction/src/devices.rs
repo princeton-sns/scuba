@@ -89,7 +89,7 @@ impl Device {
   }
 
   // TODO user needs to confirm via, e.g. pop-up
-  pub async fn update_linked_group(
+  pub fn update_linked_group(
       &mut self,
       sender: String,
       temp_linked_name: String,
@@ -122,6 +122,14 @@ impl Device {
       self.groups.add_child(&perm_linked_name, child);
     }
 
+    Ok(())
+  }
+
+  pub fn confirm_update_linked_group(
+      &mut self,
+      new_groups: HashMap<String, Group>,
+  ) -> Result<(), Error> {
+    println!("in CONFIRM_UPDATE_LINEKD");
     Ok(())
   }
 }
@@ -171,13 +179,11 @@ mod tests {
     let mut device_0 = Device::new(idkey_0.clone(), None, None);
     let linked_name_0 = device_0.linked_name().clone();
     let linked_members_0 = device_0.groups().get_all_subgroups(&linked_name_0);
-    //println!("linked_members_0: {:#?}", linked_members_0);
 
     let idkey_1 = String::from("1");
-    let mut device_1 = Device::new(idkey_1.clone(), None, Some(device_0.linked_name().to_string()));
+    let device_1 = Device::new(idkey_1.clone(), None, Some(device_0.linked_name().to_string()));
     let linked_name_1 = device_1.linked_name().clone();
     let linked_members_1 = device_1.groups().get_all_subgroups(&linked_name_1);
-    //println!("linked_members_1: {:#?}", linked_members_1);
 
     assert_ne!(linked_name_0, linked_name_1);
     assert_ne!(linked_members_0, linked_members_1);
@@ -189,13 +195,12 @@ mod tests {
         idkey_1.clone(),
         linked_name_1.clone(),
         linked_members_1.clone(),
-    ).await {
+    ) {
       Ok(_) => println!("Update succeeded"),
       Err(err) => panic!("Error updating linked group: {:?}", err),
     }
 
     let merged_linked_members = device_0.groups().get_all_subgroups(&linked_name_0);
-    println!("merged_linked_members: {:#?}", merged_linked_members);
     assert_eq!(merged_linked_members.len(), 3);
 
     let merged_linked_group = merged_linked_members.get(&linked_name_0).unwrap();

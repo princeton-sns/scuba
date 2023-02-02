@@ -14,7 +14,8 @@ const BUFFER_SIZE: usize = 20;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum Message {
   UpdateLinked(String, String, HashMap<String, Group>),
-//  ConfirmUpdatedLinked,
+  // TODO second param: HashMap<String, Data>
+  ConfirmUpdateLinked(HashMap<String, Group>),
 //  UpdateContact,
 //  ConfirmUpdatedContact,
   SetGroup(String, Group),
@@ -187,6 +188,9 @@ impl Glue {
       Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
         Ok(())
       },
+      Message::ConfirmUpdateLinked(new_groups) => {
+        Ok(())
+      },
       Message::SetGroup(group_id, group_val) => {
         Ok(())
       },
@@ -224,11 +228,15 @@ impl Glue {
     // validate_data_invariants() in-between
     match message {
       Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
-        //self.device_mut()
-        //    .as_mut()
-        //    .unwrap()
         self.update_linked_group(sender, temp_linked_name, members_to_add)
             .await
+            .map_err(Error::from)
+      },
+      Message::ConfirmUpdateLinked(new_groups) => {
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .confirm_update_linked_group(new_groups)
             .map_err(Error::from)
       },
       Message::SetGroup(group_id, group_val) => {
@@ -297,15 +305,27 @@ impl Glue {
     self.device_mut()
         .as_mut()
         .unwrap()
-        .update_linked_group(sender, temp_linked_name, members_to_add)
-        .await
-        .map_err(Error::from)
+        .update_linked_group(sender.clone(), temp_linked_name, members_to_add)
+        .map_err(Error::from);
 
     // TODO send all data to new members
-    //self.send_message();
+    let message = Message::ConfirmUpdateLinked(
+      self.device()
+          .as_ref()
+          .unwrap()
+          .groups()
+          .get_all_groups()
+          .clone()
+    );
+    self.send_message(
+        vec![sender],
+        &Message::to_string(&message).unwrap(),
+    ).await;
 
     // TODO notify contacts of new members
     //self.send_message();
+
+    Ok(())
   }
 }
 

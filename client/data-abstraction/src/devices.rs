@@ -130,6 +130,8 @@ impl Device {
       new_linked_name: String,
       new_groups: HashMap<String, Group>,
   ) -> Result<(), Error> {
+    self.groups.delete_group(&self.linked_name.clone());
+
     self.linked_name = new_linked_name;
     for (group_id, group_val) in new_groups.iter() {
       self.groups.set_group(group_id.to_string(), group_val.clone());

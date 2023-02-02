@@ -328,7 +328,6 @@ impl Glue {
     ).await;
 
     // TODO notify contacts of new members
-    //self.send_message();
 
     Ok(())
   }

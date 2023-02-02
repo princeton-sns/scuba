@@ -224,10 +224,10 @@ impl Glue {
     // validate_data_invariants() in-between
     match message {
       Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
-        self.device_mut()
-            .as_mut()
-            .unwrap()
-            .update_linked_group(sender, temp_linked_name, members_to_add)
+        //self.device_mut()
+        //    .as_mut()
+        //    .unwrap()
+        self.update_linked_group(sender, temp_linked_name, members_to_add)
             .await
             .map_err(Error::from)
       },
@@ -287,6 +287,26 @@ impl Glue {
   }
 
   /* Both sending- and receiving-side functions */
+
+  async fn update_linked_group(
+      &mut self,
+      sender: String,
+      temp_linked_name: String,
+      mut members_to_add: HashMap<String, Group>,
+  ) -> Result<(), Error> {
+    self.device_mut()
+        .as_mut()
+        .unwrap()
+        .update_linked_group(sender, temp_linked_name, members_to_add)
+        .await
+        .map_err(Error::from)
+
+    // TODO send all data to new members
+    //self.send_message();
+
+    // TODO notify contacts of new members
+    //self.send_message();
+  }
 }
 
 mod tests {

@@ -77,8 +77,8 @@ impl Group {
     self.parents.insert(parent_id);
   }
 
-  pub fn remove_parent(&mut self, parent_id: &String) {
-    self.parents.remove(parent_id);
+  pub fn remove_parent(&mut self, parent_id: &String) -> bool {
+    self.parents.remove(parent_id)
   }
 
   pub fn children(&self) -> &Option<HashSet<String>> {
@@ -95,12 +95,9 @@ impl Group {
     }
   }
 
-  pub fn remove_child(&mut self, child_id: &String) -> Result<(), Error> {
+  pub fn remove_child(&mut self, child_id: &String) -> Result<bool, Error> {
     match self.children {
-      Some(_) => {
-        self.children.as_mut().unwrap().remove(child_id);
-        Ok(())
-      },
+      Some(_) => Ok(self.children.as_mut().unwrap().remove(child_id)),
       None => Err(Error::GroupHasNoChildren(self.group_id().to_string())),
     }
   }
@@ -450,10 +447,14 @@ impl Groups {
     if group.group_id() == &id_to_replace {
       group.group_id = replacement_id.clone();
     }
-    group.remove_parent(&id_to_replace);
-    group.add_parent(replacement_id.clone());
-    group.remove_child(&id_to_replace);
-    group.add_child(replacement_id);
+    if group.remove_parent(&id_to_replace) {
+      group.add_parent(replacement_id.clone());
+    }
+    group.remove_child(&id_to_replace).map(|result| {
+      if result {
+        group.add_child(replacement_id);
+      }
+    });
   }
 
   pub fn group_contains(

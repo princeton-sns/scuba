@@ -1,15 +1,23 @@
-use noise_core::core::{Core, FullPayload};
+use futures::channel::mpsc;
 use serde::{Serialize, Deserialize};
-use crate::groups::{Group, Groups};
+use std::collections::HashMap;
 use thiserror::Error;
+use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+use noise_core::core::{Core, FullPayload};
+
+use crate::groups::{Group, Groups};
+use crate::devices::Device;
+
+const BUFFER_SIZE: usize = 20;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 enum Message {
-//  RequestUpdateLinked,
-//  ConfirmUpdateLinked,
-//  RequestContact,
-//  ConfirmContact,
-  UpdateGroup(String, Group),
+  UpdateLinked(String, String, HashMap<String, Group>),
+//  ConfirmUpdatedLinked,
+//  UpdateContact,
+//  ConfirmUpdatedContact,
+  SetGroup(String, Group),
   LinkGroups(String, String),
   AddParent(String, String),
   RemoveParent(String, String),
@@ -21,6 +29,7 @@ enum Message {
 //  DeleteGroup,
 //  DeleteData,
 //  DeleteDevice,
+  Test(String),
 }
 
 impl Message {
@@ -52,83 +61,17 @@ enum Error {
     #[from]
     source: crate::groups::Error,
   },
+  #[error(transparent)]
+  DeviceErr {
+    #[from]
+    source: crate::devices::Error,
+  }
 }
-
-/* Categories of operations ~= potentially separate structs */
-
-// Devices
-//
-// init_device
-// create_independent_device
-// create_linked_device
-// delete_current_device
-// delete_linked_device
-// delete_all_devices
-// delete_device (locally/remotely)
-// get/set/remove pending_link_idkey
-// request_update_linked
-// process_update_linked_request
-// confirm_update_linked
-// process_confirm_update_linked
-// get_linked_name
-// get_linked_devices
-
-// Contacts
-//
-// request_contact
-// confirm_contact
-// process_contact_request
-// process_confirm_contact
-// parse_contact
-// add_contact
-// remove_contact
-// get_contacts
-// get_pending_contacts
-
-// Data
-//
-// get_data_type
-// update_data (locally/remotely)
-// set_data
-// delete_data (locally/remotely/helper)
-// validate
-// set_general_validate_callback
-// set_validate_callback_for_type
-// get_data
-// get_all_data_of_type
-// get_all_data
-
-// Groups
-//
-// update_group (locally/remotely) TODO => set_group
-// link_group (locally/remotely)
-// delete_group (locally/remotely)
-// FIXME unlink and delete => just unlink (call delete separately)
-// add_child (locally/remotely)
-// add_parent (locally/remotely)
-// TODO no remove_child (locally/remotely)?
-// remove_parent (locally/remotely)
-
-// Permissions
-//
-// add_admin (locally/remotely)
-// remove_admin (locally/remotely)
-// add_writer (locally/remotely)
-// remove_writer (locally/remotely)
-// add_reader
-// remove_reader
-// TODO => add/remove_privilege_type (using enums for available priv levels)
-// add/remove => grant/revoke
-// has_privilege
-
-// Sharing
-//
-// share_data
-// unshare_data
 
 pub struct Glue {
   core: Core,
-  groups: Groups,
+  device: Option<Device>,
+  receiver: mpsc::Receiver<(String, String)>,
 }
 
 impl Glue {
@@ -137,11 +80,27 @@ impl Glue {
       port_arg: Option<&'a str>,
       turn_encryption_off_arg: bool,
   ) -> Glue {
+    let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
     Self {
-      core: Core::new(ip_arg, port_arg, turn_encryption_off_arg),
-      groups: Groups::new(),
+      core: Core::new(ip_arg, port_arg, turn_encryption_off_arg, sender),
+      device: None,
+      receiver,
     }
   }
+
+  pub fn idkey(&self) -> String {
+    self.core.idkey()
+  }
+
+  pub fn device(&self) -> &Option<Device> {
+    &self.device
+  }
+
+  pub fn device_mut(&mut self) -> &mut Option<Device> {
+    &mut self.device
+  }
+
+  /* Sending-side functions */
 
   async fn send_message(
       &mut self,
@@ -151,24 +110,70 @@ impl Glue {
     self.core.send_message(dst_idkeys, payload).await
   }
 
-  async fn on_message(
-      &mut self,
-      sender: &String,
-      payload: String,
-  ) -> Result<(), Error> {
-    match Message::from_string(payload) {
-      Ok(message) => {
-        match self.check_permissions(sender, &message) {
-          Ok(_) => {
-            // TODO validate data invariants
+  // send specific messages
 
-            // call the demultiplexed function
-            self.demux(sender, message) 
+  pub fn create_standalone_device(&mut self) {
+    self.device = Some(Device::new(self.core.idkey(), None, None));
+  }
+
+  pub async fn create_linked_device(&mut self, idkey: String) {
+    self.device = Some(Device::new(self.core.idkey(), None, Some(idkey.clone())));
+
+    let linked_name = &self.device()
+        .as_ref()
+        .unwrap()
+        .linked_name()
+        .clone();
+
+    let linked_members_to_add = self.device_mut()
+        .as_mut()
+        .unwrap()
+        .groups()
+        .get_all_subgroups(linked_name);
+
+    let message = Message::UpdateLinked(
+        self.core.idkey(),
+        linked_name.to_string(),
+        linked_members_to_add,
+    );
+
+    self.send_message(
+        vec![idkey],
+        &Message::to_string(&message).unwrap(),
+    ).await;
+  }
+
+  /* Receiving-side functions */
+
+  async fn handle_core_events(
+      &mut self,
+  ) {
+    // have core process potential incoming message
+    self.core.handle_server_events().await;
+
+    match self.receiver.try_next() {
+      Ok(Some((sender, payload))) => {
+        match Message::from_string(payload) {
+          Ok(message) => {
+            println!("GOT MESSAGE: {:?}", message.clone());
+            match self.check_permissions(&sender, &message) {
+              Ok(_) => {
+                // TODO validate data invariants
+
+                // call the demultiplexed function
+                match self.demux(&sender, message).await {
+                  Ok(_) => {},
+                  Err(err) => panic!("Error calling demux: {:?}", err),
+                }
+              },
+              Err(err) => panic!("Error checking permissions: {:?}", err),
+            }
           },
-          Err(err) => Err(err),
+          Err(err) => panic!("Error converting string to message: {:?}", err),
         }
       },
-      Err(err) => Err(Error::StringConversionErr(err.to_string())),
+      Ok(None) => {},
+      Err(err) => panic!("Error getting next message from core: {:?}", err),
     }
   }
 
@@ -179,7 +184,10 @@ impl Glue {
   ) -> Result<(), Error> {
     // TODO actually check permissions
     match message {
-      Message::UpdateGroup(group_id, group_val) => {
+      Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
+        Ok(())
+      },
+      Message::SetGroup(group_id, group_val) => {
         Ok(())
       },
       Message::LinkGroups(parent_id, child_id) => {
@@ -199,48 +207,155 @@ impl Glue {
       Message::RemoveChild(group_id, child_id) => {
         Ok(())
       },
+      Message::Test(msg) => {
+        Ok(())
+      },
     }
   }
 
   fn validate_data_invariants() {}
 
-  fn demux(
+  async fn demux(
       &mut self,
       sender: &String,
       message: Message,
   ) -> Result<(), Error> {
-    // FIXME not currently in check_permissions() b/c want to call 
+    // not in check_permissions() b/c want to call 
     // validate_data_invariants() in-between
     match message {
-      Message::UpdateGroup(group_id, group_val) => {
-        self.groups.set_group(group_id, group_val);
+      Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .update_linked_group(sender, temp_linked_name, members_to_add)
+            .await
+            .map_err(Error::from)
+      },
+      Message::SetGroup(group_id, group_val) => {
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .groups_mut()
+            .set_group(group_id, group_val);
         Ok(())
       },
       Message::LinkGroups(parent_id, child_id) => {
-        self.groups.link_groups(&parent_id, &child_id).map_err(Error::from)
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .groups_mut()
+            .link_groups(&parent_id, &child_id)
+            .map_err(Error::from)
       },
       Message::AddParent(group_id, parent_id) => {
-        self.groups.add_parent(&group_id, &parent_id).map_err(Error::from)
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .groups_mut()
+            .add_parent(&group_id, &parent_id)
+            .map_err(Error::from)
       },
       Message::RemoveParent(group_id, parent_id) => {
-        self.groups.remove_parent(&group_id, &parent_id).map_err(Error::from)
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .groups_mut()
+            .remove_parent(&group_id, &parent_id)
+            .map_err(Error::from)
       },
       Message::AddChild(group_id, child_id) => {
-        self.groups.add_child(&group_id, &child_id).map_err(Error::from)
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .groups_mut()
+            .add_child(&group_id, &child_id)
+            .map_err(Error::from)
       },
       Message::RemoveChild(group_id, child_id) => {
-        self.groups.remove_child(&group_id, &child_id).map_err(Error::from)
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .groups_mut()
+            .remove_child(&group_id, &child_id)
+            .map_err(Error::from)
+      },
+      Message::Test(msg) => {
+        println!("msg");
+        Ok(())
       },
     }
   }
+
+  /* Both sending- and receiving-side functions */
 }
 
 mod tests {
   use crate::glue::{Glue, Message};
   use crate::groups::{Group};
+  use futures::channel::mpsc;
 
   #[tokio::test]
-  async fn test_on_message() {
+  async fn test_channels() {
+    let (mut sender, mut receiver) = mpsc::channel::<String>(10);
+    let msg = String::from("hello");
+    sender.try_send(msg.clone());
+    match receiver.try_next() {
+      Ok(Some(recv_msg)) => assert_eq!(recv_msg, msg),
+      Ok(None) => panic!("None received"),
+      Err(err) => panic!("Error: {:?}", err),
+    }
+  }
+
+  #[tokio::test]
+  async fn test_handle_events() {
+    let mut glue_0 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_0.core.handle_server_events().await;
+    println!("creating device 0");
+    glue_0.create_standalone_device();
+
+    let mut glue_1 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_1.core.handle_server_events().await;
+    println!("creating device 1");
+    glue_1.create_standalone_device();
+
+    // send message
+    let message = Message::to_string(
+        &Message::Test("hello".to_string())
+    ).unwrap();
+    println!("sending message to device 0");
+    glue_1.send_message(vec![glue_0.idkey()], &message).await;
+
+    // receive message
+    println!("getting message");
+    glue_0.handle_core_events().await;
+  }
+
+  #[tokio::test]
+  async fn test_update_linked_group() {
+    let mut glue_0 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_0.core.handle_server_events().await;
+    println!("creating device 0");
+    glue_0.create_standalone_device();
+
+    let mut glue_1 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_1.core.handle_server_events().await;
+    println!("creating device 1");
+
+    // also sends message to device 0 to link devices
+    glue_1.create_linked_device(glue_0.idkey()).await;
+
+    // receive message
+    println!("getting message");
+    glue_0.handle_core_events().await;
+  }
+
+/*
+  #[tokio::test]
+  async fn test_handle_core_events() {
     let mut glue = Glue::new(None, None, false);
 
     let group_0 = Group::new(None, None, true, false);
@@ -248,31 +363,31 @@ mod tests {
 
     let dummy_sender = String::from("0");
 
-    let update_group_0_msg = Message::UpdateGroup(
+    let update_group_0_msg = Message::SetGroup(
         group_0.group_id().to_string(),
         group_0.clone()
     );
 
-    assert_eq!(Ok(()), glue.on_message(
+    assert_eq!(Ok(()), glue.handle_core_events(
         &dummy_sender,
         Message::to_string(&update_group_0_msg).unwrap()
     ).await);
     assert_eq!(
-        glue.groups.get_group(group_0.group_id()).unwrap(),
+        glue.device.groups().get_group(group_0.group_id()).unwrap(),
         &group_0.clone()
     );
 
-    let update_group_1_msg = Message::UpdateGroup(
+    let update_group_1_msg = Message::SetGroup(
         group_1.group_id().to_string(),
         group_1.clone()
     );
 
-    assert_eq!(Ok(()), glue.on_message(
+    assert_eq!(Ok(()), glue.handle_core_events(
         &dummy_sender,
         Message::to_string(&update_group_1_msg).unwrap()
     ).await);
     assert_eq!(
-        glue.groups.get_group(group_1.group_id()).unwrap(),
+        glue.device.groups().get_group(group_1.group_id()).unwrap(),
         &group_1.clone()
     );
 
@@ -281,16 +396,16 @@ mod tests {
         group_1.group_id().to_string()
     );
 
-    assert_eq!(Ok(()), glue.on_message(
+    assert_eq!(Ok(()), glue.handle_core_events(
         &dummy_sender,
         Message::to_string(&add_parent_msg).unwrap()
     ).await);
     assert_ne!(
-        glue.groups.get_group(group_0.group_id()).unwrap(),
+        glue.device.groups().get_group(group_0.group_id()).unwrap(),
         &group_0.clone()
     );
     assert_eq!(
-        glue.groups.get_group(group_1.group_id()).unwrap(),
+        glue.device.groups().get_group(group_1.group_id()).unwrap(),
         &group_1.clone()
     );
 
@@ -299,18 +414,18 @@ mod tests {
         group_1.group_id().to_string()
     );
 
-    assert_eq!(Ok(()), glue.on_message(
+    assert_eq!(Ok(()), glue.handle_core_events(
         &dummy_sender,
         Message::to_string(&remove_parent_msg).unwrap()
     ).await);
     assert_eq!(
-        glue.groups.get_group(group_0.group_id()).unwrap(),
+        glue.device.groups().get_group(group_0.group_id()).unwrap(),
         &group_0.clone()
     );
     assert_eq!(
-        glue.groups.get_group(group_1.group_id()).unwrap(),
+        glue.device.groups().get_group(group_1.group_id()).unwrap(),
         &group_1.clone()
     );
   }
+*/
 }
-

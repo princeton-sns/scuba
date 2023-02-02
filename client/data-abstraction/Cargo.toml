@@ -13,3 +13,4 @@ serde_json = { version = "1.0.91", features = ["std"] }
 tokio = { version = "1.23.0", features = ["macros"] }
 thiserror = "1.0.38"
 reqwest = "0.11.13"
+futures = "0.3.25"

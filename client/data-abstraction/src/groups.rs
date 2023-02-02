@@ -1,8 +1,14 @@
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 use thiserror::Error;
+use uuid::Uuid;
+
+// Groups
+//
+// delete_group (locally/remotely)
+// FIXME unlink and delete => just unlink (call delete separately)
+// TODO no remove_child (locally/remotely)?
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -391,7 +397,35 @@ impl Groups {
     &self.stored
   }
 
-  //pub fn get_all_subgroups() -> HashMap<String, Group> {}
+  pub fn get_all_subgroups<'a>(
+      &'a self,
+      group_id: &'a String
+  ) -> HashMap<String, Group> {
+    let mut subgroups = HashMap::<String, Group>::new();
+    let mut visited = HashSet::<&String>::new();
+    let mut to_visit = Vec::<&String>::new();
+    to_visit.push(group_id);
+
+    while !to_visit.is_empty() {
+      let cur_id = to_visit.pop().unwrap();
+
+      if visited.get(cur_id).is_some() {
+        continue;
+      }
+      visited.insert(cur_id);
+
+      let cur_val = self.get_group(cur_id).unwrap();
+      subgroups.insert(cur_id.to_string(), cur_val.clone());
+
+      if let Some(children) = &cur_val.children {
+        for child in children {
+          to_visit.push(&child);
+        }
+      }
+    }
+
+    subgroups
+  }
 
   pub fn is_group_member<'a>(
       &'a self,
@@ -406,7 +440,7 @@ impl Groups {
       let cur_id = to_visit.pop().unwrap();
 
       if visited.get(cur_id).is_some() {
-        continue
+        continue;
       }
 
       if cur_id == is_member_id {
@@ -424,9 +458,40 @@ impl Groups {
     false
   }
 
-  // TODO
-  // fn group_replace()
-  // fn group_contains()
+  pub fn group_replace(
+      group: &mut Group,
+      id_to_replace: String,
+      replacement_id: String,
+  ) {
+    if group.group_id() == &id_to_replace {
+      group.group_id = replacement_id.clone();
+    }
+    group.remove_parent(&id_to_replace);
+    group.add_parent(replacement_id.clone());
+    group.remove_child(&id_to_replace);
+    group.add_child(replacement_id);
+  }
+
+  pub fn group_contains(
+      group: &Group,
+      id_to_check: String,
+  ) -> bool {
+    if group.group_id() == &id_to_check {
+      return true;
+    }
+    if group.parents().contains(&id_to_check) {
+      return true;
+    }
+    match group.children() {
+      Some(children) => {
+        if children.contains(&id_to_check) {
+          return true;
+        }
+      },
+      _ => {},
+    }
+    false
+  }
 }
 
 mod tests {

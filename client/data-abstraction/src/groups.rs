@@ -21,7 +21,6 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
   group_id: String,
-  group_name: Option<String>,
   contact_level: bool,
   parents: HashSet<String>,
   children: Option<HashSet<String>>,
@@ -30,7 +29,6 @@ pub struct Group {
 impl Group {
   pub fn new(
       group_id: Option<String>,
-      group_name: Option<String>,
       contact_level: bool,
       init_children: bool,
   ) -> Group {
@@ -48,7 +46,6 @@ impl Group {
 
     Self {
       group_id: init_group_id,
-      group_name,
       contact_level,
       parents: HashSet::<String>::new(),
       children,
@@ -57,19 +54,6 @@ impl Group {
 
   pub fn group_id(&self) -> &String {
     &self.group_id
-  }
-
-  pub fn group_name(&self) -> &Option<String> {
-    &self.group_name
-  }
-
-  pub fn update_group_name(
-      &mut self,
-      name: Option<String>
-  ) -> Option<String> {
-    let old_name = self.group_name.clone();
-    self.group_name = name;
-    old_name
   }
 
   pub fn contact_level(&self) -> &bool {
@@ -506,7 +490,7 @@ mod tests {
 
   #[test]
   fn test_set_get_group() {
-    let group = Group::new(None, None, true, false);
+    let group = Group::new(None, true, false);
     let mut groups = Groups::new();
     groups.set_group(group.group_id.clone(), group.clone());
     assert_eq!(*groups.get_group(&group.group_id).unwrap(), group);
@@ -514,8 +498,8 @@ mod tests {
 
   #[test]
   fn test_modify_group_parents() {
-    let mut group_0 = Group::new(None, None, true, false);
-    let group_1 = Group::new(None, None, true, true);
+    let mut group_0 = Group::new(None, true, false);
+    let group_1 = Group::new(None, true, true);
 
     group_0.add_parent(group_1.group_id.clone());
     assert_eq!(
@@ -529,8 +513,8 @@ mod tests {
 
   #[test]
   fn test_modify_group_children() {
-    let mut group_0 = Group::new(None, None, true, true);
-    let group_1 = Group::new(None, None, true, false);
+    let mut group_0 = Group::new(None, true, true);
+    let group_1 = Group::new(None, true, false);
 
     group_0.add_child(group_1.group_id.clone());
     assert_eq!(
@@ -544,8 +528,8 @@ mod tests {
 
   #[test]
   fn test_link_groups() {
-    let group_0 = Group::new(None, None, true, true);
-    let group_1 = Group::new(None, None, true, false);
+    let group_0 = Group::new(None, true, true);
+    let group_1 = Group::new(None, true, false);
 
     let mut groups = Groups::new();
     groups.set_group(group_0.group_id.clone(), group_0.clone());
@@ -568,8 +552,8 @@ mod tests {
 
   #[test]
   fn test_unlink_groups() {
-    let group_0 = Group::new(None, None, true, true);
-    let group_1 = Group::new(None, None, true, false);
+    let group_0 = Group::new(None, true, true);
+    let group_1 = Group::new(None, true, false);
 
     let mut groups = Groups::new();
     groups.set_group(group_0.group_id.clone(), group_0.clone());
@@ -584,7 +568,7 @@ mod tests {
 
   #[test]
   fn test_delete_group() {
-    let group = Group::new(None, None, true, false);
+    let group = Group::new(None, true, false);
     let mut groups = Groups::new();
     groups.set_group(group.group_id.clone(), group.clone());
     groups.delete_group(&group.group_id);
@@ -593,8 +577,8 @@ mod tests {
 
   #[test]
   fn test_delete_linked_group() {
-    let group_0 = Group::new(None, None, true, true);
-    let group_1 = Group::new(None, None, true, false);
+    let group_0 = Group::new(None, true, true);
+    let group_1 = Group::new(None, true, false);
 
     let mut groups = Groups::new();
     groups.set_group(group_0.group_id.clone(), group_0.clone());
@@ -609,10 +593,10 @@ mod tests {
 
   #[test]
   fn test_add_members() {
-    let base_group = Group::new(None, None, true, true);
-    let group_0 = Group::new(None, None, true, false);
-    let group_1 = Group::new(None, None, true, false);
-    let group_2 = Group::new(None, None, true, false);
+    let base_group = Group::new(None, true, true);
+    let group_0 = Group::new(None, true, false);
+    let group_1 = Group::new(None, true, false);
+    let group_2 = Group::new(None, true, false);
 
     let mut groups = Groups::new();
 
@@ -654,10 +638,10 @@ mod tests {
 
   #[test]
   fn test_remove_members() {
-    let base_group = Group::new(None, None, true, true);
-    let group_0 = Group::new(None, None, true, false);
-    let group_1 = Group::new(None, None, true, false);
-    let group_2 = Group::new(None, None, true, false);
+    let base_group = Group::new(None, true, true);
+    let group_0 = Group::new(None, true, false);
+    let group_1 = Group::new(None, true, false);
+    let group_2 = Group::new(None, true, false);
 
     let mut groups = Groups::new();
 
@@ -700,13 +684,13 @@ mod tests {
 
   #[test]
   fn test_resolve_ids() {
-    let base_group = Group::new(None, None, true, true);
-    let group_0 = Group::new(None, None, true, true);
-    let group_0a = Group::new(None, None, true, false);
-    let group_0b = Group::new(None, None, true, false);
-    let group_1 = Group::new(None, None, true, true);
-    let group_1a = Group::new(None, None, true, false);
-    let group_1b = Group::new(None, None, true, false);
+    let base_group = Group::new(None, true, true);
+    let group_0 = Group::new(None, true, true);
+    let group_0a = Group::new(None, true, false);
+    let group_0b = Group::new(None, true, false);
+    let group_1 = Group::new(None, true, true);
+    let group_1a = Group::new(None, true, false);
+    let group_1b = Group::new(None, true, false);
 
     let mut groups = Groups::new();
 

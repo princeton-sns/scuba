@@ -38,21 +38,17 @@ impl Device {
     let linked_name = linked_name_arg.unwrap_or(Uuid::new_v4().to_string());
     let mut groups = Groups::new();
 
-    //if pending_link_idkey.is_none() {
     // set linked group
     groups.set_group(linked_name.clone(), Group::new(
         Some(linked_name.clone()),
-        None,
         false,
         true
     ));
     groups.add_child(&linked_name, &idkey);
-    //}
 
     // set device group
     groups.set_group(idkey.clone(), Group::new(
         Some(idkey.clone()),
-        None,
         false,
         false
     ));
@@ -105,6 +101,7 @@ impl Device {
     let perm_linked_name = self.linked_name();
 
     println!("IN UPDATE_LINKED_GROUP");
+    println!("members_to_add: {:?}", members_to_add.clone());
 
     members_to_add.iter_mut().map(|(_, val)| {
       Groups::group_replace(
@@ -136,14 +133,12 @@ mod tests {
     let mut groups = Groups::new();
     groups.set_group(linked_name.clone(), Group::new(
         Some(linked_name.clone()),
-        None,
         false,
         true
     ));
     groups.add_child(&linked_name, &idkey);
     groups.set_group(idkey.clone(), Group::new(
         Some(idkey.clone()),
-        None,
         false,
         false
     ));
@@ -156,33 +151,6 @@ mod tests {
       pending_link_idkey: None,
     });
   }
-
-  /*#[test]
-  fn test_new_linked() {
-    let idkey = String::from("0");
-    let pending_idkey = String::from("1");
-    let linked_name = String::from("linked");
-    let device = Device::new(
-        idkey.clone(),
-        Some(linked_name.clone()),
-        Some(pending_idkey.clone())
-    );
-
-    let mut groups = Groups::new();
-    groups.set_group(idkey.clone(), Group::new(
-        Some(idkey.clone()),
-        None,
-        false,
-        false
-    ));
-
-    assert_eq!(device, Device {
-      idkey,
-      linked_name,
-      groups,
-      pending_link_idkey: Some(pending_idkey),
-    });
-  }*/
 
   #[test]
   fn test_get_linked_name() {
@@ -199,9 +167,16 @@ mod tests {
   async fn test_update_linked_group() {
     let idkey_0 = String::from("0");
     let device_0 = Device::new(idkey_0, None, None);
+    let linked_name_0 = device_0.linked_name();
+    let linked_members_0 = device_0.groups().get_all_subgroups(linked_name_0);
+    println!("groups_0: {:#?}", device_0.groups());
+    println!("linked_members_0: {:#?}", linked_members_0);
 
-    let idkey_1 = String::from("1");
-    let device_1 = Device::new(idkey_1, Some(device_0.linked_name().to_string()), None);
+    //let idkey_1 = String::from("1");
+    //let device_1 = Device::new(idkey_1, Some(device_0.linked_name().to_string()), None);
+    //let linked_name_1 = device_1.linked_name();
+    //let linked_members_1 = device_1.groups().get_all_subgroups(linked_name_1);
+    //println!("linked_members_1: {:?}", linked_members_1);
   }
 }
 

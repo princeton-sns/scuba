@@ -94,6 +94,7 @@ impl Core {
             payload.to_string()
         );
     let mut batch = Batch::new();
+    println!("SENDING: {:#?}\n", common_payload.clone());
     for (idkey, recipient_payload) in recipient_payloads {
       let full_payload = FullPayload::to_string(
           common_payload.clone(),
@@ -113,7 +114,6 @@ impl Core {
           )
       );
     }
-    println!("\nbatch: {:#?}\n", batch);
     self.server_comm.send_message(&batch).await
   }
 
@@ -133,6 +133,7 @@ impl Core {
         );
 
         let full_payload = FullPayload::from_string(decrypted);
+        println!("full_payload: {:#?}", full_payload);
 
         // validate
         match self.hash_vectors.parse_message(

@@ -11,19 +11,16 @@ use crate::groups::{Group, Groups};
 // delete_linked_device
 // delete_all_devices
 // delete_device (locally/remotely)
-//
-// confirm_update_linked -> send_confirm_updated_linked
-// process_confirm_update_linked -> confirm_updated_linked
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
-  #[error("temp")]
-  Temp,
+  #[error("attempted to delete group instead of device")]
+  DeviceHasChildren,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Device {
-  idkey: String, // FIXME need here?
+  idkey: String,
   groups: Groups,
   linked_name: String,
   pending_link_idkey: Option<String>,
@@ -60,8 +57,30 @@ impl Device {
     }
   }
 
+  pub fn idkey(&self) -> &String {
+    &self.idkey
+  }
+
   pub fn linked_name(&self) -> &String {
     &self.linked_name
+  }
+
+  pub fn linked_devices_excluding_self(&self) -> Vec<String> {
+    self.groups()
+        .resolve_ids(vec![self.linked_name()])
+        .iter()
+        .filter(|&x| *x != self.idkey())
+        .map(|&x| x.clone())
+        .collect::<Vec::<String>>()
+  }
+
+  pub fn linked_devices_excluding_self_and_other(&self, other: &String) -> Vec<String> {
+    self.groups()
+        .resolve_ids(vec![self.linked_name()])
+        .iter()
+        .filter(|&x| *x != self.idkey() && *x != other)
+        .map(|&x| x.clone())
+        .collect::<Vec::<String>>()
   }
 
   pub fn linked_devices(&self) -> HashSet<&String> {
@@ -95,6 +114,7 @@ impl Device {
       temp_linked_name: String,
       mut members_to_add: HashMap<String, Group>,
   ) -> Result<(), Error> {
+    println!("IN UPDATE_LINKED_GROUP");
     let currently_linked_devices = self.linked_devices();
     let perm_linked_name = self.linked_name().clone();
 
@@ -130,12 +150,36 @@ impl Device {
       new_linked_name: String,
       new_groups: HashMap<String, Group>,
   ) -> Result<(), Error> {
+    println!("IN CONFIRM_UPDATE_LINKED_GROUP");
     self.groups.delete_group(&self.linked_name.clone());
 
     self.linked_name = new_linked_name;
     for (group_id, group_val) in new_groups.iter() {
       self.groups.set_group(group_id.to_string(), group_val.clone());
     }
+
+    self.clear_pending_link_idkey();
+
+    Ok(())
+  }
+
+  // FIXME Currently, this function is unnecessary since none of this data
+  // is persistent and will be automatically GC'd when the `device` field
+  // of the glue object is set to `None`. But in the future, this function
+  // should be used to clean up any related persistent data
+  pub fn delete_device(&mut self, to_delete: String) -> Result<(), Error> {
+    let device_group = self.groups.get_group(&to_delete).unwrap().clone();
+    if device_group.children().as_ref().is_some() {
+      return Err(Error::DeviceHasChildren);
+    }
+
+    // remove child link to this device from 
+    // every parent (should have no children)
+    for parent in device_group.parents().iter() {
+      self.groups.remove_child(parent, &to_delete);
+    }
+
+    self.groups.delete_group(&to_delete);
 
     Ok(())
   }
@@ -280,6 +324,114 @@ mod tests {
     assert_eq!(merged_idkey_1_group.parents(),
         &HashSet::<String>::from([linked_name_0.clone()]));
     assert_eq!(merged_idkey_1_group.children(), &None);
+  }
+
+  #[test]
+  fn test_delete_self_device() {
+    let idkey_0 = String::from("0");
+    let mut device_0 = Device::new(idkey_0.clone(), None, None);
+    let linked_name_0 = device_0.linked_name().clone();
+    let linked_members_0 = device_0.groups().get_all_subgroups(&linked_name_0);
+
+    let idkey_1 = String::from("1");
+    let mut device_1 = Device::new(idkey_1.clone(), None, Some(device_0.linked_name().to_string()));
+    let linked_name_1 = device_1.linked_name().clone();
+    let linked_members_1 = device_1.groups().get_all_subgroups(&linked_name_1);
+
+    // simulate send and receive of UpdateLinked message
+    match device_0.update_linked_group(
+        idkey_1.clone(),
+        linked_name_1.clone(),
+        linked_members_1.clone(),
+    ) {
+      Ok(_) => println!("Update succeeded"),
+      Err(err) => panic!("Error updating linked group: {:?}", err),
+    }
+
+    // simulate send and receive of ConfirmUpdateLinked message
+    match device_1.confirm_update_linked_group(
+        linked_name_0.clone(),
+        device_0.groups().get_all_groups().clone()
+    ) {
+      Ok(_) => println!("Update succeeded"),
+      Err(err) => panic!("Error confirming update of linked group: {:?}", err),
+    }
+
+    match device_1.delete_device(idkey_1.clone()) {
+      Ok(_) => println!("Delete succeeded"),
+      Err(err) => panic!("Error deleting device: {:?}", err),
+    }
+
+    let linked_members = device_1.groups().get_all_subgroups(&linked_name_0);
+    assert_eq!(linked_members.len(), 2);
+
+    let linked_group = linked_members.get(&linked_name_0).unwrap();
+    assert_eq!(linked_group.group_id(), &linked_name_0);
+    assert_eq!(linked_group.parents(), &HashSet::<String>::new());
+    assert_eq!(linked_group.children().as_ref(),
+        Some(&HashSet::<String>::from([idkey_0.clone()])));
+
+    let idkey_0_group = linked_members.get(&idkey_0).unwrap();
+    assert_eq!(idkey_0_group.group_id(), &idkey_0);
+    assert_eq!(idkey_0_group.parents(),
+        &HashSet::<String>::from([linked_name_0.clone()]));
+    assert_eq!(idkey_0_group.children(), &None);
+
+    assert_eq!(None, linked_members.get(&idkey_1));
+  }
+
+  #[test]
+  fn test_delete_other_device() {
+    let idkey_0 = String::from("0");
+    let mut device_0 = Device::new(idkey_0.clone(), None, None);
+    let linked_name_0 = device_0.linked_name().clone();
+    let linked_members_0 = device_0.groups().get_all_subgroups(&linked_name_0);
+
+    let idkey_1 = String::from("1");
+    let mut device_1 = Device::new(idkey_1.clone(), None, Some(device_0.linked_name().to_string()));
+    let linked_name_1 = device_1.linked_name().clone();
+    let linked_members_1 = device_1.groups().get_all_subgroups(&linked_name_1);
+
+    // simulate send and receive of UpdateLinked message
+    match device_0.update_linked_group(
+        idkey_1.clone(),
+        linked_name_1.clone(),
+        linked_members_1.clone(),
+    ) {
+      Ok(_) => println!("Update succeeded"),
+      Err(err) => panic!("Error updating linked group: {:?}", err),
+    }
+
+    // simulate send and receive of ConfirmUpdateLinked message
+    match device_1.confirm_update_linked_group(
+        linked_name_0.clone(),
+        device_0.groups().get_all_groups().clone()
+    ) {
+      Ok(_) => println!("Update succeeded"),
+      Err(err) => panic!("Error confirming update of linked group: {:?}", err),
+    }
+
+    match device_0.delete_device(idkey_1.clone()) {
+      Ok(_) => println!("Delete succeeded"),
+      Err(err) => panic!("Error deleting device: {:?}", err),
+    }
+
+    let linked_members = device_0.groups().get_all_subgroups(&linked_name_0);
+    assert_eq!(linked_members.len(), 2);
+
+    let linked_group = linked_members.get(&linked_name_0).unwrap();
+    assert_eq!(linked_group.group_id(), &linked_name_0);
+    assert_eq!(linked_group.parents(), &HashSet::<String>::new());
+    assert_eq!(linked_group.children().as_ref(),
+        Some(&HashSet::<String>::from([idkey_0.clone()])));
+
+    let idkey_0_group = linked_members.get(&idkey_0).unwrap();
+    assert_eq!(idkey_0_group.group_id(), &idkey_0);
+    assert_eq!(idkey_0_group.parents(),
+        &HashSet::<String>::from([linked_name_0.clone()]));
+    assert_eq!(idkey_0_group.children(), &None);
+
+    assert_eq!(None, linked_members.get(&idkey_1));
   }
 }
 

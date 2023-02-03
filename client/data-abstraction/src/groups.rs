@@ -4,12 +4,6 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-// Groups
-//
-// delete_group (locally/remotely)
-// FIXME unlink and delete => just unlink (call delete separately)
-// TODO no remove_child (locally/remotely)?
-
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
   #[error("group {0} has no children")]

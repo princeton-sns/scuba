@@ -14,7 +14,7 @@ const BUFFER_SIZE: usize = 20;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum Message {
   UpdateLinked(String, String, HashMap<String, Group>),
-  // TODO last param: HashMap<String, Data>
+  // TODO last param (for data): HashMap<String, Data>
   ConfirmUpdateLinked(String, HashMap<String, Group>),
 //  UpdateContact,
 //  ConfirmUpdatedContact,
@@ -23,13 +23,14 @@ enum Message {
   AddParent(String, String),
   RemoveParent(String, String),
   AddChild(String, String),
-  RemoveChild(String, String),
+  RemoveChild(String, String), // FIXME may never be used
 //  AddPermission,
 //  RemovePermission,
 //  UpdateData,
-//  DeleteGroup,
 //  DeleteData,
-//  DeleteDevice,
+//  DeleteGroup,
+  DeleteSelfDevice,
+  DeleteOtherDevice(String),
   Test(String),
 }
 
@@ -66,7 +67,9 @@ enum Error {
   DeviceErr {
     #[from]
     source: crate::devices::Error,
-  }
+  },
+  #[error("no message available")]
+  StreamErr,
 }
 
 pub struct Glue {
@@ -111,70 +114,34 @@ impl Glue {
     self.core.send_message(dst_idkeys, payload).await
   }
 
-  // send specific messages
-
-  pub fn create_standalone_device(&mut self) {
-    self.device = Some(Device::new(self.core.idkey(), None, None));
-  }
-
-  pub async fn create_linked_device(&mut self, idkey: String) {
-    self.device = Some(Device::new(self.core.idkey(), None, Some(idkey.clone())));
-
-    let linked_name = &self.device()
-        .as_ref()
-        .unwrap()
-        .linked_name()
-        .clone();
-
-    let linked_members_to_add = self.device_mut()
-        .as_mut()
-        .unwrap()
-        .groups()
-        .get_all_subgroups(linked_name);
-
-    let message = Message::UpdateLinked(
-        self.core.idkey(),
-        linked_name.to_string(),
-        linked_members_to_add,
-    );
-
-    self.send_message(
-        vec![idkey],
-        &Message::to_string(&message).unwrap(),
-    ).await;
-  }
-
   /* Receiving-side functions */
 
   async fn handle_core_events(
       &mut self,
-  ) {
+  ) -> Result<(), Error> {
     // have core process potential incoming message
     self.core.handle_server_events().await;
 
     match self.receiver.try_next() {
       Ok(Some((sender, payload))) => {
-        match Message::from_string(payload) {
+        match Message::from_string(payload.clone()) {
           Ok(message) => {
             println!("GOT MESSAGE: {:?}", message.clone());
             match self.check_permissions(&sender, &message) {
               Ok(_) => {
-                // TODO validate data invariants
+                self.validate_data_invariants();
 
                 // call the demultiplexed function
-                match self.demux(&sender, message).await {
-                  Ok(_) => {},
-                  Err(err) => panic!("Error calling demux: {:?}", err),
-                }
+                self.demux(&sender, message).await
               },
-              Err(err) => panic!("Error checking permissions: {:?}", err),
+              Err(err) => Err(err),
             }
           },
-          Err(err) => panic!("Error converting string to message: {:?}", err),
+          Err(err) => Err(Error::StringConversionErr(payload)),
         }
       },
-      Ok(None) => {},
-      Err(err) => panic!("Error getting next message from core: {:?}", err),
+      Ok(None) => Ok(()),
+      Err(err) => Err(Error::StreamErr),
     }
   }
 
@@ -197,8 +164,6 @@ impl Glue {
       Message::LinkGroups(parent_id, child_id) => {
         Ok(())
       },
-      // TODO are add/remove parent/child ever used outside the context
-      // of linking groups?
       Message::AddParent(group_id, parent_id) => {
         Ok(())
       },
@@ -211,13 +176,24 @@ impl Glue {
       Message::RemoveChild(group_id, child_id) => {
         Ok(())
       },
+      Message::DeleteSelfDevice => {
+        Ok(())
+      },
+      Message::DeleteOtherDevice(idkey_to_delete) => {
+        Ok(())
+      },
       Message::Test(msg) => {
         Ok(())
       },
     }
   }
 
-  fn validate_data_invariants() {}
+  fn validate_data_invariants(
+      &self
+  ) -> Result<(), Error> {
+    // TODO actually validate data invariants
+    Ok(())
+  }
 
   async fn demux(
       &mut self,
@@ -290,6 +266,22 @@ impl Glue {
             .remove_child(&group_id, &child_id)
             .map_err(Error::from)
       },
+      Message::DeleteSelfDevice => {
+        let idkey = self.idkey().clone();
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .delete_device(idkey)
+            .map(|_| self.device = None)
+            .map_err(Error::from)
+      },
+      Message::DeleteOtherDevice(idkey_to_delete) => {
+        self.device_mut()
+            .as_mut()
+            .unwrap()
+            .delete_device(idkey_to_delete)
+            .map_err(Error::from)
+      },
       Message::Test(msg) => {
         println!("msg");
         Ok(())
@@ -297,13 +289,95 @@ impl Glue {
     }
   }
 
-  /* Both sending- and receiving-side functions */
+  /* Remaining functionality */
+
+  pub fn create_standalone_device(&mut self) {
+    self.device = Some(Device::new(self.core.idkey(), None, None));
+  }
+
+  pub async fn create_linked_device(&mut self, idkey: String) {
+    self.device = Some(Device::new(self.core.idkey(), None, Some(idkey.clone())));
+
+    let linked_name = &self.device()
+        .as_ref()
+        .unwrap()
+        .linked_name()
+        .clone();
+
+    let linked_members_to_add = self.device_mut()
+        .as_mut()
+        .unwrap()
+        .groups()
+        .get_all_subgroups(linked_name);
+
+    self.send_message(
+        vec![idkey],
+        &Message::to_string(&Message::UpdateLinked(
+            self.core.idkey(),
+            linked_name.to_string(),
+            linked_members_to_add,
+        )).unwrap(),
+    ).await;
+  }
+
+  pub async fn delete_self_device(&mut self) -> Result<(), Error> {
+    // TODO send to contact devices too
+    self.send_message(
+        self.device().as_ref().unwrap().linked_devices_excluding_self(),
+        &Message::to_string(&Message::DeleteOtherDevice(
+            self.idkey()
+        )).unwrap()
+    ).await;
+
+    // TODO wait for ACK that other devices have indeed received above
+    // messages before deleting current device
+    let idkey = self.idkey().clone();
+    self.device_mut()
+        .as_mut()
+        .unwrap()
+        .delete_device(idkey)
+        .map(|_| self.device = None)
+        .map_err(Error::from)
+  }
+
+  pub async fn delete_other_device(
+      &mut self,
+      to_delete: String,
+  ) -> Result<(), Error> {
+    // TODO send to contact devices too
+    self.send_message(
+        self.device()
+            .as_ref()
+            .unwrap()
+            .linked_devices_excluding_self_and_other(&to_delete),
+        &Message::to_string(&Message::DeleteOtherDevice(
+            to_delete.clone()
+        )).unwrap()
+    ).await;
+
+    self.device_mut()
+        .as_mut()
+        .unwrap()
+        .delete_device(to_delete.clone())
+        .map_err(Error::from);
+
+    // TODO wait for ACK that other devices have indeed received above
+    // messages before deleting specified device
+    self.send_message(
+      vec![to_delete.clone()],
+      &Message::to_string(&Message::DeleteSelfDevice).unwrap()
+    ).await;
+
+    Ok(())
+  }
+
+  pub fn delete_all_devices() {}
 
   async fn update_linked_group(
       &mut self,
       sender: String,
       temp_linked_name: String,
-      mut members_to_add: HashMap<String, Group>,
+      members_to_add: HashMap<String, Group>,
   ) -> Result<(), Error> {
     self.device_mut()
         .as_mut()
@@ -313,18 +387,17 @@ impl Glue {
     let perm_linked_name = self.device().as_ref().unwrap().linked_name().to_string();
 
     // send all groups (TODO and data) to new members
-    let message = Message::ConfirmUpdateLinked(
-        perm_linked_name,
-        self.device()
-            .as_ref()
-            .unwrap()
-            .groups()
-            .get_all_groups()
-            .clone()
-    );
     self.send_message(
         vec![sender],
-        &Message::to_string(&message).unwrap(),
+        &Message::to_string(&Message::ConfirmUpdateLinked(
+            perm_linked_name,
+            self.device()
+                .as_ref()
+                .unwrap()
+                .groups()
+                .get_all_groups()
+                .clone()
+        )).unwrap(),
     ).await;
 
     // TODO notify contacts of new members
@@ -395,6 +468,103 @@ mod tests {
     // receive message
     println!("getting message");
     glue_0.handle_core_events().await;
+  }
+
+  #[tokio::test]
+  async fn test_confirm_update_linked_group() {
+    let mut glue_0 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_0.core.handle_server_events().await;
+
+    glue_0.create_standalone_device();
+
+    let mut glue_1 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_1.core.handle_server_events().await;
+
+    // also sends message to device 0 to link devices
+    println!("LINKING <1> to <0>\n");
+    glue_1.create_linked_device(glue_0.idkey()).await;
+    // receive update_linked...
+    println!("Getting update_linked... on <0> and SENDING confirm_update...\n");
+    glue_0.handle_core_events().await;
+    // receive update_linked... loopback
+    println!("Getting update_linked... LOOPBACK on <1>\n");
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked...
+    println!("Getting confirm_update... on <1>\n");
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked... loopback
+    println!("Getting confirm_update... LOOPBACK on <0>\n");
+    glue_0.handle_core_events().await;
+  }
+
+  #[tokio::test]
+  async fn test_delete_self_device() {
+    let mut glue_0 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_0.core.handle_server_events().await;
+    glue_0.create_standalone_device();
+
+    let mut glue_1 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_1.core.handle_server_events().await;
+
+    // also sends message to device 0 to link devices
+    glue_1.create_linked_device(glue_0.idkey()).await;
+    // receive update_linked...
+    glue_0.handle_core_events().await;
+    // receive update_linked... loopback
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked...
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked... loopback
+    glue_0.handle_core_events().await;
+
+    // delete device
+    glue_0.delete_self_device().await;
+    assert_eq!(glue_0.device(), &None);
+
+    // receive delete message
+    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().groups());
+    assert_eq!(glue_1.device().as_ref().unwrap().linked_devices().len(), 2);
+    glue_1.handle_core_events().await;
+    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().groups());
+    assert_eq!(glue_1.device().as_ref().unwrap().linked_devices().len(), 1);
+  }
+
+  #[tokio::test]
+  async fn test_delete_other_device() {
+    let mut glue_0 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_0.core.handle_server_events().await;
+    glue_0.create_standalone_device();
+
+    let mut glue_1 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_1.core.handle_server_events().await;
+
+    // also sends message to device 0 to link devices
+    glue_1.create_linked_device(glue_0.idkey()).await;
+    // receive update_linked...
+    glue_0.handle_core_events().await;
+    // receive update_linked... loopback
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked...
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked... loopback
+    glue_0.handle_core_events().await;
+
+    // delete device
+    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().groups());
+    assert_eq!(glue_0.device().as_ref().unwrap().linked_devices().len(), 2);
+    glue_0.delete_other_device(glue_1.idkey().clone()).await;
+    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().groups());
+    assert_eq!(glue_0.device().as_ref().unwrap().linked_devices().len(), 1);
+
+    // receive delete message
+    glue_1.handle_core_events().await;
+    assert_eq!(glue_1.device(), &None);
   }
 
 /*

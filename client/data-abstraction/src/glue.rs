@@ -371,7 +371,22 @@ impl Glue {
     Ok(())
   }
 
-  pub fn delete_all_devices() {}
+  pub async fn delete_all_devices(&mut self) {
+    // TODO notify contacts
+
+    // TODO wait for ACK that contacts have indeed received above
+    // messages before deleting all devices
+    self.send_message(
+        self.device()
+            .as_ref()
+            .unwrap()
+            .linked_devices()
+            .iter()
+            .map(|&x| x.clone())
+            .collect::<Vec::<String>>(),
+        &Message::to_string(&Message::DeleteSelfDevice).unwrap()
+    ).await;
+  }
 
   async fn update_linked_group(
       &mut self,
@@ -564,6 +579,39 @@ mod tests {
 
     // receive delete message
     glue_1.handle_core_events().await;
+    assert_eq!(glue_1.device(), &None);
+  }
+
+  #[tokio::test]
+  async fn test_delete_all_devices() {
+    let mut glue_0 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_0.core.handle_server_events().await;
+    glue_0.create_standalone_device();
+
+    let mut glue_1 = Glue::new(None, None, false);
+    // upload otkeys to server
+    glue_1.core.handle_server_events().await;
+
+    // also sends message to device 0 to link devices
+    glue_1.create_linked_device(glue_0.idkey()).await;
+    // receive update_linked...
+    glue_0.handle_core_events().await;
+    // receive update_linked... loopback
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked...
+    glue_1.handle_core_events().await;
+    // receive confirm_update_linked... loopback
+    glue_0.handle_core_events().await;
+
+    // delete all devices
+    glue_0.delete_all_devices().await;
+    assert_ne!(glue_0.device(), &None);
+    assert_ne!(glue_1.device(), &None);
+
+    glue_0.handle_core_events().await;
+    glue_1.handle_core_events().await;
+    assert_eq!(glue_0.device(), &None);
     assert_eq!(glue_1.device(), &None);
   }
 

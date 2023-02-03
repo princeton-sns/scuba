@@ -320,6 +320,38 @@ impl Glue {
     ).await;
   }
 
+  async fn update_linked_group(
+      &mut self,
+      sender: String,
+      temp_linked_name: String,
+      members_to_add: HashMap<String, Group>,
+  ) -> Result<(), Error> {
+    self.device_mut()
+        .as_mut()
+        .unwrap()
+        .update_linked_group(sender.clone(), temp_linked_name.clone(), members_to_add)
+        .map_err(Error::from);
+    let perm_linked_name = self.device().as_ref().unwrap().linked_name().to_string();
+
+    // send all groups (TODO and data) to new members
+    self.send_message(
+        vec![sender],
+        &Message::to_string(&Message::ConfirmUpdateLinked(
+            perm_linked_name,
+            self.device()
+                .as_ref()
+                .unwrap()
+                .groups()
+                .get_all_groups()
+                .clone()
+        )).unwrap(),
+    ).await;
+
+    // TODO notify contacts of new members
+
+    Ok(())
+  }
+
   pub async fn delete_self_device(&mut self) -> Result<(), Error> {
     // TODO send to contact devices too
     self.send_message(
@@ -386,38 +418,6 @@ impl Glue {
             .collect::<Vec::<String>>(),
         &Message::to_string(&Message::DeleteSelfDevice).unwrap()
     ).await;
-  }
-
-  async fn update_linked_group(
-      &mut self,
-      sender: String,
-      temp_linked_name: String,
-      members_to_add: HashMap<String, Group>,
-  ) -> Result<(), Error> {
-    self.device_mut()
-        .as_mut()
-        .unwrap()
-        .update_linked_group(sender.clone(), temp_linked_name.clone(), members_to_add)
-        .map_err(Error::from);
-    let perm_linked_name = self.device().as_ref().unwrap().linked_name().to_string();
-
-    // send all groups (TODO and data) to new members
-    self.send_message(
-        vec![sender],
-        &Message::to_string(&Message::ConfirmUpdateLinked(
-            perm_linked_name,
-            self.device()
-                .as_ref()
-                .unwrap()
-                .groups()
-                .get_all_groups()
-                .clone()
-        )).unwrap(),
-    ).await;
-
-    // TODO notify contacts of new members
-
-    Ok(())
   }
 }
 

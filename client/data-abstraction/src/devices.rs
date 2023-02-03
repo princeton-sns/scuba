@@ -5,13 +5,6 @@ use uuid::Uuid;
 
 use crate::groups::{Group, Groups};
 
-// Devices
-//
-// delete_current_device
-// delete_linked_device
-// delete_all_devices
-// delete_device (locally/remotely)
-
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
   #[error("attempted to delete group instead of device")]

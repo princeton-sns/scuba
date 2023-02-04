@@ -98,26 +98,26 @@ impl Group {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Groups {
-  stored: HashMap<String, Group>,
+pub struct GroupStore {
+  store: HashMap<String, Group>,
 }
 
-impl Groups {
-  pub fn new() -> Groups {
+impl GroupStore {
+  pub fn new() -> GroupStore {
     Self {
-      stored: HashMap::<String, Group>::new(),
+      store: HashMap::<String, Group>::new(),
     }
   }
 
   pub fn get_group(&self, group_id: &String) -> Option<&Group> {
-    self.stored.get(group_id)
+    self.store.get(group_id)
   }
 
   pub fn get_group_mut(
       &mut self,
       group_id: &String
   ) -> Option<&mut Group> {
-    self.stored.get_mut(group_id)
+    self.store.get_mut(group_id)
   }
 
   pub fn set_group(
@@ -125,7 +125,7 @@ impl Groups {
       group_id: String,
       group_val: Group
   ) -> Option<Group> {
-    self.stored.insert(group_id, group_val)
+    self.store.insert(group_id, group_val)
   }
 
   pub fn add_parent(
@@ -293,7 +293,7 @@ impl Groups {
       }
     }
 
-    self.stored.remove(group_id)
+    self.store.remove(group_id)
   }
 
   pub fn is_device_group(&self, group_val: &Group) -> bool {
@@ -369,7 +369,7 @@ impl Groups {
   }
 
   pub fn get_all_groups(&self) -> &HashMap<String, Group> {
-    &self.stored
+    &self.store
   }
 
   pub fn get_all_subgroups<'a>(
@@ -476,17 +476,17 @@ impl Groups {
 mod tests {
   use std::collections::HashMap;
   use std::collections::HashSet;
-  use crate::groups::{Group, Groups};
+  use crate::groups::{Group, GroupStore};
 
   #[test]
   fn test_new() {
-    assert_eq!(Groups::new().stored, HashMap::<String, Group>::new());
+    assert_eq!(GroupStore::new().store, HashMap::<String, Group>::new());
   }
 
   #[test]
   fn test_set_get_group() {
     let group = Group::new(None, true, false);
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
     groups.set_group(group.group_id.clone(), group.clone());
     assert_eq!(*groups.get_group(&group.group_id).unwrap(), group);
   }
@@ -526,7 +526,7 @@ mod tests {
     let group_0 = Group::new(None, true, true);
     let group_1 = Group::new(None, true, false);
 
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
     groups.set_group(group_0.group_id.clone(), group_0.clone());
     groups.set_group(group_1.group_id.clone(), group_1.clone());
 
@@ -550,7 +550,7 @@ mod tests {
     let group_0 = Group::new(None, true, true);
     let group_1 = Group::new(None, true, false);
 
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
     groups.set_group(group_0.group_id.clone(), group_0.clone());
     groups.set_group(group_1.group_id.clone(), group_1.clone());
 
@@ -564,7 +564,7 @@ mod tests {
   #[test]
   fn test_delete_group() {
     let group = Group::new(None, true, false);
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
     groups.set_group(group.group_id.clone(), group.clone());
     groups.delete_group(&group.group_id);
     assert_eq!(groups.get_group(&group.group_id), None);
@@ -575,7 +575,7 @@ mod tests {
     let group_0 = Group::new(None, true, true);
     let group_1 = Group::new(None, true, false);
 
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
     groups.set_group(group_0.group_id.clone(), group_0.clone());
     groups.set_group(group_1.group_id.clone(), group_1.clone());
 
@@ -593,7 +593,7 @@ mod tests {
     let group_1 = Group::new(None, true, false);
     let group_2 = Group::new(None, true, false);
 
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
 
     groups.set_group(base_group.group_id.clone(), base_group.clone());
     groups.set_group(group_0.group_id.clone(), group_0.clone());
@@ -638,7 +638,7 @@ mod tests {
     let group_1 = Group::new(None, true, false);
     let group_2 = Group::new(None, true, false);
 
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
 
     groups.set_group(base_group.group_id.clone(), base_group.clone());
     groups.set_group(group_0.group_id.clone(), group_0.clone());
@@ -687,7 +687,7 @@ mod tests {
     let group_1a = Group::new(None, true, false);
     let group_1b = Group::new(None, true, false);
 
-    let mut groups = Groups::new();
+    let mut groups = GroupStore::new();
 
     groups.set_group(base_group.group_id.clone(), base_group.clone());
     groups.set_group(group_0.group_id.clone(), group_0.clone());

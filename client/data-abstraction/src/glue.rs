@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use noise_core::core::{Core, FullPayload};
 
-use crate::groups::{Group, Groups};
+use crate::groups::{Group, GroupStore};
 use crate::devices::Device;
 
 const BUFFER_SIZE: usize = 20;
@@ -222,7 +222,7 @@ impl Glue {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .groups_mut()
+            .group_store_mut()
             .set_group(group_id, group_val);
         Ok(())
       },
@@ -230,7 +230,7 @@ impl Glue {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .groups_mut()
+            .group_store_mut()
             .link_groups(&parent_id, &child_id)
             .map_err(Error::from)
       },
@@ -238,7 +238,7 @@ impl Glue {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .groups_mut()
+            .group_store_mut()
             .add_parent(&group_id, &parent_id)
             .map_err(Error::from)
       },
@@ -246,7 +246,7 @@ impl Glue {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .groups_mut()
+            .group_store_mut()
             .remove_parent(&group_id, &parent_id)
             .map_err(Error::from)
       },
@@ -254,7 +254,7 @@ impl Glue {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .groups_mut()
+            .group_store_mut()
             .add_child(&group_id, &child_id)
             .map_err(Error::from)
       },
@@ -262,7 +262,7 @@ impl Glue {
         self.device_mut()
             .as_mut()
             .unwrap()
-            .groups_mut()
+            .group_store_mut()
             .remove_child(&group_id, &child_id)
             .map_err(Error::from)
       },
@@ -307,7 +307,7 @@ impl Glue {
     let linked_members_to_add = self.device_mut()
         .as_mut()
         .unwrap()
-        .groups()
+        .group_store()
         .get_all_subgroups(linked_name);
 
     self.send_message(
@@ -341,7 +341,7 @@ impl Glue {
             self.device()
                 .as_ref()
                 .unwrap()
-                .groups()
+                .group_store()
                 .get_all_groups()
                 .clone()
         )).unwrap(),
@@ -541,10 +541,10 @@ mod tests {
     assert_eq!(glue_0.device(), &None);
 
     // receive delete message
-    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().groups());
+    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().group_store());
     assert_eq!(glue_1.device().as_ref().unwrap().linked_devices().len(), 2);
     glue_1.handle_core_events().await;
-    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().groups());
+    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().group_store());
     assert_eq!(glue_1.device().as_ref().unwrap().linked_devices().len(), 1);
   }
 
@@ -571,10 +571,10 @@ mod tests {
     glue_0.handle_core_events().await;
 
     // delete device
-    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().groups());
+    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().group_store());
     assert_eq!(glue_0.device().as_ref().unwrap().linked_devices().len(), 2);
     glue_0.delete_other_device(glue_1.idkey().clone()).await;
-    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().groups());
+    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().group_store());
     assert_eq!(glue_0.device().as_ref().unwrap().linked_devices().len(), 1);
 
     // receive delete message
@@ -635,7 +635,7 @@ mod tests {
         Message::to_string(&update_group_0_msg).unwrap()
     ).await);
     assert_eq!(
-        glue.device.groups().get_group(group_0.group_id()).unwrap(),
+        glue.device.group_store().get_group(group_0.group_id()).unwrap(),
         &group_0.clone()
     );
 
@@ -649,7 +649,7 @@ mod tests {
         Message::to_string(&update_group_1_msg).unwrap()
     ).await);
     assert_eq!(
-        glue.device.groups().get_group(group_1.group_id()).unwrap(),
+        glue.device.group_store().get_group(group_1.group_id()).unwrap(),
         &group_1.clone()
     );
 
@@ -663,11 +663,11 @@ mod tests {
         Message::to_string(&add_parent_msg).unwrap()
     ).await);
     assert_ne!(
-        glue.device.groups().get_group(group_0.group_id()).unwrap(),
+        glue.device.group_store().get_group(group_0.group_id()).unwrap(),
         &group_0.clone()
     );
     assert_eq!(
-        glue.device.groups().get_group(group_1.group_id()).unwrap(),
+        glue.device.group_store().get_group(group_1.group_id()).unwrap(),
         &group_1.clone()
     );
 
@@ -681,11 +681,11 @@ mod tests {
         Message::to_string(&remove_parent_msg).unwrap()
     ).await);
     assert_eq!(
-        glue.device.groups().get_group(group_0.group_id()).unwrap(),
+        glue.device.group_store().get_group(group_0.group_id()).unwrap(),
         &group_0.clone()
     );
     assert_eq!(
-        glue.device.groups().get_group(group_1.group_id()).unwrap(),
+        glue.device.group_store().get_group(group_1.group_id()).unwrap(),
         &group_1.clone()
     );
   }

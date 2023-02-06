@@ -4,6 +4,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::groups::{Group, GroupStore};
+use crate::data::DataStore;
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -15,6 +16,7 @@ pub enum Error {
 pub struct Device {
   idkey: String,
   group_store: GroupStore,
+  data_store: DataStore,
   linked_name: String,
   pending_link_idkey: Option<String>,
 }
@@ -45,6 +47,7 @@ impl Device {
     Self {
       idkey,
       group_store,
+      data_store: DataStore::new(),
       linked_name,
       pending_link_idkey,
     }
@@ -86,6 +89,14 @@ impl Device {
 
   pub fn group_store_mut(&mut self) -> &mut GroupStore {
     &mut self.group_store
+  }
+
+  pub fn data_store(&self) -> &DataStore {
+    &self.data_store
+  }
+
+  pub fn data_store_mut(&mut self) -> &mut DataStore {
+    &mut self.data_store
   }
 
   fn set_pending_link_idkey(&mut self, idkey: String) {

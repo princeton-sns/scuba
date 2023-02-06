@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 pub mod contacts;
 pub mod data;
 pub mod devices;

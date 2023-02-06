@@ -17,7 +17,7 @@ pub enum Error {
 
 fn hash_message(
   prev_digest: Option<&Hash>,
-  // TODO Sorted/Ord constraint?
+  // TODO impl Sorted/Ord?
   recipients: &mut Vec<DeviceId>,
   message: Message,
 ) -> Hash {

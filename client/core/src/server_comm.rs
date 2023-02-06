@@ -20,31 +20,6 @@ pub enum Event {
   Msg(String),
 }
 
-#[derive(Debug, Serialize)]
-pub struct Batch {
-  batch: Vec<OutgoingMessage>,
-}
-
-impl Batch {
-  pub fn new() -> Self {
-    Self {
-      batch: Vec::<OutgoingMessage>::new(),
-    }
-  }
-
-  pub fn from_vec(batch: Vec<OutgoingMessage>) -> Self {
-    Self { batch }
-  }
-
-  pub fn push(&mut self, message: OutgoingMessage) {
-    self.batch.push(message);
-  }
-
-  //pub fn pop(&mut self) -> Option<OutgoingMessage> {
-  //  self.batch.pop()
-  //}
-}
-
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Payload {
@@ -77,6 +52,31 @@ impl OutgoingMessage {
   pub fn new(device_id: String, payload: Payload) -> OutgoingMessage {
     Self { device_id, payload }
   }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Batch {
+  batch: Vec<OutgoingMessage>,
+}
+
+impl Batch {
+  pub fn new() -> Self {
+    Self {
+      batch: Vec::<OutgoingMessage>::new(),
+    }
+  }
+
+  pub fn from_vec(batch: Vec<OutgoingMessage>) -> Self {
+    Self { batch }
+  }
+
+  pub fn push(&mut self, message: OutgoingMessage) {
+    self.batch.push(message);
+  }
+
+  //pub fn pop(&mut self) -> Option<OutgoingMessage> {
+  //  self.batch.pop()
+  //}
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -143,11 +143,20 @@ impl ServerComm {
   ) -> Self {
     let ip_addr = ip_arg.unwrap_or(IP_ADDR);
     let port_num = port_arg.unwrap_or(PORT_NUM);
-    let base_url = Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
-        .expect("Failed base_url construction");
+    let base_url = Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num]
+            .join("")
+        ).expect("Failed base_url construction");
     let listener = Box::new(
-        ClientBuilder::for_url(base_url.join("/events").expect("Failed join of /events").as_str()).expect("Failed in ClientBuilder::for_url")
-            .header("Authorization", &vec!["Bearer", &idkey].join(" ")).expect("Failed header construction")
+        ClientBuilder::for_url(
+                base_url
+                .join("/events")
+                .expect("Failed join of /events")
+                .as_str()
+            ).expect("Failed in ClientBuilder::for_url")
+            .header(
+                "Authorization",
+                &vec!["Bearer", &idkey].join(" ")
+            ).expect("Failed header construction")
             .build()
         )
         .stream();
@@ -187,9 +196,17 @@ impl ServerComm {
         .await
   }
 
-  pub async fn get_otkey_from_server(&self, dst_idkey: &String) -> Result<OtkeyResponse> {
+  pub async fn get_otkey_from_server(
+      &self,
+      dst_idkey: &String
+  ) -> Result<OtkeyResponse> {
     let mut url = self.base_url.join("/devices/otkey").expect("");
-    url.set_query(Some(&vec!["device_id", &encode(dst_idkey).into_owned()].join("=")));
+    url.set_query(
+        Some(
+            &vec!["device_id", &encode(dst_idkey).into_owned()]
+            .join("=")
+        )
+    );
     self.client.get(url)
         .send()
         .await?
@@ -197,7 +214,10 @@ impl ServerComm {
         .await
   }
 
-  pub async fn delete_messages_from_server(&self, to_delete: &ToDelete) -> Result<Response> {
+  pub async fn delete_messages_from_server(
+      &self,
+      to_delete: &ToDelete
+  ) -> Result<Response> {
     self.client.delete(self.base_url.join("/self/messages").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -206,7 +226,10 @@ impl ServerComm {
         .await
   }
 
-  pub async fn add_otkeys_to_server<'a>(&self, to_add: &HashMap<String, String>) -> Result<Response> {
+  pub async fn add_otkeys_to_server<'a>(
+      &self,
+      to_add: &HashMap<String, String>
+  ) -> Result<Response> {
     self.client.post(self.base_url.join("/self/otkeys").expect("").as_str())
         .header("Content-Type", "application/json")
         .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
@@ -219,7 +242,10 @@ impl ServerComm {
 impl Stream for ServerComm {
   type Item = eventsource_client::Result<Event>;
 
-  fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+  fn poll_next(
+      mut self: Pin<&mut Self>,
+      cx: &mut Context<'_>
+  ) -> Poll<Option<Self::Item>> {
     let event = self.listener.as_mut().poll_next(cx);
     match event {
       Poll::Pending => Poll::Pending,
@@ -250,7 +276,10 @@ mod tests {
 
   #[tokio::test]
   async fn test_new() {
-    assert_eq!(ServerComm::new(None, None, "abcd".to_string()).try_next().await, Ok(Some(Event::Otkey)));
+    assert_eq!(
+        ServerComm::new(None, None, "abcd".to_string()).try_next().await,
+        Ok(Some(Event::Otkey))
+    );
   }
 
   #[tokio::test]
@@ -313,7 +342,9 @@ mod tests {
             assert!(msg.seq_id > 0);
             println!("msg.seq_id: {:?}", msg.seq_id);
 
-            match server_comm.delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id)).await {
+            match server_comm.delete_messages_from_server(
+                &ToDelete::from_seq_id(msg.seq_id)
+            ).await {
               Ok(_) => println!("Sent delete-message successfully"),
               Err(err) => panic!("Error sending delete-message: {:?}", err),
             }

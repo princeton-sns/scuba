@@ -48,7 +48,10 @@ impl OlmWrapper {
   ) -> OlmSession {
     match server_comm.get_otkey_from_server(dst_idkey).await {
       Ok(dst_otkey) => {
-        match self.account.create_outbound_session(dst_idkey, &String::from(dst_otkey)) {
+        match self.account.create_outbound_session(
+            dst_idkey,
+            &String::from(dst_otkey)
+        ) {
           Ok(new_session) => return new_session,
           Err(err) => panic!("Error creating outbound session: {:?}", err),
         }
@@ -82,9 +85,13 @@ impl OlmWrapper {
       );
     } else {
       let sessions_list = self.sessions.get_mut(dst_idkey).unwrap();
-      if sessions_list.is_empty() || !sessions_list[sessions_list.len() - 1].has_received_message() {
+      if sessions_list.is_empty()
+          || !sessions_list[sessions_list.len() - 1].has_received_message() {
         let session = self.new_outbound_session(server_comm, dst_idkey).await;
-        self.sessions.get_mut(dst_idkey).unwrap().push(session);
+        self.sessions
+            .get_mut(dst_idkey)
+            .unwrap()
+            .push(session);
       }
     }
     let sessions_list = self.sessions.get(dst_idkey).unwrap();
@@ -113,7 +120,10 @@ impl OlmWrapper {
           );
         } else {
           let new_session = self.new_inbound_session(&prekey);
-          self.sessions.get_mut(sender).unwrap().push(new_session);
+          self.sessions
+              .get_mut(sender)
+              .unwrap()
+              .push(new_session);
         }
         let sessions_list = self.sessions.get(sender).unwrap();
         &sessions_list[sessions_list.len() - 1]
@@ -201,8 +211,12 @@ impl OlmWrapper {
       Err(err) => {
         match ciphertext {
           // iterate through all sessions in case this message was delayed
-          OlmMessage::Message(_) => return self.try_all_sessions_decrypt(sender, ciphertext),
-          OlmMessage::PreKey(_) => panic!("Error creating inbound session from prekey message: {:?}", err),
+          OlmMessage::Message(_) => {
+            self.try_all_sessions_decrypt(sender, ciphertext)
+          },
+          OlmMessage::PreKey(_) => {
+            panic!("Error creating inbound session from prekey message: {:?}", err);
+          }
         }
       }
     }

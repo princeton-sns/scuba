@@ -94,7 +94,6 @@ impl Core {
             payload.to_string()
         );
     let mut batch = Batch::new();
-    println!("SENDING: {:#?}\n", common_payload.clone());
     for (idkey, recipient_payload) in recipient_payloads {
       let full_payload = FullPayload::to_string(
           common_payload.clone(),
@@ -117,13 +116,11 @@ impl Core {
     self.server_comm.send_message(&batch).await
   }
 
-  pub async fn handle_server_events(&mut self) {
+  pub async fn receive_message(&mut self) {
     use futures::TryStreamExt;
 
-    println!("in handle_server_events");
     match self.server_comm.try_next().await {
       Ok(Some(Event::Msg(msg_string))) => {
-        println!("got message event from server");
         let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
         let decrypted = self.olm_wrapper.decrypt(
@@ -133,7 +130,6 @@ impl Core {
         );
 
         let full_payload = FullPayload::from_string(decrypted);
-        println!("full_payload: {:#?}", full_payload);
 
         // validate
         match self.hash_vectors.parse_message(
@@ -143,12 +139,11 @@ impl Core {
         ) {
           Ok(None) => println!("Validation succeeded, no message to process"),
           Ok(Some((seq, message))) => {
-            println!("forwarding message to glue");
             // forward message
             self.sender.try_send((msg.sender().clone(), message));
 
             match self.server_comm.delete_messages_from_server(
-                &ToDelete::from_seq_id(msg.seq_id())
+                &ToDelete::from_seq_id(seq.try_into().unwrap())
             ).await {
               Ok(_) => println!("Sent delete-message successfully"),
               Err(err) => panic!("Error sending delete-message: {:?}", err),
@@ -182,23 +177,20 @@ mod tests {
 
   #[tokio::test]
   async fn test_new() {
-    let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    // TODO test receiver
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
     let _ = Core::new(None, None, false, sender);
   }
 
   #[tokio::test]
   async fn test_new_and_init() {
-    let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    // TODO test receiver
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
     let _ = Core::new_and_init(None, None, false, sender).await;
   }
 
   #[tokio::test]
   async fn test_send_message_to_self() {
     let payload = String::from("hello from me");
-    let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    // TODO test receiver
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
     let mut core = Core::new_and_init(None, None, false, sender).await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey];
@@ -237,8 +229,7 @@ mod tests {
   #[tokio::test]
   async fn test_send_message_to_other() {
     let payload = String::from("hello from me");
-    let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    // TODO test receiver
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
     let mut core_0 = Core::new_and_init(None, None, false, sender.clone()).await;
     let mut core_1 = Core::new_and_init(None, None, false, sender).await;
     let idkey_1 = core_1.olm_wrapper.get_idkey();
@@ -274,7 +265,7 @@ mod tests {
     let (sender, mut receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
     let mut core = Core::new(None, None, false, sender.clone());
     // otkey
-    core.handle_server_events().await;
+    core.receive_message().await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey.clone()];
 
@@ -283,7 +274,7 @@ mod tests {
       Err(err) => panic!("Error sending message: {:?}", err),
     }
 
-    core.handle_server_events().await;
+    core.receive_message().await;
 
     match receiver.try_next().unwrap() {
       Some((sender, recv_payload)) => {

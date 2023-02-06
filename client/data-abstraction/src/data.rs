@@ -4,15 +4,20 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BasicData {
   data_id: String,
+  data_val: String,
 }
 
 impl BasicData {
-  pub fn new(data_id: String) -> BasicData {
-    Self { data_id }
+  pub fn new(data_id: String, data_val: String) -> BasicData {
+    Self { data_id, data_val }
   }
 
   fn data_id(&self) -> &String {
     &self.data_id
+  }
+
+  fn data_val(&self) -> &String {
+    &self.data_val
   }
 }
 
@@ -132,4 +137,28 @@ impl DataStore {
 }
 
 mod tests {
+  use std::collections::HashMap;
+  use crate::data::{DataStore, BasicData};
+
+  #[test]
+  fn test_new() {
+    assert_eq!(DataStore::new().store, HashMap::<String, BasicData>::new());
+  }
+
+  #[test]
+  fn test_set_get_data() {
+    let mut data_store = DataStore::new();
+    let data = BasicData::new(String::from("0"), String::from("val"));
+    data_store.set_data(data.data_id().to_string(), data.clone());
+    assert_eq!(*data_store.get_data(data.data_id()).unwrap(), data);
+  }
+
+  #[test]
+  fn test_delete_data() {
+    let mut data_store = DataStore::new();
+    let data = BasicData::new(String::from("0"), String::from("val"));
+    data_store.set_data(data.data_id().to_string(), data.clone());
+    data_store.delete_data(data.data_id());
+    assert_eq!(data_store.get_data(data.data_id()), None);
+  }
 }

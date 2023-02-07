@@ -134,6 +134,8 @@ pub struct ServerComm {
   client     : reqwest::Client,
   listener   : Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>>>>,
 }
+// wasm FIXME s reqwest and SEE
+// TODO make (some of) server comm a trait + would help make mockable
 
 impl ServerComm {
   pub fn new<'a>(

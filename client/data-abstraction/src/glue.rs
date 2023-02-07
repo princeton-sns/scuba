@@ -119,6 +119,7 @@ impl Glue {
     // have core process potential incoming message
     self.core.receive_message().await;
 
+    // FIXME Arc<..trait>
     match self.receiver.try_next() {
       Ok(Some((sender, payload))) => {
         match Message::from_string(payload.clone()) {

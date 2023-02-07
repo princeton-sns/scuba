@@ -140,6 +140,7 @@ impl Core {
           Ok(None) => println!("Validation succeeded, no message to process"),
           Ok(Some((seq, message))) => {
             // forward message
+            // FIXME are callbacks easier to compile to wasm?
             self.sender.try_send((msg.sender().clone(), message));
 
             match self.server_comm.delete_messages_from_server(

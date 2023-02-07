@@ -17,7 +17,7 @@ pub enum Error {
 
 fn hash_message(
   prev_digest: Option<&Hash>,
-  // TODO Sorted/Ord constraint?
+  // TODO impl Sorted/Ord?
   recipients: &mut Vec<DeviceId>,
   message: Message,
 ) -> Hash {
@@ -216,7 +216,7 @@ impl HashVectors {
     self.pending_messages.push_back(message_hash_entry);
   }
 
-  fn parse_message(
+  pub fn parse_message(
       &mut self,
       sender: &DeviceId,
       common_payload: CommonPayload,

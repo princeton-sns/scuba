@@ -9,20 +9,20 @@ const NUM_OTKEYS : usize = 20;
 
 // TODO persist natively
 pub struct OlmWrapper {
-  toggle_off   : bool,
-  idkeys       : IdentityKeys,
-  account      : OlmAccount,
-  message_queue: Vec<String>,
-  sessions     : HashMap<String, Vec<OlmSession>>,
+  turn_encryption_off: bool,
+  idkeys             : IdentityKeys,
+  account            : OlmAccount,
+  message_queue      : Vec<String>,
+  sessions           : HashMap<String, Vec<OlmSession>>,
 }
 
 // TODO impl Error enum
 
 impl OlmWrapper {
-  pub fn new(toggle_arg: Option<bool>) -> Self {
+  pub fn new(turn_encryption_off_arg: bool) -> Self {
     let account = OlmAccount::new();
     Self {
-      toggle_off: toggle_arg.unwrap_or(false),
+      turn_encryption_off: turn_encryption_off_arg,
       idkeys: account.parsed_identity_keys(),
       account,
       message_queue: Vec::new(),
@@ -48,7 +48,10 @@ impl OlmWrapper {
   ) -> OlmSession {
     match server_comm.get_otkey_from_server(dst_idkey).await {
       Ok(dst_otkey) => {
-        match self.account.create_outbound_session(dst_idkey, &String::from(dst_otkey)) {
+        match self.account.create_outbound_session(
+            dst_idkey,
+            &String::from(dst_otkey)
+        ) {
           Ok(new_session) => return new_session,
           Err(err) => panic!("Error creating outbound session: {:?}", err),
         }
@@ -75,16 +78,20 @@ impl OlmWrapper {
       server_comm: &ServerComm,
       dst_idkey: &String
   ) -> &OlmSession {
-    if let None = self.sessions.get(dst_idkey) {
+    if self.sessions.get(dst_idkey).is_none() {
       self.sessions.insert(
           dst_idkey.to_string(),
           vec![self.new_outbound_session(server_comm, dst_idkey).await]
       );
     } else {
       let sessions_list = self.sessions.get_mut(dst_idkey).unwrap();
-      if sessions_list.is_empty() || !sessions_list[sessions_list.len() - 1].has_received_message() {
+      if sessions_list.is_empty()
+          || !sessions_list[sessions_list.len() - 1].has_received_message() {
         let session = self.new_outbound_session(server_comm, dst_idkey).await;
-        self.sessions.get_mut(dst_idkey).unwrap().push(session);
+        self.sessions
+            .get_mut(dst_idkey)
+            .unwrap()
+            .push(session);
       }
     }
     let sessions_list = self.sessions.get(dst_idkey).unwrap();
@@ -98,7 +105,7 @@ impl OlmWrapper {
   ) -> &OlmSession {
     match ciphertext {
       OlmMessage::Message(_) => {
-        if let None = self.sessions.get(sender) {
+        if self.sessions.get(sender).is_none() {
           panic!("No pairwise sessions exist for idkey {:?}", sender);
         } else {
           let sessions_list = self.sessions.get_mut(sender).unwrap();
@@ -106,14 +113,17 @@ impl OlmWrapper {
         }
       },
       OlmMessage::PreKey(prekey) => {
-        if let None = self.sessions.get(sender) {
+        if self.sessions.get(sender).is_none() {
           self.sessions.insert(
               sender.to_string(),
               vec![self.new_inbound_session(&prekey)]
           );
         } else {
           let new_session = self.new_inbound_session(&prekey);
-          self.sessions.get_mut(sender).unwrap().push(new_session);
+          self.sessions
+              .get_mut(sender)
+              .unwrap()
+              .push(new_session);
         }
         let sessions_list = self.sessions.get(sender).unwrap();
         &sessions_list[sessions_list.len() - 1]
@@ -146,7 +156,7 @@ impl OlmWrapper {
       dst_idkey: &String,
       plaintext: &String,
   ) -> (usize, String) {
-    if self.toggle_off {
+    if self.turn_encryption_off {
       return (1, plaintext.to_string());
     }
     self.encrypt_helper(server_comm, dst_idkey, plaintext).await
@@ -173,7 +183,7 @@ impl OlmWrapper {
       c_type: usize,
       ciphertext: &String,
   ) -> String {
-    if self.toggle_off {
+    if self.turn_encryption_off {
       return ciphertext.to_string();
     }
     self.decrypt_helper(
@@ -201,8 +211,12 @@ impl OlmWrapper {
       Err(err) => {
         match ciphertext {
           // iterate through all sessions in case this message was delayed
-          OlmMessage::Message(_) => return self.try_all_sessions_decrypt(sender, ciphertext),
-          OlmMessage::PreKey(_) => panic!("Error creating inbound session from prekey message: {:?}", err),
+          OlmMessage::Message(_) => {
+            self.try_all_sessions_decrypt(sender, ciphertext)
+          },
+          OlmMessage::PreKey(_) => {
+            panic!("Error creating inbound session from prekey message: {:?}", err);
+          }
         }
       }
     }
@@ -216,19 +230,19 @@ mod tests {
 
   #[test]
   fn test_new() {
-    let olm_wrapper = OlmWrapper::new(None);
-    assert_eq!(olm_wrapper.toggle_off, false);
+    let olm_wrapper = OlmWrapper::new(false);
+    assert_eq!(olm_wrapper.turn_encryption_off, false);
   }
 
   #[test]
   fn test_idkey() {
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     println!("idkey: {:?}", olm_wrapper.get_idkey());
   }
 
   #[test]
   fn test_gen_otkeys() {
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     let otkeys = olm_wrapper.generate_otkeys(None);
     assert_eq!(NUM_OTKEYS, otkeys.curve25519().len());
     println!("otkeys: {:?}", otkeys.curve25519());
@@ -237,7 +251,7 @@ mod tests {
   #[test]
   fn test_gen_otkeys_custom_num() {
     let num = 7;
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     let otkeys = olm_wrapper.generate_otkeys(Some(num));
     assert_eq!(num, otkeys.curve25519().len());
     println!("otkeys: {:?}", otkeys.curve25519());
@@ -245,7 +259,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_dummy_encrypt() {
-    let mut olm_wrapper = OlmWrapper::new(Some(true));
+    let mut olm_wrapper = OlmWrapper::new(true);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
@@ -256,7 +270,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_self_encrypt() {
-    let mut olm_wrapper = OlmWrapper::new(None);
+    let mut olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
@@ -269,7 +283,7 @@ mod tests {
 
   #[test]
   fn test_dummy_decrypt() {
-    let mut olm_wrapper = OlmWrapper::new(Some(true));
+    let mut olm_wrapper = OlmWrapper::new(true);
     let idkey = olm_wrapper.get_idkey();
     let plaintext: &str = "hello";
     let decrypted = olm_wrapper.decrypt(&idkey, 1, &plaintext.to_string());
@@ -278,7 +292,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_self_decrypt() {
-    let mut olm_wrapper = OlmWrapper::new(None);
+    let mut olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
@@ -291,7 +305,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_self_outbound_session() {
-    let olm_wrapper = OlmWrapper::new(None);
+    let olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
     let session = olm_wrapper.new_outbound_session(&server_comm, &idkey).await;
@@ -302,12 +316,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_encrypt_and_decrypt_once() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -322,12 +336,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_get_session_init() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -357,12 +371,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_get_session_without_received_msg() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -402,12 +416,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_get_session_with_received_msg() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -447,12 +461,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_encrypt_and_decrypt_without_received_msg() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -472,12 +486,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_encrypt_and_decrypt_with_received_msg() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -497,12 +511,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_delayed_message() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -531,12 +545,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_very_delayed_message() {
-    let mut ow1 = OlmWrapper::new(None);
+    let mut ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(None);
+    let mut ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;

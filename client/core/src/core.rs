@@ -1,3 +1,4 @@
+use futures::channel::mpsc;
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ use crate::hash_vectors::{HashVectors, CommonPayload, RecipientPayload};
 // TODO persist natively
 
 #[derive(Debug, Serialize, Deserialize)]
-struct FullPayload {
+pub struct FullPayload {
   common: CommonPayload,
   per_recipient: RecipientPayload,
 }
@@ -47,27 +48,42 @@ pub struct Core {
   olm_wrapper: OlmWrapper,
   server_comm: ServerComm,
   hash_vectors: HashVectors,
+  sender: mpsc::Sender<(String, String)>,
 }
 
 impl Core {
-  pub fn new() -> Core {
-    let olm_wrapper = OlmWrapper::new(None);
+  pub fn new<'a>(
+      ip_arg: Option<&'a str>,
+      port_arg: Option<&'a str>,
+      turn_encryption_off_arg: bool,
+      sender: mpsc::Sender<(String, String)>,
+  ) -> Core {
+    let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
     let idkey = olm_wrapper.get_idkey();
-    let server_comm = ServerComm::new(None, None, idkey.clone());
+    let server_comm = ServerComm::new(ip_arg, port_arg, idkey.clone());
     let hash_vectors = HashVectors::new(idkey);
 
-    Core { olm_wrapper, server_comm, hash_vectors }
+    Core { olm_wrapper, server_comm, hash_vectors, sender }
   }
 
-  pub async fn new_and_init() -> Core {
-    let olm_wrapper = OlmWrapper::new(None);
-    let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
+  pub async fn new_and_init<'a>(
+      ip_arg: Option<&'a str>,
+      port_arg: Option<&'a str>,
+      turn_encryption_off_arg: bool,
+      sender: mpsc::Sender<(String, String)>,
+  ) -> Core {
+    let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
+    let server_comm = ServerComm::init(ip_arg, port_arg, &olm_wrapper).await;
     let hash_vectors = HashVectors::new(olm_wrapper.get_idkey());
 
-    Core { olm_wrapper, server_comm, hash_vectors }
+    Core { olm_wrapper, server_comm, hash_vectors, sender }
   }
 
-  async fn send_message(
+  pub fn idkey(&self) -> String {
+    self.olm_wrapper.get_idkey()
+  }
+
+  pub async fn send_message(
       &mut self,
       dst_idkeys: Vec<String>,
       payload: &String
@@ -97,11 +113,10 @@ impl Core {
           )
       );
     }
-    println!("\nbatch: {:#?}\n", batch);
     self.server_comm.send_message(&batch).await
   }
 
-  pub async fn handle_events(&mut self) {
+  pub async fn receive_message(&mut self) {
     use futures::TryStreamExt;
 
     match self.server_comm.try_next().await {
@@ -115,16 +130,31 @@ impl Core {
         );
 
         let full_payload = FullPayload::from_string(decrypted);
-        println!("full_payload: {:?}", full_payload);
 
-        match self.server_comm.delete_messages_from_server(
-            &ToDelete::from_seq_id(msg.seq_id())
-        ).await {
-          Ok(_) => println!("Sent delete-message successfully"),
-          Err(err) => panic!("Error sending delete-message: {:?}", err),
+        // validate
+        match self.hash_vectors.parse_message(
+            &msg.sender(),
+            full_payload.common,
+            &full_payload.per_recipient
+        ) {
+          Ok(None) => println!("Validation succeeded, no message to process"),
+          Ok(Some((seq, message))) => {
+            // forward message
+            // FIXME are callbacks easier to compile to wasm?
+            self.sender.try_send((msg.sender().clone(), message));
+
+            match self.server_comm.delete_messages_from_server(
+                &ToDelete::from_seq_id(seq.try_into().unwrap())
+            ).await {
+              Ok(_) => println!("Sent delete-message successfully"),
+              Err(err) => panic!("Error sending delete-message: {:?}", err),
+            }
+          },
+          Err(err) => panic!("Validation failed: {:?}", err),
         }
       },
       Ok(Some(Event::Otkey)) => {
+        println!("got otkey event from server");
         let otkeys = self.olm_wrapper.generate_otkeys(None);
         match self.server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
           Ok(_) => println!("Sent otkeys successfully"),
@@ -142,21 +172,27 @@ mod tests {
   use crate::core::{Core, FullPayload};
   use crate::server_comm::{Event, IncomingMessage, ToDelete};
   use futures::TryStreamExt;
+  use futures::channel::mpsc;
+
+  const BUFFER_SIZE: usize = 20;
 
   #[tokio::test]
   async fn test_new() {
-    let _ = Core::new();
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
+    let _ = Core::new(None, None, false, sender);
   }
 
   #[tokio::test]
   async fn test_new_and_init() {
-    let _ = Core::new_and_init().await;
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
+    let _ = Core::new_and_init(None, None, false, sender).await;
   }
 
   #[tokio::test]
   async fn test_send_message_to_self() {
     let payload = String::from("hello from me");
-    let mut core = Core::new_and_init().await;
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
+    let mut core = Core::new_and_init(None, None, false, sender).await;
     let idkey = core.olm_wrapper.get_idkey();
     let recipients = vec![idkey];
 
@@ -194,8 +230,9 @@ mod tests {
   #[tokio::test]
   async fn test_send_message_to_other() {
     let payload = String::from("hello from me");
-    let mut core_0 = Core::new_and_init().await;
-    let mut core_1 = Core::new_and_init().await;
+    let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
+    let mut core_0 = Core::new_and_init(None, None, false, sender.clone()).await;
+    let mut core_1 = Core::new_and_init(None, None, false, sender).await;
     let idkey_1 = core_1.olm_wrapper.get_idkey();
     let recipients = vec![idkey_1];
 
@@ -220,6 +257,32 @@ mod tests {
         }
       },
       Err(err) => panic!("error: {:?}", err),
+    }
+  }
+
+  #[tokio::test]
+  async fn test_handle_events() {
+    let payload = String::from("hello from me");
+    let (sender, mut receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
+    let mut core = Core::new(None, None, false, sender.clone());
+    // otkey
+    core.receive_message().await;
+    let idkey = core.olm_wrapper.get_idkey();
+    let recipients = vec![idkey.clone()];
+
+    match core.send_message(recipients, &payload).await {
+      Ok(_) => println!("Message sent"),
+      Err(err) => panic!("Error sending message: {:?}", err),
+    }
+
+    core.receive_message().await;
+
+    match receiver.try_next().unwrap() {
+      Some((sender, recv_payload)) => {
+        assert_eq!(sender, idkey);
+        assert_eq!(payload, recv_payload);
+      },
+      None => panic!("Got no message"),
     }
   }
 }

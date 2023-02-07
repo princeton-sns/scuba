@@ -1,0 +1,16 @@
+[package]
+name = "data-abstraction"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+uuid = { version = "1.2.2", features = ["v4", "fast-rng"] }
+noise-core = { path = "../core" }
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = { version = "1.0.91", features = ["std"] }
+tokio = { version = "1.23.0", features = ["macros"] }
+thiserror = "1.0.38"
+reqwest = "0.11.13"
+futures = "0.3.25"

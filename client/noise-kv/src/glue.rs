@@ -71,7 +71,7 @@ enum Error {
 
 pub struct Glue {
   core: Core,
-  device: Option<Device>,
+  pub device: Option<Device>,
   receiver: mpsc::Receiver<(String, String)>,
 }
 
@@ -93,13 +93,13 @@ impl Glue {
     self.core.idkey()
   }
 
-  pub fn device(&self) -> &Option<Device> {
-    &self.device
-  }
+  //pub fn device(&self) -> &Option<Device> {
+  //  &self.device
+  //}
 
-  pub fn device_mut(&mut self) -> &mut Option<Device> {
-    &mut self.device
-  }
+  //pub fn device_mut(&mut self) -> &mut Option<Device> {
+  //  &mut self.device
+  //}
 
   /* Sending-side functions */
 
@@ -204,7 +204,7 @@ impl Glue {
     //match message {
     //  Message::UpdateData(data_id, data_val) => {
     //  //| Message::DeleteData => 
-    //    self.device()
+    //    self.device
     //        .as_ref()
     //        .unwrap()
     //        .data_store()
@@ -227,7 +227,7 @@ impl Glue {
             .map_err(Error::from)
       },
       Message::ConfirmUpdateLinked(new_linked_name, new_groups) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
             .confirm_update_linked_group(
@@ -237,63 +237,63 @@ impl Glue {
             .map_err(Error::from)
       },
       Message::SetGroup(group_id, group_val) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .set_group(group_id, group_val);
         Ok(())
       },
       Message::LinkGroups(parent_id, child_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .link_groups(&parent_id, &child_id)
             .map_err(Error::from)
       },
       Message::DeleteGroup(group_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .delete_group(&group_id);
         Ok(())
       },
       Message::AddParent(group_id, parent_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .add_parent(&group_id, &parent_id)
             .map_err(Error::from)
       },
       Message::RemoveParent(group_id, parent_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .remove_parent(&group_id, &parent_id)
             .map_err(Error::from)
       },
       Message::AddChild(group_id, child_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .add_child(&group_id, &child_id)
             .map_err(Error::from)
       },
       Message::RemoveChild(group_id, child_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
-            .group_store_mut()
+            .group_store
             .remove_child(&group_id, &child_id)
             .map_err(Error::from)
       },
       Message::UpdateData(data_id, data_val) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
             .data_store_mut()
@@ -301,7 +301,7 @@ impl Glue {
         Ok(())
       },
       Message::DeleteData(data_id) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
             .data_store_mut()
@@ -310,7 +310,7 @@ impl Glue {
       },
       Message::DeleteSelfDevice => {
         let idkey = self.idkey().clone();
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
             .delete_device(idkey)
@@ -318,7 +318,7 @@ impl Glue {
             .map_err(Error::from)
       },
       Message::DeleteOtherDevice(idkey_to_delete) => {
-        self.device_mut()
+        self.device
             .as_mut()
             .unwrap()
             .delete_device(idkey_to_delete)
@@ -340,16 +340,16 @@ impl Glue {
   pub async fn create_linked_device(&mut self, idkey: String) {
     self.device = Some(Device::new(self.idkey(), None, Some(idkey.clone())));
 
-    let linked_name = &self.device()
+    let linked_name = &self.device
         .as_ref()
         .unwrap()
         .linked_name()
         .clone();
 
-    let linked_members_to_add = self.device_mut()
+    let linked_members_to_add = self.device
         .as_mut()
         .unwrap()
-        .group_store()
+        .group_store
         .get_all_subgroups(linked_name);
 
     self.send_message(
@@ -368,22 +368,22 @@ impl Glue {
       temp_linked_name: String,
       members_to_add: HashMap<String, Group>,
   ) -> Result<(), Error> {
-    self.device_mut()
+    self.device
         .as_mut()
         .unwrap()
         .update_linked_group(sender.clone(), temp_linked_name.clone(), members_to_add)
         .map_err(Error::from);
-    let perm_linked_name = self.device().as_ref().unwrap().linked_name().to_string();
+    let perm_linked_name = self.device.as_ref().unwrap().linked_name().to_string();
 
     // send all groups (TODO and data) to new members
     self.send_message(
         vec![sender],
         &Message::to_string(&Message::ConfirmUpdateLinked(
             perm_linked_name,
-            self.device()
+            self.device
                 .as_ref()
                 .unwrap()
-                .group_store()
+                .group_store
                 .get_all_groups()
                 .clone()
         )).unwrap(),
@@ -397,7 +397,7 @@ impl Glue {
   pub async fn delete_self_device(&mut self) -> Result<(), Error> {
     // TODO send to contact devices too
     self.send_message(
-        self.device().as_ref().unwrap().linked_devices_excluding_self(),
+        self.device.as_ref().unwrap().linked_devices_excluding_self(),
         &Message::to_string(&Message::DeleteOtherDevice(
             self.idkey()
         )).unwrap()
@@ -406,7 +406,7 @@ impl Glue {
     // TODO wait for ACK that other devices have indeed received above
     // messages before deleting current device
     let idkey = self.idkey().clone();
-    self.device_mut()
+    self.device
         .as_mut()
         .unwrap()
         .delete_device(idkey)
@@ -420,7 +420,7 @@ impl Glue {
   ) -> Result<(), Error> {
     // TODO send to contact devices too
     self.send_message(
-        self.device()
+        self.device
             .as_ref()
             .unwrap()
             .linked_devices_excluding_self_and_other(&to_delete),
@@ -429,7 +429,7 @@ impl Glue {
         )).unwrap()
     ).await;
 
-    self.device_mut()
+    self.device
         .as_mut()
         .unwrap()
         .delete_device(to_delete.clone())
@@ -451,7 +451,7 @@ impl Glue {
     // TODO wait for ACK that contacts have indeed received above
     // messages before deleting all devices
     self.send_message(
-        self.device()
+        self.device
             .as_ref()
             .unwrap()
             .linked_devices()
@@ -580,14 +580,14 @@ mod tests {
 
     // delete device
     glue_0.delete_self_device().await;
-    assert_eq!(glue_0.device(), &None);
+    assert_eq!(glue_0.device, None);
 
     // receive delete message
-    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().group_store());
-    assert_eq!(glue_1.device().as_ref().unwrap().linked_devices().len(), 2);
+    println!("glue_1.device: {:#?}", glue_1.device.as_ref().unwrap().group_store);
+    assert_eq!(glue_1.device.as_ref().unwrap().linked_devices().len(), 2);
     glue_1.receive_message().await;
-    println!("glue_1.device: {:#?}", glue_1.device().as_ref().unwrap().group_store());
-    assert_eq!(glue_1.device().as_ref().unwrap().linked_devices().len(), 1);
+    println!("glue_1.device: {:#?}", glue_1.device.as_ref().unwrap().group_store);
+    assert_eq!(glue_1.device.as_ref().unwrap().linked_devices().len(), 1);
   }
 
   #[tokio::test]
@@ -613,15 +613,15 @@ mod tests {
     glue_0.receive_message().await;
 
     // delete device
-    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().group_store());
-    assert_eq!(glue_0.device().as_ref().unwrap().linked_devices().len(), 2);
+    println!("glue_0.device: {:#?}", glue_0.device.as_ref().unwrap().group_store);
+    assert_eq!(glue_0.device.as_ref().unwrap().linked_devices().len(), 2);
     glue_0.delete_other_device(glue_1.idkey().clone()).await;
-    println!("glue_0.device: {:#?}", glue_0.device().as_ref().unwrap().group_store());
-    assert_eq!(glue_0.device().as_ref().unwrap().linked_devices().len(), 1);
+    println!("glue_0.device: {:#?}", glue_0.device.as_ref().unwrap().group_store);
+    assert_eq!(glue_0.device.as_ref().unwrap().linked_devices().len(), 1);
 
     // receive delete message
     glue_1.receive_message().await;
-    assert_eq!(glue_1.device(), &None);
+    assert_eq!(glue_1.device, None);
   }
 
   #[tokio::test]
@@ -648,12 +648,12 @@ mod tests {
 
     // delete all devices
     glue_0.delete_all_devices().await;
-    assert_ne!(glue_0.device(), &None);
-    assert_ne!(glue_1.device(), &None);
+    assert_ne!(glue_0.device, None);
+    assert_ne!(glue_1.device, None);
 
     glue_0.receive_message().await;
     glue_1.receive_message().await;
-    assert_eq!(glue_0.device(), &None);
-    assert_eq!(glue_1.device(), &None);
+    assert_eq!(glue_0.device, None);
+    assert_eq!(glue_1.device, None);
   }
 }

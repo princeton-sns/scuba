@@ -1,0 +1,12 @@
+[package]
+name = "cmdline-lightswitch"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = "0.3.26"
+noise-core = { path = "../../client/core" }
+repl-rs = "0.2.6"
+tokio = { version = "1.25.0", features = ["macros", "io-std", "io-util", "rt", "rt-multi-thread"] }

@@ -132,7 +132,7 @@ pub struct ServerComm {
   base_url   : Url,
   idkey      : String,
   client     : reqwest::Client,
-  listener   : Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>>>>,
+  listener   : Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>> + Send + Sync>>,
 }
 // wasm FIXME s reqwest and SEE
 // TODO make (some of) server comm a trait + would help make mockable
@@ -241,6 +241,7 @@ impl ServerComm {
   }
 }
 
+// FIXME callbacks such that we can make this immutable
 impl Stream for ServerComm {
   type Item = eventsource_client::Result<Event>;
 

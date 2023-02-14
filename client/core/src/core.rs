@@ -47,7 +47,7 @@ impl FullPayload {
 pub struct Core {
   olm_wrapper: OlmWrapper,
   server_comm: ServerComm,
-  hash_vectors: HashVectors,
+  hash_vectors: Mutex<HashVectors>,
   sender: mpsc::Sender<(String, String)>,
 }
 
@@ -61,7 +61,7 @@ impl Core {
     let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(ip_arg, port_arg, idkey.clone());
-    let hash_vectors = HashVectors::new(idkey);
+    let hash_vectors = Mutex::new(HashVectors::new(idkey));
 
     Core { olm_wrapper, server_comm, hash_vectors, sender }
   }
@@ -74,7 +74,7 @@ impl Core {
   ) -> Core {
     let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
     let server_comm = ServerComm::init(ip_arg, port_arg, &olm_wrapper).await;
-    let hash_vectors = HashVectors::new(olm_wrapper.get_idkey());
+    let hash_vectors = Mutex::new(HashVectors::new(olm_wrapper.get_idkey()));
 
     Core { olm_wrapper, server_comm, hash_vectors, sender }
   }
@@ -89,7 +89,7 @@ impl Core {
       payload: &String
   ) -> Result<Response> {
     let (common_payload, recipient_payloads) =
-        self.hash_vectors.prepare_message(
+        self.hash_vectors.lock().unwrap().prepare_message(
             dst_idkeys.clone(),
             payload.to_string()
         );
@@ -116,6 +116,14 @@ impl Core {
     self.server_comm.send_message(&batch).await
   }
 
+  // FIXME make immutable
+  // self.olm_wrapper.need_mut_ref()
+  // e.g. wrap olm_wrapper w Mutex (for now)
+  // rule: never put a thing into a Mutex which calls some async functions
+  // only wrap types that are used briefly, and make sure you unlock() before
+  // calling any asyncs
+  // TODO also, between unlock() and lock(), may have to recalculate any 
+  // common vars to use
   pub async fn receive_message(&mut self) {
     use futures::TryStreamExt;
 
@@ -132,7 +140,7 @@ impl Core {
         let full_payload = FullPayload::from_string(decrypted);
 
         // validate
-        match self.hash_vectors.parse_message(
+        match self.hash_vectors.lock().unwrap().parse_message(
             &msg.sender(),
             full_payload.common,
             &full_payload.per_recipient

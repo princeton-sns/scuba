@@ -26,8 +26,9 @@ impl LightswitchApp {
 
   // TODO Arc makes Self immutable, so need to use interior mutability
   pub async fn receive_messages(&self) {
-    //self.core.receive_message().await;
-    println!("Receiving!");
+    loop {
+      self.core.receive_message().await;
+    }
   }
 
   pub fn hello(
@@ -43,23 +44,25 @@ async fn main() -> ReplResult<()> {
     let app = Arc::new(LightswitchApp::new());
 
     let app_listener = app.clone();
-    task::spawn_blocking(async move || {
-      //app_listener.receive_messages().await;
-      println!("Blocking");
-    }).await;
-    
-    let mut repl = Repl::new(app)
-        .with_name("Lightswitch App")
-        .with_version("v0.1.0")
-        .with_description("Noise lightswitch app")
-        .add_command(
-            Command::new("hello", LightswitchApp::hello)
-                .with_parameter(Parameter::new("who").set_required(true)?)?
-                .with_help("Greetings!"),
-   );
 
-   task::spawn(async {
-     repl.run()
-   }).await.unwrap()
+    let repl_future = task::spawn_blocking(move || {
+      let mut repl = Repl::new(app)
+          .with_name("Lightswitch App")
+          .with_version("v0.1.0")
+          .with_description("Noise lightswitch app")
+          .add_command(
+              Command::new("hello", LightswitchApp::hello)
+                  .with_parameter(Parameter::new("who").set_required(true)?)?
+                  .with_help("Greetings!"),
+      );
+
+      repl.run()
+    });
+
+    let app_future = app_listener.receive_messages();
+
+    let (repl_res, app_res) = futures::join!(repl_future, app_future);
+    // FIXME check results
+    Ok(())
 }
 

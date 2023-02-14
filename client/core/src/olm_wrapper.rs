@@ -2,6 +2,7 @@ use olm_rs::account::{OlmAccount, IdentityKeys, OneTimeKeys};
 use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use std::collections::HashMap;
 use crate::server_comm::ServerComm;
+use std::sync::Mutex;
 
 // TODO sender-key optimization
 
@@ -11,29 +12,35 @@ const NUM_OTKEYS : usize = 20;
 pub struct OlmWrapper {
   turn_encryption_off: bool,
   idkeys             : IdentityKeys,
-  account            : OlmAccount,
+  // Also wrapping OlmAccount in Mutex for Send/Sync
+  account            : Mutex<OlmAccount>,
   message_queue      : Vec<String>,
-  sessions           : HashMap<String, Vec<OlmSession>>,
+  // Wrap entire HashMap in a Mutex because any time sessions is accessed is
+  // while we are holding onto &mut self anyway, so no risk of deadlocks b/c
+  // only one &mut self can be held at a time anyway
+  sessions           : Mutex<HashMap<String, Vec<OlmSession>>>,
 }
 
 // TODO impl Error enum
 
 impl OlmWrapper {
   pub fn new(turn_encryption_off_arg: bool) -> Self {
-    let account = OlmAccount::new();
+    let account = Mutex::new(OlmAccount::new());
+    let idkeys = account.lock().unwrap().parsed_identity_keys();
     Self {
       turn_encryption_off: turn_encryption_off_arg,
-      idkeys: account.parsed_identity_keys(),
+      idkeys,
       account,
       message_queue: Vec::new(),
-      sessions: HashMap::new(),
+      sessions: Mutex::new(HashMap::new()),
     }
   }
 
   pub fn generate_otkeys(&self, num: Option<usize>) -> OneTimeKeys {
-    self.account.generate_one_time_keys(num.unwrap_or(NUM_OTKEYS));
-    let otkeys = self.account.parsed_one_time_keys();
-    self.account.mark_keys_as_published();
+    let account = self.account.lock().unwrap();
+    account.generate_one_time_keys(num.unwrap_or(NUM_OTKEYS));
+    let otkeys = account.parsed_one_time_keys();
+    account.mark_keys_as_published();
     otkeys
   }
 
@@ -48,7 +55,7 @@ impl OlmWrapper {
   ) -> OlmSession {
     match server_comm.get_otkey_from_server(dst_idkey).await {
       Ok(dst_otkey) => {
-        match self.account.create_outbound_session(
+        match self.account.lock().unwrap().create_outbound_session(
             dst_idkey,
             &String::from(dst_otkey)
         ) {
@@ -64,7 +71,7 @@ impl OlmWrapper {
       &self,
       prekey_msg: &PreKeyMessage
   ) -> OlmSession {
-    match self.account.create_inbound_session(prekey_msg.clone()) {
+    match self.account.lock().unwrap().create_inbound_session(prekey_msg.clone()) {
       Ok(new_session) => return new_session,
       Err(err) => panic!("Error creating inbound session: {:?}", err),
     }
@@ -73,60 +80,64 @@ impl OlmWrapper {
   // TODO how many sessions with the same session_id should exist at one time? 
   // (for decrypting delayed messages) -> currently infinite
 
-  async fn get_outbound_session(
+  async fn get_outbound_session<R>(
       &mut self,
       server_comm: &ServerComm,
-      dst_idkey: &String
-  ) -> &OlmSession {
-    if self.sessions.get(dst_idkey).is_none() {
-      self.sessions.insert(
+      dst_idkey: &String,
+      f: impl FnOnce (&OlmSession) -> R,
+  ) -> R {
+    let mut sessions = self.sessions.lock().unwrap();
+    if sessions.get(dst_idkey).is_none() {
+      sessions.insert(
           dst_idkey.to_string(),
           vec![self.new_outbound_session(server_comm, dst_idkey).await]
       );
     } else {
-      let sessions_list = self.sessions.get_mut(dst_idkey).unwrap();
+      let sessions_list = sessions.get_mut(dst_idkey).unwrap();
       if sessions_list.is_empty()
           || !sessions_list[sessions_list.len() - 1].has_received_message() {
         let session = self.new_outbound_session(server_comm, dst_idkey).await;
-        self.sessions
+        sessions
             .get_mut(dst_idkey)
             .unwrap()
             .push(session);
       }
     }
-    let sessions_list = self.sessions.get(dst_idkey).unwrap();
-    &sessions_list[sessions_list.len() - 1]
+    let sessions_list = sessions.get(dst_idkey).unwrap();
+    f(&sessions_list[sessions_list.len() - 1])
   }
 
-  fn get_inbound_session(
+  fn get_inbound_session<R>(
       &mut self,
       sender: &String,
       ciphertext: &OlmMessage,
-  ) -> &OlmSession {
+      f: impl FnOnce (&OlmSession) -> R,
+  ) -> R {
+    let mut sessions = self.sessions.lock().unwrap();
     match ciphertext {
       OlmMessage::Message(_) => {
-        if self.sessions.get(sender).is_none() {
+        if sessions.get(sender).is_none() {
           panic!("No pairwise sessions exist for idkey {:?}", sender);
         } else {
-          let sessions_list = self.sessions.get_mut(sender).unwrap();
-          return &sessions_list[sessions_list.len() - 1];
+          let sessions_list = sessions.get_mut(sender).unwrap();
+          f(&sessions_list[sessions_list.len() - 1])
         }
       },
       OlmMessage::PreKey(prekey) => {
-        if self.sessions.get(sender).is_none() {
-          self.sessions.insert(
+        if sessions.get(sender).is_none() {
+          sessions.insert(
               sender.to_string(),
               vec![self.new_inbound_session(&prekey)]
           );
         } else {
           let new_session = self.new_inbound_session(&prekey);
-          self.sessions
+          sessions
               .get_mut(sender)
               .unwrap()
               .push(new_session);
         }
-        let sessions_list = self.sessions.get(sender).unwrap();
-        &sessions_list[sessions_list.len() - 1]
+        let sessions_list = sessions.get(sender).unwrap();
+        f(&sessions_list[sessions_list.len() - 1])
       },
     }
   }
@@ -138,7 +149,8 @@ impl OlmWrapper {
   ) -> String {
     // as long as get_inbound_session is called before this function the result
     // will never be None/empty
-    let sessions_list = self.sessions.get(sender).unwrap();
+    let sessions = self.sessions.lock().unwrap();
+    let sessions_list = sessions.get(sender).unwrap();
 
     // skip the len - 1'th session since that was already tried
     for session in sessions_list.iter().rev().skip(1) {
@@ -172,8 +184,9 @@ impl OlmWrapper {
       self.message_queue.push(plaintext.to_string());
       return (1, "".to_string());
     }
-    let session = self.get_outbound_session(server_comm, dst_idkey).await;
-    let (c_type, ciphertext) = session.encrypt(plaintext).to_tuple();
+    let (c_type, ciphertext) = self.get_outbound_session(server_comm, dst_idkey, |session| {
+      session.encrypt(plaintext).to_tuple()
+    }).await;
     (c_type.into(), ciphertext)
   }
 
@@ -205,8 +218,11 @@ impl OlmWrapper {
       // unwrap will panic
       return self.message_queue.pop().unwrap().to_string();
     }
-    let session = self.get_inbound_session(sender, ciphertext);
-    match session.decrypt(ciphertext.clone()) {
+    let res = self.get_inbound_session(sender, ciphertext, |session| {
+      session.decrypt(ciphertext.clone())
+    });
+
+    match res {
       Ok(plaintext) => return plaintext,
       Err(err) => {
         match ciphertext {

@@ -12,12 +12,12 @@ const NUM_OTKEYS : usize = 20;
 pub struct OlmWrapper {
   turn_encryption_off: bool,
   idkeys             : IdentityKeys,
-  // Also wrapping OlmAccount in Mutex for Send/Sync
+  // Wrap OlmAccount in Mutex for Send/Sync
   account            : Mutex<OlmAccount>,
-  message_queue      : Vec<String>,
-  // Wrap entire HashMap in a Mutex because any time sessions is accessed is
-  // while we are holding onto &mut self anyway, so no risk of deadlocks b/c
-  // only one &mut self can be held at a time anyway
+  message_queue      : Mutex<Vec<String>>,
+  // Wrap entire HashMap in a Mutex for Send/Sync; this is ok because 
+  // any time sessions is accessed we have a &mut self - no deadlock
+  // risk b/c only one &mut self can be helf at a time, anyway
   sessions           : Mutex<HashMap<String, Vec<OlmSession>>>,
 }
 
@@ -31,7 +31,7 @@ impl OlmWrapper {
       turn_encryption_off: turn_encryption_off_arg,
       idkeys,
       account,
-      message_queue: Vec::new(),
+      message_queue: Mutex::new(Vec::new()),
       sessions: Mutex::new(HashMap::new()),
     }
   }
@@ -81,7 +81,7 @@ impl OlmWrapper {
   // (for decrypting delayed messages) -> currently infinite
 
   async fn get_outbound_session<R>(
-      &mut self,
+      &self,
       server_comm: &ServerComm,
       dst_idkey: &String,
       f: impl FnOnce (&OlmSession) -> R,
@@ -108,7 +108,7 @@ impl OlmWrapper {
   }
 
   fn get_inbound_session<R>(
-      &mut self,
+      &self,
       sender: &String,
       ciphertext: &OlmMessage,
       f: impl FnOnce (&OlmSession) -> R,
@@ -143,7 +143,7 @@ impl OlmWrapper {
   }
 
   fn try_all_sessions_decrypt(
-      &mut self,
+      &self,
       sender: &String,
       ciphertext: &OlmMessage,
   ) -> String {
@@ -163,7 +163,7 @@ impl OlmWrapper {
   }
 
   pub async fn encrypt(
-      &mut self,
+      &self,
       server_comm: &ServerComm,
       dst_idkey: &String,
       plaintext: &String,
@@ -175,13 +175,13 @@ impl OlmWrapper {
   }
 
   async fn encrypt_helper(
-      &mut self,
+      &self,
       server_comm: &ServerComm,
       dst_idkey: &String,
       plaintext: &String,
   ) -> (usize, String) {
     if *dst_idkey == self.get_idkey() {
-      self.message_queue.push(plaintext.to_string());
+      self.message_queue.lock().unwrap().push(plaintext.to_string());
       return (1, "".to_string());
     }
     let (c_type, ciphertext) = self.get_outbound_session(server_comm, dst_idkey, |session| {
@@ -191,7 +191,7 @@ impl OlmWrapper {
   }
 
   pub fn decrypt(
-      &mut self,
+      &self,
       sender: &String,
       c_type: usize,
       ciphertext: &String,
@@ -209,14 +209,14 @@ impl OlmWrapper {
   }
 
   fn decrypt_helper(
-      &mut self,
+      &self,
       sender: &String,
       ciphertext: &OlmMessage,
   ) -> String {
     if *sender == self.get_idkey() {
       // FIXME handle dos attack where client poses as "self" - this
       // unwrap will panic
-      return self.message_queue.pop().unwrap().to_string();
+      return self.message_queue.lock().unwrap().pop().unwrap().to_string();
     }
     let res = self.get_inbound_session(sender, ciphertext, |session| {
       session.decrypt(ciphertext.clone())

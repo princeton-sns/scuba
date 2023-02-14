@@ -1,6 +1,7 @@
 use futures::channel::mpsc;
 use reqwest::{Result, Response};
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 use crate::olm_wrapper::OlmWrapper;
 use crate::server_comm::{ServerComm, Batch, OutgoingMessage, Payload, Event, IncomingMessage, ToDelete};

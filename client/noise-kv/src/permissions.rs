@@ -1,4 +1,3 @@
-
 // Permissions
 //
 // add_admin (locally/remotely)
@@ -10,4 +9,3 @@
 // TODO => add/remove_privilege_type (using enums for available priv levels)
 // add/remove => grant/revoke
 // has_privilege
-

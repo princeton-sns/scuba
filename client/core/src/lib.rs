@@ -3,7 +3,7 @@
 #![feature(async_closure)]
 #![feature(mutex_unlock)]
 
+pub mod core;
+pub mod hash_vectors;
 pub mod olm_wrapper;
 pub mod server_comm;
-pub mod hash_vectors;
-pub mod core;

@@ -86,25 +86,28 @@ impl OlmWrapper {
       dst_idkey: &String,
       f: impl FnOnce (&OlmSession) -> R,
   ) -> R {
-    let mut sessions = self.sessions.lock().unwrap();
-    if sessions.get(dst_idkey).is_none() {
-      //let new_session = self.new_outbound_session
-      sessions.insert(
+    if self.sessions.lock().unwrap().get(dst_idkey).is_none() {
+      let new_session = self.new_outbound_session(server_comm, dst_idkey).await;
+      self.sessions.lock().unwrap().insert(
           dst_idkey.to_string(),
-          vec![self.new_outbound_session(server_comm, dst_idkey).await]
+          vec![new_session]
       );
     } else {
+      let mut sessions = self.sessions.lock().unwrap();
       let sessions_list = sessions.get_mut(dst_idkey).unwrap();
       if sessions_list.is_empty()
           || !sessions_list[sessions_list.len() - 1].has_received_message() {
+        Mutex::unlock(sessions);
         let session = self.new_outbound_session(server_comm, dst_idkey).await;
-        sessions
+        self.sessions.lock().unwrap()
             .get_mut(dst_idkey)
             .unwrap()
             .push(session);
       }
     }
+    let sessions = self.sessions.lock().unwrap();
     let sessions_list = sessions.get(dst_idkey).unwrap();
+    println!("HERE?");
     f(&sessions_list[sessions_list.len() - 1])
   }
 
@@ -376,17 +379,23 @@ mod tests {
       ow2.get_inbound_session(&idkey1, &ciphertext, |ib_session| {
         assert_eq!(ob_session.session_id(), ib_session.session_id());
 
-        let ow1_sessions = ow1.sessions.lock().unwrap();
-        let ow2_sessions = ow2.sessions.lock().unwrap();
-        let ow1_session_list = ow1_sessions.get(&idkey2);
-        let ow2_session_list = ow2_sessions.get(&idkey1);
+        // NOTE taking any lock in the callbacks of either 
+        // get_outbound_session() or get_inbound_session() will
+        // result in a deadlock since they hold onto sessions locks 
+        // until the callback arguments _finish running_
 
-        assert_ne!(None, ow1_session_list);
-        assert_ne!(None, ow2_session_list);
-        assert_eq!(ow1_session_list.unwrap().len(), 1);
-        assert_eq!(ow2_session_list.unwrap().len(), 1);
       });
     }).await;
+
+    let ow1_sessions = ow1.sessions.lock().unwrap();
+    let ow2_sessions = ow2.sessions.lock().unwrap();
+    let ow1_session_list = ow1_sessions.get(&idkey2);
+    let ow2_session_list = ow2_sessions.get(&idkey1);
+
+    assert_ne!(None, ow1_session_list);
+    assert_ne!(None, ow2_session_list);
+    assert_eq!(ow1_session_list.unwrap().len(), 1);
+    assert_eq!(ow2_session_list.unwrap().len(), 1);
   }
 
   #[tokio::test]

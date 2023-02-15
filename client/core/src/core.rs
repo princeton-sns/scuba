@@ -85,7 +85,7 @@ impl Core {
   }
 
   pub async fn send_message(
-      &mut self,
+      &self,
       dst_idkeys: Vec<String>,
       payload: &String
   ) -> Result<Response> {
@@ -125,9 +125,10 @@ impl Core {
   // calling any asyncs
   // TODO also, between unlock() and lock(), may have to recalculate any 
   // common vars to use
-  pub async fn receive_message(&mut self) {
+  pub async fn receive_message(&self) {
     use futures::TryStreamExt;
 
+    // FIXME
     match self.server_comm.try_next().await {
       Ok(Some(Event::Msg(msg_string))) => {
         let msg: IncomingMessage = IncomingMessage::from_string(msg_string);

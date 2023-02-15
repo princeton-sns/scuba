@@ -383,6 +383,10 @@ mod tests {
         // get_outbound_session() or get_inbound_session() will
         // result in a deadlock since they hold onto sessions locks 
         // until the callback arguments _finish running_
+        //
+        // This is not publicly-exposed behavior, so users of the
+        // library will not run into this nor should they really
+        // think about it
 
       });
     }).await;

@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "client/core",
+    "client/noise-kv",
+]

@@ -17,3 +17,5 @@ serde_json = { version = "1.0.91", features = ["std"] }
 olm-rs = "2.2.0"
 log = "0.4.17"
 sha2 = "0.10.6"
+parking_lot = "0.12.1"
+async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }

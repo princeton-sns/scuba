@@ -125,7 +125,7 @@ impl Core {
   // calling any asyncs
   // TODO also, between unlock() and lock(), may have to recalculate any 
   // common vars to use
-  pub async fn receive_message(&self) {
+  pub async fn receive_message(&mut self) {
     use futures::TryStreamExt;
 
     // FIXME
@@ -241,7 +241,7 @@ mod tests {
   async fn test_send_message_to_other() {
     let payload = String::from("hello from me");
     let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    let mut core_0 = Core::new_and_init(None, None, false, sender.clone()).await;
+    let core_0 = Core::new_and_init(None, None, false, sender.clone()).await;
     let mut core_1 = Core::new_and_init(None, None, false, sender).await;
     let idkey_1 = core_1.olm_wrapper.get_idkey();
     let recipients = vec![idkey_1];

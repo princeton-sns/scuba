@@ -1,11 +1,12 @@
+use crate::core::CoreClient;
 use crate::server_comm::ServerComm;
 use async_condvar_fair::Condvar;
 use olm_rs::account::{IdentityKeys, OlmAccount, OneTimeKeys};
 use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use parking_lot::Mutex;
-use std::sync::RwLock;
 use std::collections::HashMap;
 use std::mem;
+use std::sync::RwLock;
 
 // TODO sender-key optimization
 
@@ -53,12 +54,12 @@ impl OlmWrapper {
         self.idkeys.curve25519().to_string()
     }
 
-    async fn new_outbound_session(
+    async fn new_outbound_session<C: CoreClient>(
         &self,
-        server_comm: &RwLock<Option<ServerComm>>,
+        server_comm: &ServerComm<C>,
         dst_idkey: &String,
     ) -> OlmSession {
-        match server_comm.read().unwrap().as_ref().unwrap().get_otkey_from_server(dst_idkey).await {
+        match server_comm.get_otkey_from_server(dst_idkey).await {
             Ok(dst_otkey) => {
                 match self
                     .account
@@ -87,9 +88,9 @@ impl OlmWrapper {
     // TODO how many sessions with the same session_id should exist at one time?
     // (for decrypting delayed messages) -> currently infinite
 
-    async fn get_outbound_session<R>(
+    async fn get_outbound_session<R, C: CoreClient>(
         &self,
-        server_comm: &RwLock<Option<ServerComm>>,
+        server_comm: &ServerComm<C>,
         dst_idkey: &String,
         f: impl FnOnce(&OlmSession) -> R,
     ) -> R {
@@ -170,9 +171,9 @@ impl OlmWrapper {
         panic!("No matching sessions were found");
     }
 
-    pub async fn encrypt(
+    pub async fn encrypt<C: CoreClient>(
         &self,
-        server_comm: &RwLock<Option<ServerComm>>,
+        server_comm: &ServerComm<C>,
         dst_idkey: &String,
         plaintext: &String,
     ) -> (usize, String) {
@@ -182,9 +183,9 @@ impl OlmWrapper {
         self.encrypt_helper(server_comm, dst_idkey, plaintext).await
     }
 
-    async fn encrypt_helper(
+    async fn encrypt_helper<C: CoreClient>(
         &self,
-        server_comm: &RwLock<Option<ServerComm>>,
+        server_comm: &ServerComm<C>,
         dst_idkey: &String,
         plaintext: &String,
     ) -> (usize, String) {

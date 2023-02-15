@@ -1,3 +1,4 @@
+use crate::core::{Core, CoreClient};
 use crate::olm_wrapper::OlmWrapper;
 use eventsource_client::{Client, ClientBuilder, SSE};
 use futures::TryStreamExt;
@@ -8,11 +9,11 @@ use futures::{
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
-use std::sync::Arc;
-use crate::core::Core;
 
 const IP_ADDR: &str = "localhost";
 const PORT_NUM: &str = "8080";
@@ -133,71 +134,102 @@ impl From<OtkeyResponse> for String {
     }
 }
 
-pub struct ServerComm {
+pub struct ServerComm<C: CoreClient> {
     base_url: Url,
     idkey: String,
     client: reqwest::Client,
-    listener: Pin<Box<dyn Stream<Item = eventsource_client::Result<SSE>> + Send + Sync>>,
+    listener_task_handle: tokio::task::JoinHandle<()>,
+    _pd: PhantomData<C>,
 }
 // wasm FIXME s reqwest and SEE
 // TODO make (some of) server comm a trait + would help make mockable
 
-impl ServerComm {
-    pub fn new<'a>(
+impl<C: CoreClient> ServerComm<C> {
+    pub async fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         idkey: String,
-        core: Arc<Core>
+        core: Arc<Core<C>>,
     ) -> Self {
         let ip_addr = ip_arg.unwrap_or(IP_ADDR);
         let port_num = port_arg.unwrap_or(PORT_NUM);
         let base_url = Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
             .expect("Failed base_url construction");
-        let listener = Box::new(
-            ClientBuilder::for_url(
-                base_url
-                    .join("/events")
-                    .expect("Failed join of /events")
-                    .as_str(),
+
+        let task_base_url = base_url.clone();
+        let task_idkey = idkey.clone();
+        let listener_task_handle = tokio::spawn(async move {
+            let mut listener = Box::new(
+                ClientBuilder::for_url(
+                    task_base_url
+                        .join("/events")
+                        .expect("Failed join of /events")
+                        .as_str(),
+                )
+                .expect("Failed in ClientBuilder::for_url")
+                .header("Authorization", &vec!["Bearer", &task_idkey].join(" "))
+                .expect("Failed header construction")
+                .build(),
             )
-            .expect("Failed in ClientBuilder::for_url")
-            .header("Authorization", &vec!["Bearer", &idkey].join(" "))
-            .expect("Failed header construction")
-            .build(),
-        )
-        .stream();
+            .stream();
+
+            loop {
+                match listener.as_mut().try_next().await {
+                    Err(err) => {
+                        core.server_comm_callback(Err(err));
+                    }
+                    Ok(None) => {}
+                    Ok(Some(event)) => match event {
+                        SSE::Comment(_) => {}
+                        SSE::Event(event) => match event.event_type.as_str() {
+                            "otkey" => {
+                                core.server_comm_callback(Ok(Event::Otkey));
+                            }
+                            "msg" => {
+                                let msg = String::from(event.data);
+                                core.server_comm_callback(Ok(Event::Msg(msg)));
+                            }
+                            _ => {}
+                        },
+                    },
+                }
+            }
+        });
+
         Self {
             base_url,
             idkey,
             client: reqwest::Client::new(),
-            listener,
+            listener_task_handle,
+            _pd: PhantomData,
         }
     }
 
-    pub async fn init<'a>(
-        ip_arg: Option<&'a str>,
-        port_arg: Option<&'a str>,
-        olm_wrapper: &OlmWrapper,
-        core: Arc<Core>
-    ) -> Self {
-        let mut server_comm = ServerComm::new(
-            ip_arg,
-            port_arg,
-            olm_wrapper.get_idkey(),
-            core
-        );
-        match server_comm.try_next().await {
-            Ok(Some(Event::Otkey)) => {
-                let otkeys = olm_wrapper.generate_otkeys(None);
-                match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
-                    Ok(_) => println!("Sent otkeys successfully"),
-                    Err(err) => panic!("Error sending otkeys: {:?}", err),
-                }
-            }
-            _ => panic!("Unexpected event from server"),
-        }
-        server_comm
-    }
+    // TODO: problem for future me
+    // pub async fn init<'a>(
+    //     ip_arg: Option<&'a str>,
+    //     port_arg: Option<&'a str>,
+    //     olm_wrapper: &OlmWrapper,
+    //     core: Arc<Core>
+    // ) -> Self {
+    //     let mut server_comm = ServerComm::new(
+    //         ip_arg,
+    //         port_arg,
+    //         olm_wrapper.get_idkey(),
+    //         core
+    //     );
+    //     match server_comm.try_next().await {
+    //         Ok(Some(Event::Otkey)) => {
+    //             let otkeys = olm_wrapper.generate_otkeys(None);
+    //             match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
+    //                 Ok(_) => println!("Sent otkeys successfully"),
+    //                 Err(err) => panic!("Error sending otkeys: {:?}", err),
+    //             }
+    //         }
+    //         _ => panic!("Unexpected event from server"),
+    //     }
+    //     server_comm
+    // }
 
     pub async fn send_message(&self, batch: &Batch) -> Result<Response> {
         self.client
@@ -238,31 +270,6 @@ impl ServerComm {
             .json(&to_add)
             .send()
             .await
-    }
-}
-
-// FIXME callbacks such that we can make this immutable
-impl Stream for ServerComm {
-    type Item = eventsource_client::Result<Event>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let event = self.listener.as_mut().poll_next(cx);
-        match event {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Pending,
-            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
-            Poll::Ready(Some(Ok(event))) => match event {
-                SSE::Comment(_) => Poll::Pending,
-                SSE::Event(event) => match event.event_type.as_str() {
-                    "otkey" => Poll::Ready(Some(Ok(Event::Otkey))),
-                    "msg" => {
-                        let msg = String::from(event.data);
-                        Poll::Ready(Some(Ok(Event::Msg(msg))))
-                    }
-                    _ => Poll::Pending,
-                },
-            },
-        }
     }
 }
 

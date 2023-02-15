@@ -42,66 +42,125 @@ impl FullPayload {
     }
 }
 
-pub struct Core {
-    olm_wrapper: OlmWrapper,
-    server_comm: RwLock<Option<ServerComm>>,
-    hash_vectors: Mutex<HashVectors>,
-    sender: mpsc::Sender<(String, String)>,
+pub trait CoreClient: Sync + Send + 'static {
+    async fn core_client_callback(&self, sender: String, message: String);
 }
 
-impl Core {
-    pub fn new<'a>(
+struct StreamClient {
+    sender: tokio::sync::Mutex<futures::channel::mpsc::Sender<(String, String)>>,
+}
+
+struct StreamClientReceiver {
+    receiver: futures::channel::mpsc::Receiver<(String, String)>,
+}
+
+impl StreamClient {
+    pub fn new() -> (Self, StreamClientReceiver) {
+        let (sender, receiver) = futures::channel::mpsc::channel::<(String, String)>(1);
+
+        (
+            StreamClient {
+                sender: tokio::sync::Mutex::new(sender),
+            },
+            StreamClientReceiver { receiver },
+        )
+    }
+}
+
+impl CoreClient for StreamClient {
+    async fn core_client_callback(&self, sender: String, message: String) {
+        use futures::SinkExt;
+        self.sender
+            .lock()
+            .await
+            .send((sender, message))
+            .await
+            .unwrap();
+    }
+}
+
+impl futures::stream::Stream for StreamClientReceiver {
+    type Item = (String, String);
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.receiver).poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.receiver.size_hint()
+    }
+}
+
+pub struct Core<C: CoreClient> {
+    olm_wrapper: OlmWrapper,
+    server_comm: RwLock<Option<ServerComm<C>>>,
+    hash_vectors: Mutex<HashVectors>,
+    sender: mpsc::Sender<(String, String)>,
+    client: RwLock<Option<Arc<C>>>,
+}
+
+impl<C: CoreClient> Core<C> {
+    pub async fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off_arg: bool,
         sender: mpsc::Sender<(String, String)>,
-    ) -> Arc<Core> {
+        init: bool,
+    ) -> Arc<Core<C>> {
         // TODO initialize w server_comm instance
         let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
         let idkey = olm_wrapper.get_idkey();
-        let hash_vectors = Mutex::new(HashVectors::new(idkey));
+        let hash_vectors = Mutex::new(HashVectors::new(idkey.clone()));
 
         let arc_core = Arc::new(Core {
             olm_wrapper,
             server_comm: RwLock::new(None),
             hash_vectors,
             sender,
+            client: RwLock::new(None),
         });
 
         {
-          let mut server_comm_guard = arc_core.server_comm.write().unwrap();
-          let server_comm = ServerComm::new(ip_arg, port_arg, idkey.clone(), arc_core.clone());
-          *server_comm_guard = Some(server_comm);
-        }
-        // future: arc_core.server_comm.read().unwrap().unwrap()
-
-        arc_core
-    }
-
-    pub async fn new_and_init<'a>(
-        ip_arg: Option<&'a str>,
-        port_arg: Option<&'a str>,
-        turn_encryption_off_arg: bool,
-        sender: mpsc::Sender<(String, String)>,
-    ) -> Arc<Core> {
-        let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
-        let hash_vectors = Mutex::new(HashVectors::new(olm_wrapper.get_idkey()));
-
-        let arc_core = Arc::new(Core {
-            olm_wrapper,
-            server_comm: RwLock::new(None),
-            hash_vectors,
-            sender,
-        });
-
-        {
-          let mut server_comm_guard = arc_core.server_comm.write().unwrap();
-          let server_comm = ServerComm::init(ip_arg, port_arg, &arc_core.olm_wrapper, arc_core.clone()).await;
-          *server_comm_guard = Some(server_comm);
+            let mut server_comm_guard = arc_core.server_comm.write().unwrap();
+            let server_comm =
+                ServerComm::new(ip_arg, port_arg, idkey.clone(), arc_core.clone()).await;
+            *server_comm_guard = Some(server_comm);
         }
 
         arc_core
     }
+
+    pub fn set_client(&self, client: Arc<C>) {
+        *self.client.write().unwrap() = Some(client);
+    }
+
+    // pub async fn new_and_init<'a>(
+    //     ip_arg: Option<&'a str>,
+    //     port_arg: Option<&'a str>,
+    //     turn_encryption_off_arg: bool,
+    //     sender: mpsc::Sender<(String, String)>,
+    // ) -> Arc<Core<C>> {
+    //     let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
+    //     let hash_vectors = Mutex::new(HashVectors::new(olm_wrapper.get_idkey()));
+
+    //     let arc_core = Arc::new(Core {
+    //         olm_wrapper,
+    //         server_comm: RwLock::new(None),
+    //         hash_vectors,
+    //         sender,
+    //     });
+
+    //     {
+    //       let mut server_comm_guard = arc_core.server_comm.write().unwrap();
+    //       let server_comm = ServerComm::init(ip_arg, port_arg, &arc_core.olm_wrapper, arc_core.clone()).await;
+    //       *server_comm_guard = Some(server_comm);
+    //     }
+
+    //     arc_core
+    // }
 
     pub fn idkey(&self) -> String {
         self.olm_wrapper.get_idkey()
@@ -114,7 +173,7 @@ impl Core {
     // TODO shim Client that forces waiting for messages
 
     // TODO core should also register itself as a ServerCommClient
-    // in which case, Core::new() should return Arc<Core>
+    // in which case, Core::new() should return Arc<Core<C>>
 
     pub async fn send_message(
         &self,
@@ -132,7 +191,11 @@ impl Core {
 
             let (c_type, ciphertext) = self
                 .olm_wrapper
-                .encrypt(&self.server_comm, &idkey, &full_payload)
+                .encrypt(
+                    &self.server_comm.read().unwrap().as_ref().unwrap(),
+                    &idkey,
+                    &full_payload,
+                )
                 .await;
 
             batch.push(OutgoingMessage::new(
@@ -140,13 +203,19 @@ impl Core {
                 Payload::new(c_type, ciphertext),
             ));
         }
-        self.server_comm.read().unwrap().as_ref().unwrap().send_message(&batch).await
+        self.server_comm
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .send_message(&batch)
+            .await
     }
 
-    async fn server_comm_callback(&self, event: Event) {
-      println!("in server_comm_callback");
-      //if 
-      //  self.client.core_callback()...
+    pub async fn server_comm_callback(&self, event: eventsource_client::Result<Event>) {
+        println!("in server_comm_callback");
+        //if
+        //  self.client.core_callback()...
     }
 
     // FIXME make immutable
@@ -158,64 +227,65 @@ impl Core {
     // TODO also, between unlock() and lock(), may have to recalculate any
     // common vars to use
     pub async fn receive_message(&mut self) {
-        use futures::TryStreamExt;
+        unimplemented!()
+        // use futures::TryStreamExt;
 
-        // FIXME
-        match self.server_comm.read().unwrap().as_ref().unwrap().try_next().await {
-            Ok(Some(Event::Msg(msg_string))) => {
-                let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
+        // // FIXME
+        // match self.server_comm().try_next().await {
+        //     Ok(Some(Event::Msg(msg_string))) => {
+        //         let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
-                let decrypted = self.olm_wrapper.decrypt(
-                    &msg.sender(),
-                    msg.payload().c_type(),
-                    &msg.payload().ciphertext(),
-                );
+        //         let decrypted = self.olm_wrapper.decrypt(
+        //             &msg.sender(),
+        //             msg.payload().c_type(),
+        //             &msg.payload().ciphertext(),
+        //         );
 
-                let full_payload = FullPayload::from_string(decrypted);
+        //         let full_payload = FullPayload::from_string(decrypted);
 
-                // validate
-                match self.hash_vectors.lock().unwrap().parse_message(
-                    &msg.sender(),
-                    full_payload.common,
-                    &full_payload.per_recipient,
-                ) {
-                    Ok(None) => println!("Validation succeeded, no message to process"),
-                    Ok(Some((seq, message))) => {
-                        // forward message
-                        // FIXME are callbacks easier to compile to wasm?
-                        self.sender.try_send((msg.sender().clone(), message));
+        //         // validate
+        //         match self.hash_vectors.lock().unwrap().parse_message(
+        //             &msg.sender(),
+        //             full_payload.common,
+        //             &full_payload.per_recipient,
+        //         ) {
+        //             Ok(None) => println!("Validation succeeded, no message to process"),
+        //             Ok(Some((seq, message))) => {
+        //                 // forward message
+        //                 // FIXME are callbacks easier to compile to wasm?
+        //                 self.sender.try_send((msg.sender().clone(), message));
 
-                        match self
-                            .server_comm
-                            .read().unwrap().as_ref().unwrap()
-                            .delete_messages_from_server(&ToDelete::from_seq_id(
-                                seq.try_into().unwrap(),
-                            ))
-                            .await
-                        {
-                            Ok(_) => println!("Sent delete-message successfully"),
-                            Err(err) => panic!("Error sending delete-message: {:?}", err),
-                        }
-                    }
-                    Err(err) => panic!("Validation failed: {:?}", err),
-                }
-            }
-            Ok(Some(Event::Otkey)) => {
-                println!("got otkey event from server");
-                let otkeys = self.olm_wrapper.generate_otkeys(None);
-                match self
-                    .server_comm
-                    .read().unwrap().as_ref().unwrap()
-                    .add_otkeys_to_server(&otkeys.curve25519())
-                    .await
-                {
-                    Ok(_) => println!("Sent otkeys successfully"),
-                    Err(err) => panic!("Error sending otkeys: {:?}", err),
-                }
-            }
-            Ok(None) => panic!("Got <None> event from server"),
-            Err(err) => panic!("Got error while awaiting events from server: {:?}", err),
-        }
+        //                 match self
+        //                     .server_comm
+        //                     .read().unwrap().as_ref().unwrap()
+        //                     .delete_messages_from_server(&ToDelete::from_seq_id(
+        //                         seq.try_into().unwrap(),
+        //                     ))
+        //                     .await
+        //                 {
+        //                     Ok(_) => println!("Sent delete-message successfully"),
+        //                     Err(err) => panic!("Error sending delete-message: {:?}", err),
+        //                 }
+        //             }
+        //             Err(err) => panic!("Validation failed: {:?}", err),
+        //         }
+        //     }
+        //     Ok(Some(Event::Otkey)) => {
+        //         println!("got otkey event from server");
+        //         let otkeys = self.olm_wrapper.generate_otkeys(None);
+        //         match self
+        //             .server_comm
+        //             .read().unwrap().as_ref().unwrap()
+        //             .add_otkeys_to_server(&otkeys.curve25519())
+        //             .await
+        //         {
+        //             Ok(_) => println!("Sent otkeys successfully"),
+        //             Err(err) => panic!("Error sending otkeys: {:?}", err),
+        //         }
+        //     }
+        //     Ok(None) => panic!("Got <None> event from server"),
+        //     Err(err) => panic!("Got error while awaiting events from server: {:?}", err),
+        // }
     }
 }
 

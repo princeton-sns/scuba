@@ -88,6 +88,7 @@ impl OlmWrapper {
   ) -> R {
     let mut sessions = self.sessions.lock().unwrap();
     if sessions.get(dst_idkey).is_none() {
+      //let new_session = self.new_outbound_session
       sessions.insert(
           dst_idkey.to_string(),
           vec![self.new_outbound_session(server_comm, dst_idkey).await]
@@ -275,7 +276,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_dummy_encrypt() {
-    let mut olm_wrapper = OlmWrapper::new(true);
+    let olm_wrapper = OlmWrapper::new(true);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
@@ -286,7 +287,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_self_encrypt() {
-    let mut olm_wrapper = OlmWrapper::new(false);
+    let olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
@@ -294,12 +295,12 @@ mod tests {
     let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext)
         .await;
     assert_eq!(empty, ciphertext);
-    assert_eq!(plaintext, olm_wrapper.message_queue.pop().unwrap());
+    assert_eq!(plaintext, olm_wrapper.message_queue.lock().unwrap().pop().unwrap());
   }
 
   #[test]
   fn test_dummy_decrypt() {
-    let mut olm_wrapper = OlmWrapper::new(true);
+    let olm_wrapper = OlmWrapper::new(true);
     let idkey = olm_wrapper.get_idkey();
     let plaintext: &str = "hello";
     let decrypted = olm_wrapper.decrypt(&idkey, 1, &plaintext.to_string());
@@ -308,7 +309,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_self_decrypt() {
-    let mut olm_wrapper = OlmWrapper::new(false);
+    let olm_wrapper = OlmWrapper::new(false);
     let idkey = olm_wrapper.get_idkey();
     let server_comm = ServerComm::new(None, None, idkey.clone());
     let plaintext = String::from("hello");
@@ -332,12 +333,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_encrypt_and_decrypt_once() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -352,12 +353,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_get_session_init() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -365,34 +366,37 @@ mod tests {
     let plaintext = "testing testing one two three";
 
     // 1 -> 2
-    assert_eq!(None, ow1.sessions.get(&idkey2));
-    assert_eq!(None, ow2.sessions.get(&idkey1));
+    assert_eq!(None, ow1.sessions.lock().unwrap().get(&idkey2));
+    assert_eq!(None, ow2.sessions.lock().unwrap().get(&idkey1));
 
-    let ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
-    let ciphertext = ob_session.encrypt(plaintext);
+    ow1.get_outbound_session(&sc1, &idkey2, |ob_session| {
+      let ciphertext = ob_session.encrypt(plaintext);
 
-    // using prekey
-    let ib_session = ow2.get_inbound_session(&idkey1, &ciphertext);
+      // using prekey
+      ow2.get_inbound_session(&idkey1, &ciphertext, |ib_session| {
+        assert_eq!(ob_session.session_id(), ib_session.session_id());
 
-    assert_eq!(ob_session.session_id(), ib_session.session_id());
+        let ow1_sessions = ow1.sessions.lock().unwrap();
+        let ow2_sessions = ow2.sessions.lock().unwrap();
+        let ow1_session_list = ow1_sessions.get(&idkey2);
+        let ow2_session_list = ow2_sessions.get(&idkey1);
 
-    let ow1_session_list = ow1.sessions.get(&idkey2);
-    let ow2_session_list = ow2.sessions.get(&idkey1);
-
-    assert_ne!(None, ow1_session_list);
-    assert_ne!(None, ow2_session_list);
-    assert_eq!(ow1_session_list.unwrap().len(), 1);
-    assert_eq!(ow2_session_list.unwrap().len(), 1);
+        assert_ne!(None, ow1_session_list);
+        assert_ne!(None, ow2_session_list);
+        assert_eq!(ow1_session_list.unwrap().len(), 1);
+        assert_eq!(ow2_session_list.unwrap().len(), 1);
+      });
+    }).await;
   }
 
   #[tokio::test]
   async fn test_get_session_without_received_msg() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -400,44 +404,50 @@ mod tests {
     let plaintext = "testing testing one two three";
 
     // 1 -> 2
-    assert_eq!(None, ow1.sessions.get(&idkey2));
-    assert_eq!(None, ow2.sessions.get(&idkey1));
+    assert_eq!(None, ow1.sessions.lock().unwrap().get(&idkey2));
+    assert_eq!(None, ow2.sessions.lock().unwrap().get(&idkey1));
 
-    let first_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
-    let ciphertext = first_ob_session.encrypt(plaintext);
-    // using prekey
-    let first_ib_session = ow2.get_inbound_session(&idkey1, &ciphertext);
+    let mut first_ob_id: String = Default::default();
+    let mut first_ib_id: String = Default::default();
 
-    // decrypt() sets flag for has_received_message()
-    let decrypted = first_ib_session.decrypt(ciphertext.clone()).unwrap();
-    assert_eq!(plaintext, decrypted);
+    ow1.get_outbound_session(&sc1, &idkey2, |first_ob_session| {
+      let ciphertext = first_ob_session.encrypt(plaintext);
+      // using prekey
+      ow2.get_inbound_session(&idkey1, &ciphertext, |first_ib_session| {
+        // decrypt() sets flag for has_received_message()
+        let decrypted = first_ib_session.decrypt(ciphertext.clone()).unwrap();
+        assert_eq!(plaintext, decrypted);
 
-    let first_ob_id = first_ob_session.session_id().clone();
-    let first_ib_id = first_ib_session.session_id().clone();
-
-    // 1 -> 2 again
-    let second_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
-    let ciphertext = second_ob_session.encrypt(plaintext);
-    // using prekey
-    let second_ib_session = ow2.get_inbound_session(&idkey1, &ciphertext);
-
-    let second_ob_id = second_ob_session.session_id().clone();
-    let second_ib_id = second_ib_session.session_id().clone();
+        first_ob_id = first_ob_session.session_id().clone();
+        first_ib_id = first_ib_session.session_id().clone();
+      });
+    }).await;
 
     assert_eq!(first_ob_id, first_ib_id);
-    assert_eq!(second_ob_id, second_ib_id);
-    assert_ne!(first_ob_id, second_ob_id);
-    assert_ne!(first_ib_id, second_ib_id);
+
+    // 1 -> 2 again
+    ow1.get_outbound_session(&sc1, &idkey2, |second_ob_session| {
+      let ciphertext = second_ob_session.encrypt(plaintext);
+      // using prekey
+      ow2.get_inbound_session(&idkey1, &ciphertext, |second_ib_session| {
+        let second_ob_id = second_ob_session.session_id().clone();
+        let second_ib_id = second_ib_session.session_id().clone();
+
+        assert_eq!(second_ob_id, second_ib_id);
+        assert_ne!(first_ob_id, second_ob_id);
+        assert_ne!(first_ib_id, second_ib_id);
+      });
+    }).await;
   }
 
   #[tokio::test]
   async fn test_get_session_with_received_msg() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -445,44 +455,49 @@ mod tests {
     let plaintext = "testing testing one two three";
 
     // 1 -> 2
-    assert_eq!(None, ow1.sessions.get(&idkey2));
-    assert_eq!(None, ow2.sessions.get(&idkey1));
+    assert_eq!(None, ow1.sessions.lock().unwrap().get(&idkey2));
+    assert_eq!(None, ow2.sessions.lock().unwrap().get(&idkey1));
 
-    let first_ob_session = ow1.get_outbound_session(&sc1, &idkey2).await;
-    let first_ciphertext = first_ob_session.encrypt(plaintext);
-    // using prekey
-    let first_ib_session = ow2.get_inbound_session(&idkey1, &first_ciphertext);
+    let mut first_ob_id: String = Default::default();
+    let mut first_ib_id: String = Default::default();
 
-    // decrypt() sets flag for has_received_message()
-    let decrypted = first_ib_session.decrypt(first_ciphertext.clone()).unwrap();
-    assert_eq!(plaintext, decrypted);
+    ow1.get_outbound_session(&sc1, &idkey2, |first_ob_session| {
+      let first_ciphertext = first_ob_session.encrypt(plaintext);
+      // using prekey
+      ow2.get_inbound_session(&idkey1, &first_ciphertext, |first_ib_session| {
+        // decrypt() sets flag for has_received_message()
+        let decrypted = first_ib_session.decrypt(first_ciphertext.clone()).unwrap();
+        assert_eq!(plaintext, decrypted);
 
-    let first_ob_id = first_ob_session.session_id().clone();
-    let first_ib_id = first_ib_session.session_id().clone();
+        first_ob_id = first_ob_session.session_id().clone();
+        first_ib_id = first_ib_session.session_id().clone();
+      });
+    }).await;
 
     // 2 -> 1
-    let second_ob_session = ow2.get_outbound_session(&sc2, &idkey1).await;
-    let second_ciphertext = second_ob_session.encrypt(plaintext);
-    // using message
-    let second_ib_session = ow1.get_inbound_session(&idkey2, &second_ciphertext);
+    ow2.get_outbound_session(&sc2, &idkey1, |second_ob_session| {
+      let second_ciphertext = second_ob_session.encrypt(plaintext);
+      // using message
+      ow1.get_inbound_session(&idkey2, &second_ciphertext, |second_ib_session| {
+        let second_ob_id = second_ob_session.session_id().clone();
+        let second_ib_id = second_ib_session.session_id().clone();
 
-    let second_ob_id = second_ob_session.session_id().clone();
-    let second_ib_id = second_ib_session.session_id().clone();
-
-    assert_eq!(first_ob_id, first_ib_id);
-    assert_eq!(second_ob_id, second_ib_id);
-    assert_eq!(first_ob_id, second_ib_id);
-    assert_eq!(first_ib_id, second_ob_id);
+        assert_eq!(first_ob_id, first_ib_id);
+        assert_eq!(second_ob_id, second_ib_id);
+        assert_eq!(first_ob_id, second_ib_id);
+        assert_eq!(first_ib_id, second_ob_id);
+      });
+    }).await;
   }
 
   #[tokio::test]
   async fn test_encrypt_and_decrypt_without_received_msg() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let _ = ServerComm::init(None, None, &ow2).await;
@@ -502,12 +517,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_encrypt_and_decrypt_with_received_msg() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -527,12 +542,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_delayed_message() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -561,12 +576,12 @@ mod tests {
 
   #[tokio::test]
   async fn test_very_delayed_message() {
-    let mut ow1 = OlmWrapper::new(false);
+    let ow1 = OlmWrapper::new(false);
     let idkey1 = ow1.get_idkey();
     println!("idkey1: {:?}", idkey1);
     let sc1 = ServerComm::init(None, None, &ow1).await;
 
-    let mut ow2 = OlmWrapper::new(false);
+    let ow2 = OlmWrapper::new(false);
     let idkey2 = ow2.get_idkey();
     println!("idkey2: {:?}", idkey2);
     let sc2 = ServerComm::init(None, None, &ow2).await;

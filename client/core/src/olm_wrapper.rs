@@ -3,6 +3,7 @@ use async_condvar_fair::Condvar;
 use olm_rs::account::{IdentityKeys, OlmAccount, OneTimeKeys};
 use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use parking_lot::Mutex;
+use std::sync::RwLock;
 use std::collections::HashMap;
 use std::mem;
 
@@ -54,10 +55,10 @@ impl OlmWrapper {
 
     async fn new_outbound_session(
         &self,
-        server_comm: &ServerComm,
+        server_comm: &RwLock<Option<ServerComm>>,
         dst_idkey: &String,
     ) -> OlmSession {
-        match server_comm.get_otkey_from_server(dst_idkey).await {
+        match server_comm.read().unwrap().as_ref().unwrap().get_otkey_from_server(dst_idkey).await {
             Ok(dst_otkey) => {
                 match self
                     .account
@@ -88,7 +89,7 @@ impl OlmWrapper {
 
     async fn get_outbound_session<R>(
         &self,
-        server_comm: &ServerComm,
+        server_comm: &RwLock<Option<ServerComm>>,
         dst_idkey: &String,
         f: impl FnOnce(&OlmSession) -> R,
     ) -> R {
@@ -171,7 +172,7 @@ impl OlmWrapper {
 
     pub async fn encrypt(
         &self,
-        server_comm: &ServerComm,
+        server_comm: &RwLock<Option<ServerComm>>,
         dst_idkey: &String,
         plaintext: &String,
     ) -> (usize, String) {
@@ -183,7 +184,7 @@ impl OlmWrapper {
 
     async fn encrypt_helper(
         &self,
-        server_comm: &ServerComm,
+        server_comm: &RwLock<Option<ServerComm>>,
         dst_idkey: &String,
         plaintext: &String,
     ) -> (usize, String) {

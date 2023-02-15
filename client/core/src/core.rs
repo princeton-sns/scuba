@@ -1,7 +1,7 @@
 use futures::channel::mpsc;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
@@ -44,7 +44,7 @@ impl FullPayload {
 
 pub struct Core {
     olm_wrapper: OlmWrapper,
-    server_comm: ServerComm,
+    server_comm: RwLock<Option<ServerComm>>,
     hash_vectors: Mutex<HashVectors>,
     sender: mpsc::Sender<(String, String)>,
 }
@@ -55,18 +55,27 @@ impl Core {
         port_arg: Option<&'a str>,
         turn_encryption_off_arg: bool,
         sender: mpsc::Sender<(String, String)>,
-    ) -> Core {
+    ) -> Arc<Core> {
+        // TODO initialize w server_comm instance
         let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
         let idkey = olm_wrapper.get_idkey();
-        let server_comm = ServerComm::new(ip_arg, port_arg, idkey.clone());
         let hash_vectors = Mutex::new(HashVectors::new(idkey));
 
-        Core {
+        let arc_core = Arc::new(Core {
             olm_wrapper,
-            server_comm,
+            server_comm: RwLock::new(None),
             hash_vectors,
             sender,
+        });
+
+        {
+          let mut server_comm_guard = arc_core.server_comm.write().unwrap();
+          let server_comm = ServerComm::new(ip_arg, port_arg, idkey.clone(), arc_core.clone());
+          *server_comm_guard = Some(server_comm);
         }
+        // future: arc_core.server_comm.read().unwrap().unwrap()
+
+        arc_core
     }
 
     pub async fn new_and_init<'a>(
@@ -74,22 +83,38 @@ impl Core {
         port_arg: Option<&'a str>,
         turn_encryption_off_arg: bool,
         sender: mpsc::Sender<(String, String)>,
-    ) -> Core {
+    ) -> Arc<Core> {
         let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
-        let server_comm = ServerComm::init(ip_arg, port_arg, &olm_wrapper).await;
         let hash_vectors = Mutex::new(HashVectors::new(olm_wrapper.get_idkey()));
 
-        Core {
+        let arc_core = Arc::new(Core {
             olm_wrapper,
-            server_comm,
+            server_comm: RwLock::new(None),
             hash_vectors,
             sender,
+        });
+
+        {
+          let mut server_comm_guard = arc_core.server_comm.write().unwrap();
+          let server_comm = ServerComm::init(ip_arg, port_arg, &arc_core.olm_wrapper, arc_core.clone()).await;
+          *server_comm_guard = Some(server_comm);
         }
+
+        arc_core
     }
 
     pub fn idkey(&self) -> String {
         self.olm_wrapper.get_idkey()
     }
+
+    // TODO register_listener
+    // probably not a callback, probably a CoreClient
+    // C: CoreClient, take an Arc<CoreClient>
+    // TODO message functions => by implemting a CoreClient trait
+    // TODO shim Client that forces waiting for messages
+
+    // TODO core should also register itself as a ServerCommClient
+    // in which case, Core::new() should return Arc<Core>
 
     pub async fn send_message(
         &self,
@@ -115,7 +140,13 @@ impl Core {
                 Payload::new(c_type, ciphertext),
             ));
         }
-        self.server_comm.send_message(&batch).await
+        self.server_comm.read().unwrap().as_ref().unwrap().send_message(&batch).await
+    }
+
+    async fn server_comm_callback(&self, event: Event) {
+      println!("in server_comm_callback");
+      //if 
+      //  self.client.core_callback()...
     }
 
     // FIXME make immutable
@@ -130,7 +161,7 @@ impl Core {
         use futures::TryStreamExt;
 
         // FIXME
-        match self.server_comm.try_next().await {
+        match self.server_comm.read().unwrap().as_ref().unwrap().try_next().await {
             Ok(Some(Event::Msg(msg_string))) => {
                 let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
@@ -156,6 +187,7 @@ impl Core {
 
                         match self
                             .server_comm
+                            .read().unwrap().as_ref().unwrap()
                             .delete_messages_from_server(&ToDelete::from_seq_id(
                                 seq.try_into().unwrap(),
                             ))
@@ -173,6 +205,7 @@ impl Core {
                 let otkeys = self.olm_wrapper.generate_otkeys(None);
                 match self
                     .server_comm
+                    .read().unwrap().as_ref().unwrap()
                     .add_otkeys_to_server(&otkeys.curve25519())
                     .await
                 {

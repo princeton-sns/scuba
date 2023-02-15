@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use url::Url;
 use urlencoding::encode;
+use std::sync::Arc;
+use crate::core::Core;
 
 const IP_ADDR: &str = "localhost";
 const PORT_NUM: &str = "8080";
@@ -141,7 +143,12 @@ pub struct ServerComm {
 // TODO make (some of) server comm a trait + would help make mockable
 
 impl ServerComm {
-    pub fn new<'a>(ip_arg: Option<&'a str>, port_arg: Option<&'a str>, idkey: String) -> Self {
+    pub fn new<'a>(
+        ip_arg: Option<&'a str>,
+        port_arg: Option<&'a str>,
+        idkey: String,
+        core: Arc<Core>
+    ) -> Self {
         let ip_addr = ip_arg.unwrap_or(IP_ADDR);
         let port_num = port_arg.unwrap_or(PORT_NUM);
         let base_url = Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
@@ -171,8 +178,14 @@ impl ServerComm {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         olm_wrapper: &OlmWrapper,
+        core: Arc<Core>
     ) -> Self {
-        let mut server_comm = ServerComm::new(ip_arg, port_arg, olm_wrapper.get_idkey());
+        let mut server_comm = ServerComm::new(
+            ip_arg,
+            port_arg,
+            olm_wrapper.get_idkey(),
+            core
+        );
         match server_comm.try_next().await {
             Ok(Some(Event::Otkey)) => {
                 let otkeys = olm_wrapper.generate_otkeys(None);

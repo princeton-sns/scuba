@@ -12,7 +12,7 @@ const NUM_OTKEYS : usize = 20;
 pub struct OlmWrapper {
   turn_encryption_off: bool,
   idkeys             : IdentityKeys,
-  // Wrap OlmAccount in Mutex for Send/Sync
+  // Wrap OlmAccount and MessageQueue in Mutex for Send/Sync
   account            : Mutex<OlmAccount>,
   message_queue      : Mutex<Vec<String>>,
   // Wrap entire HashMap in a Mutex for Send/Sync; this is ok because 
@@ -86,6 +86,7 @@ impl OlmWrapper {
       dst_idkey: &String,
       f: impl FnOnce (&OlmSession) -> R,
   ) -> R {
+    // TODO should this check-and-insert be atomic?
     if self.sessions.lock().unwrap().get(dst_idkey).is_none() {
       let new_session = self.new_outbound_session(server_comm, dst_idkey).await;
       self.sessions.lock().unwrap().insert(
@@ -95,6 +96,7 @@ impl OlmWrapper {
     } else {
       let mut sessions = self.sessions.lock().unwrap();
       let sessions_list = sessions.get_mut(dst_idkey).unwrap();
+      // TODO should this check-and-insert be atomic?
       if sessions_list.is_empty()
           || !sessions_list[sessions_list.len() - 1].has_received_message() {
         Mutex::unlock(sessions);
@@ -107,7 +109,6 @@ impl OlmWrapper {
     }
     let sessions = self.sessions.lock().unwrap();
     let sessions_list = sessions.get(dst_idkey).unwrap();
-    println!("HERE?");
     f(&sessions_list[sessions_list.len() - 1])
   }
 

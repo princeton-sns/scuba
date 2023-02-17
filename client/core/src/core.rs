@@ -3,6 +3,7 @@ use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use async_trait::async_trait;
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
@@ -41,6 +42,7 @@ impl FullPayload {
     }
 }
 
+#[async_trait]
 pub trait CoreClient: Sync + Send + 'static {
     async fn client_callback(&self, sender: String, message: String);
 }
@@ -226,6 +228,7 @@ mod tests {
     use futures::channel::mpsc::{channel, Receiver, Sender};
     use futures::StreamExt;
     use std::sync::Arc;
+    use async_trait::async_trait;
 
     const BUFFER_SIZE: usize = 20;
 
@@ -250,6 +253,7 @@ mod tests {
         }
     }
 
+    #[async_trait]
     impl CoreClient for StreamClient {
         async fn client_callback(&self, sender: String, message: String) {
             use futures::SinkExt;
@@ -279,7 +283,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_new() {
+    async fn test_send_message_to_self() {
         let (client, mut receiver) = StreamClient::new();
         let arc_client = Arc::new(client);
         let arc_core: Arc<Core<StreamClient>> =
@@ -287,7 +291,7 @@ mod tests {
 
         let payload = String::from("hello from me");
         let idkey = arc_core.olm_wrapper.get_idkey();
-        let recipients = vec![idkey];
+        let recipients = vec![idkey.clone()];
 
         if let Err(err) = arc_core.send_message(recipients, &payload).await {
             panic!("Error sending message: {:?}", err);
@@ -298,105 +302,45 @@ mod tests {
                 println!("got SOME from core");
                 println!("sender: {:?}", sender);
                 println!("msg: {:?}", msg);
-            }
-            None => println!("got NONE from core"),
-        };
-    }
-
-    /*
-    #[tokio::test]
-    async fn test_send_message_to_self() {
-        let payload = String::from("hello from me");
-        let (sender, _) = channel::<(String, String)>(BUFFER_SIZE);
-        let mut core = Core::new(None, None, false, sender).await;
-        let idkey = core.olm_wrapper.get_idkey();
-        let recipients = vec![idkey];
-
-        match core.send_message(recipients, &payload).await {
-            Ok(_) => match core.server_comm.read().unwrap().as_ref().unwrap().try_next().await {
-                Ok(Some(Event::Msg(msg_string))) => {
-                    let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
-
-                    let decrypted = core.olm_wrapper.decrypt(
-                        &msg.sender(),
-                        msg.payload().c_type(),
-                        &msg.payload().ciphertext(),
-                    );
-
-                    let full_payload = FullPayload::from_string(decrypted);
-                    assert_eq!(*full_payload.common().message(), payload);
-
-                    match core
-                        .server_comm
-                        .delete_messages_from_server(&ToDelete::from_seq_id(msg.seq_id()))
-                        .await
-                    {
-                        Ok(_) => println!("Sent delete-message successfully"),
-                        Err(err) => panic!("Error sending delete-message: {:?}", err),
-                    }
-                }
-                Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
-                Ok(None) => panic!("FAIL got none"),
-                Err(err) => panic!("FAIL got error: {:?}", err),
+                assert_eq!(sender, idkey);
+                assert_eq!(msg, payload);
             },
-            Err(err) => panic!("Error sending message: {:?}", err),
-        }
+            None => panic!("got NONE from core"),
+        };
     }
 
     #[tokio::test]
     async fn test_send_message_to_other() {
+        let (client_a, mut receiver_a) = StreamClient::new();
+        let arc_client_a = Arc::new(client_a);
+        let arc_core_a: Arc<Core<StreamClient>> =
+            Core::new(None, None, false, Some(arc_client_a)).await;
+        let idkey_a = arc_core_a.olm_wrapper.get_idkey();
+
+        let (client_b, mut receiver_b) = StreamClient::new();
+        let arc_client_b = Arc::new(client_b);
+        let arc_core_b: Arc<Core<StreamClient>> =
+            Core::new(None, None, false, Some(arc_client_b)).await;
+        let idkey_b = arc_core_b.olm_wrapper.get_idkey();
+
         let payload = String::from("hello from me");
-        let (sender, _) = channel::<(String, String)>(BUFFER_SIZE);
-        let core_0 = Core::new(None, None, false, sender.clone()).await;
-        let mut core_1 = Core::new_and_init(None, None, false, sender).await;
-        let idkey_1 = core_1.olm_wrapper.get_idkey();
-        let recipients = vec![idkey_1];
+        let recipients = vec![idkey_b.clone()];
 
-        match core_0.send_message(recipients, &payload).await {
-            Ok(_) => match core_1.server_comm.try_next().await {
-                Ok(Some(Event::Msg(msg_string))) => {
-                    let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
+        if let Err(err) = arc_core_a.send_message(recipients, &payload).await {
+            panic!("Error sending message: {:?}", err);
+        }
 
-                    let decrypted = core_1.olm_wrapper.decrypt(
-                        &msg.sender(),
-                        msg.payload().c_type(),
-                        &msg.payload().ciphertext(),
-                    );
-
-                    let full_payload = FullPayload::from_string(decrypted);
-                    assert_eq!(*full_payload.common().message(), payload);
-                }
-                Ok(Some(Event::Otkey)) => panic!("FAIL got otkey event"),
-                Ok(None) => panic!("FAIL got none"),
-                Err(err) => panic!("FAIL got error: {:?}", err),
+        match receiver_b.next().await {
+            Some((sender, msg)) => {
+                assert_eq!(sender, idkey_a);
+                assert_eq!(msg, payload);
             },
-            Err(err) => panic!("error: {:?}", err),
+            None => panic!("b got NONE from core"),
+        }
+
+        match receiver_a.next().await {
+            Some((_, _)) => panic!("a got SOME from core"),
+            None => {},
         }
     }
-
-    #[tokio::test]
-    async fn test_handle_events() {
-        let payload = String::from("hello from me");
-        let (sender, mut receiver) = channel::<(String, String)>(BUFFER_SIZE);
-        let mut core = Core::new(None, None, false, sender.clone()).await;
-        // otkey
-        core.receive_message().await;
-        let idkey = core.olm_wrapper.get_idkey();
-        let recipients = vec![idkey.clone()];
-
-        match core.send_message(recipients, &payload).await {
-            Ok(_) => println!("Message sent"),
-            Err(err) => panic!("Error sending message: {:?}", err),
-        }
-
-        core.receive_message().await;
-
-        match receiver.try_next().unwrap() {
-            Some((sender, recv_payload)) => {
-                assert_eq!(sender, idkey);
-                assert_eq!(payload, recv_payload);
-            }
-            None => panic!("Got no message"),
-        }
-    }*/
 }

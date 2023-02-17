@@ -19,3 +19,4 @@ log = "0.4.17"
 sha2 = "0.10.6"
 parking_lot = "0.12.1"
 async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }
+async-trait = "0.1.64"

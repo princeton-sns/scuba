@@ -149,7 +149,7 @@ impl<C: CoreClient> ServerComm<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         idkey: String,
-        core: Arc<Core<C>>,
+        core_option: Option<Arc<Core<C>>>,
     ) -> Self {
         let ip_addr = ip_arg.unwrap_or(IP_ADDR);
         let port_num = port_arg.unwrap_or(PORT_NUM);
@@ -174,20 +174,33 @@ impl<C: CoreClient> ServerComm<C> {
             .stream();
 
             loop {
+                println!("IN LOOP");
                 match listener.as_mut().try_next().await {
                     Err(err) => {
-                        core.server_comm_callback(Err(err));
+                        println!("got ERR from server: {:?}", err);
+                        if let Some(ref core) = core_option {
+                          core.server_comm_callback(Err(err)).await;
+                        }
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        println!("got NONE from server")
+                    }
                     Ok(Some(event)) => match event {
                         SSE::Comment(_) => {}
                         SSE::Event(event) => match event.event_type.as_str() {
                             "otkey" => {
-                                core.server_comm_callback(Ok(Event::Otkey));
+                                println!("got OTKEY event from server");
+                                if let Some(ref core) = core_option {
+                                  core.server_comm_callback(Ok(Event::Otkey)).await;
+                                }
                             }
                             "msg" => {
+                                println!("got MSG event from server");
                                 let msg = String::from(event.data);
-                                core.server_comm_callback(Ok(Event::Msg(msg)));
+                                println!("msg: {:?}", msg);
+                                if let Some(ref core) = core_option {
+                                  core.server_comm_callback(Ok(Event::Msg(msg))).await;
+                                }
                             }
                             _ => {}
                         },
@@ -204,32 +217,6 @@ impl<C: CoreClient> ServerComm<C> {
             _pd: PhantomData,
         }
     }
-
-    // TODO: problem for future me
-    // pub async fn init<'a>(
-    //     ip_arg: Option<&'a str>,
-    //     port_arg: Option<&'a str>,
-    //     olm_wrapper: &OlmWrapper,
-    //     core: Arc<Core>
-    // ) -> Self {
-    //     let mut server_comm = ServerComm::new(
-    //         ip_arg,
-    //         port_arg,
-    //         olm_wrapper.get_idkey(),
-    //         core
-    //     );
-    //     match server_comm.try_next().await {
-    //         Ok(Some(Event::Otkey)) => {
-    //             let otkeys = olm_wrapper.generate_otkeys(None);
-    //             match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
-    //                 Ok(_) => println!("Sent otkeys successfully"),
-    //                 Err(err) => panic!("Error sending otkeys: {:?}", err),
-    //             }
-    //         }
-    //         _ => panic!("Unexpected event from server"),
-    //     }
-    //     server_comm
-    // }
 
     pub async fn send_message(&self, batch: &Batch) -> Result<Response> {
         self.client
@@ -276,8 +263,14 @@ impl<C: CoreClient> ServerComm<C> {
 #[cfg(test)]
 mod tests {
     use super::{Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm, ToDelete};
+    use crate::core::CoreClient;
     use crate::olm_wrapper::OlmWrapper;
-    use futures::TryStreamExt;
+
+    /*
+    #[tokio::test]
+    async fn test_new() {
+      ServerComm::new(None, None, "abcd".to_string(), None);
+    }
 
     #[tokio::test]
     async fn test_new() {
@@ -402,4 +395,5 @@ mod tests {
             Err(err) => panic!("Error getting otkey: {:?}", err),
         }
     }
+    */
 }

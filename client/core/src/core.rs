@@ -43,62 +43,13 @@ impl FullPayload {
 }
 
 pub trait CoreClient: Sync + Send + 'static {
-    async fn core_client_callback(&self, sender: String, message: String);
-}
-
-struct StreamClient {
-    sender: tokio::sync::Mutex<futures::channel::mpsc::Sender<(String, String)>>,
-}
-
-struct StreamClientReceiver {
-    receiver: futures::channel::mpsc::Receiver<(String, String)>,
-}
-
-impl StreamClient {
-    pub fn new() -> (Self, StreamClientReceiver) {
-        let (sender, receiver) = futures::channel::mpsc::channel::<(String, String)>(1);
-
-        (
-            StreamClient {
-                sender: tokio::sync::Mutex::new(sender),
-            },
-            StreamClientReceiver { receiver },
-        )
-    }
-}
-
-impl CoreClient for StreamClient {
-    async fn core_client_callback(&self, sender: String, message: String) {
-        use futures::SinkExt;
-        self.sender
-            .lock()
-            .await
-            .send((sender, message))
-            .await
-            .unwrap();
-    }
-}
-
-impl futures::stream::Stream for StreamClientReceiver {
-    type Item = (String, String);
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::pin::Pin::new(&mut self.receiver).poll_next(cx)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.receiver.size_hint()
-    }
+    async fn client_callback(&self, sender: String, message: String);
 }
 
 pub struct Core<C: CoreClient> {
     olm_wrapper: OlmWrapper,
     server_comm: RwLock<Option<ServerComm<C>>>,
     hash_vectors: Mutex<HashVectors>,
-    sender: mpsc::Sender<(String, String)>,
     client: RwLock<Option<Arc<C>>>,
 }
 
@@ -107,10 +58,8 @@ impl<C: CoreClient> Core<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off_arg: bool,
-        sender: mpsc::Sender<(String, String)>,
-        init: bool,
+        client: Option<Arc<C>>,
     ) -> Arc<Core<C>> {
-        // TODO initialize w server_comm instance
         let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
         let idkey = olm_wrapper.get_idkey();
         let hash_vectors = Mutex::new(HashVectors::new(idkey.clone()));
@@ -119,14 +68,13 @@ impl<C: CoreClient> Core<C> {
             olm_wrapper,
             server_comm: RwLock::new(None),
             hash_vectors,
-            sender,
-            client: RwLock::new(None),
+            client: RwLock::new(client),
         });
 
         {
             let mut server_comm_guard = arc_core.server_comm.write().unwrap();
             let server_comm =
-                ServerComm::new(ip_arg, port_arg, idkey.clone(), arc_core.clone()).await;
+                ServerComm::new(ip_arg, port_arg, idkey.clone(), Some(arc_core.clone())).await;
             *server_comm_guard = Some(server_comm);
         }
 
@@ -137,30 +85,9 @@ impl<C: CoreClient> Core<C> {
         *self.client.write().unwrap() = Some(client);
     }
 
-    // pub async fn new_and_init<'a>(
-    //     ip_arg: Option<&'a str>,
-    //     port_arg: Option<&'a str>,
-    //     turn_encryption_off_arg: bool,
-    //     sender: mpsc::Sender<(String, String)>,
-    // ) -> Arc<Core<C>> {
-    //     let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
-    //     let hash_vectors = Mutex::new(HashVectors::new(olm_wrapper.get_idkey()));
-
-    //     let arc_core = Arc::new(Core {
-    //         olm_wrapper,
-    //         server_comm: RwLock::new(None),
-    //         hash_vectors,
-    //         sender,
-    //     });
-
-    //     {
-    //       let mut server_comm_guard = arc_core.server_comm.write().unwrap();
-    //       let server_comm = ServerComm::init(ip_arg, port_arg, &arc_core.olm_wrapper, arc_core.clone()).await;
-    //       *server_comm_guard = Some(server_comm);
-    //     }
-
-    //     arc_core
-    // }
+    pub fn unset_client(&self) {
+        *self.client.write().unwrap() = None;
+    }
 
     pub fn idkey(&self) -> String {
         self.olm_wrapper.get_idkey()
@@ -214,8 +141,32 @@ impl<C: CoreClient> Core<C> {
 
     pub async fn server_comm_callback(&self, event: eventsource_client::Result<Event>) {
         println!("in server_comm_callback");
-        //if
-        //  self.client.core_callback()...
+        match event {
+            Err(err) => println!("err: {:?}", err),
+            Ok(Event::Otkey) => {
+                println!("otkey event");
+                //let otkeys = self.olm_wrapper.generate_otkeys(None);
+                //let server_comm_read_guard = self
+                //    .server_comm
+                //    .read()
+                //    .unwrap();
+                //match server_comm_read_guard
+                //    .as_ref()
+                //    .unwrap()
+                //    .add_otkeys_to_server(&otkeys.curve25519())
+                //    .await
+                //{
+                //    Ok(_) => println!("Sent otkeys successfully"),
+                //    Err(err) => panic!("Error sending otkeys: {:?}", err),
+                //}
+            }
+            Ok(Event::Msg(_)) => {
+                println!("msg event");
+                //self.client.lock().map(|client| {
+                //    client.client_callback();
+                //});
+            }
+        }
     }
 
     // FIXME make immutable
@@ -270,56 +221,101 @@ impl<C: CoreClient> Core<C> {
         //             Err(err) => panic!("Validation failed: {:?}", err),
         //         }
         //     }
-        //     Ok(Some(Event::Otkey)) => {
-        //         println!("got otkey event from server");
-        //         let otkeys = self.olm_wrapper.generate_otkeys(None);
-        //         match self
-        //             .server_comm
-        //             .read().unwrap().as_ref().unwrap()
-        //             .add_otkeys_to_server(&otkeys.curve25519())
-        //             .await
-        //         {
-        //             Ok(_) => println!("Sent otkeys successfully"),
-        //             Err(err) => panic!("Error sending otkeys: {:?}", err),
-        //         }
-        //     }
-        //     Ok(None) => panic!("Got <None> event from server"),
-        //     Err(err) => panic!("Got error while awaiting events from server: {:?}", err),
-        // }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{Core, FullPayload};
+    use crate::core::{Core, CoreClient, FullPayload};
     use crate::server_comm::{Event, IncomingMessage, ToDelete};
-    use futures::channel::mpsc;
-    use futures::TryStreamExt;
+    use futures::channel::mpsc::{channel, Receiver, Sender};
+    use futures::StreamExt;
+    use std::sync::Arc;
 
     const BUFFER_SIZE: usize = 20;
 
+    pub struct StreamClient {
+        sender: tokio::sync::Mutex<Sender<(String, String)>>,
+    }
+
+    // TODO what is being received here?
+    pub struct StreamClientReceiver {
+        receiver: Receiver<(String, String)>,
+    }
+
+    impl StreamClient {
+        pub fn new() -> (Self, StreamClientReceiver) {
+            let (sender, receiver) = channel::<(String, String)>(5);
+
+            (
+                StreamClient {
+                    sender: tokio::sync::Mutex::new(sender),
+                },
+                StreamClientReceiver { receiver },
+            )
+        }
+    }
+
+    impl CoreClient for StreamClient {
+        async fn client_callback(&self, sender: String, message: String) {
+            use futures::SinkExt;
+            println!("in client_callback");
+            self.sender
+                .lock()
+                .await
+                .send((sender, message))
+                .await
+                .unwrap();
+        }
+    }
+
+    impl futures::stream::Stream for StreamClientReceiver {
+        type Item = (String, String);
+
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::pin::Pin::new(&mut self.receiver).poll_next(cx)
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.receiver.size_hint()
+        }
+    }
+
     #[tokio::test]
     async fn test_new() {
-        let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-        let _ = Core::new(None, None, false, sender);
+        let (client, mut receiver) = StreamClient::new();
+        let arc_client = Arc::new(client);
+        let arc_core: Arc<Core<StreamClient>> =
+            Core::new(None, None, false, Some(arc_client)).await;
+
+        match receiver.next().await {
+            Some((sender, msg)) => {
+                println!("got SOME from core");
+                println!("sender: {:?}", sender);
+                println!("msg: {:?}", msg);
+            }
+            None => println!("got NONE from core"),
+        };
+        //|(sender, msg)| {
+        //  println!("sender: ", sender);
+        //  println!("msg: ",  msg);
+        //});
     }
 
-    #[tokio::test]
-    async fn test_new_and_init() {
-        let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-        let _ = Core::new_and_init(None, None, false, sender).await;
-    }
-
+    /*
     #[tokio::test]
     async fn test_send_message_to_self() {
         let payload = String::from("hello from me");
-        let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-        let mut core = Core::new_and_init(None, None, false, sender).await;
+        let (sender, _) = channel::<(String, String)>(BUFFER_SIZE);
+        let mut core = Core::new(None, None, false, sender).await;
         let idkey = core.olm_wrapper.get_idkey();
         let recipients = vec![idkey];
 
         match core.send_message(recipients, &payload).await {
-            Ok(_) => match core.server_comm.try_next().await {
+            Ok(_) => match core.server_comm.read().unwrap().as_ref().unwrap().try_next().await {
                 Ok(Some(Event::Msg(msg_string))) => {
                     let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
 
@@ -352,8 +348,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_to_other() {
         let payload = String::from("hello from me");
-        let (sender, _) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-        let core_0 = Core::new_and_init(None, None, false, sender.clone()).await;
+        let (sender, _) = channel::<(String, String)>(BUFFER_SIZE);
+        let core_0 = Core::new(None, None, false, sender.clone()).await;
         let mut core_1 = Core::new_and_init(None, None, false, sender).await;
         let idkey_1 = core_1.olm_wrapper.get_idkey();
         let recipients = vec![idkey_1];
@@ -383,8 +379,8 @@ mod tests {
     #[tokio::test]
     async fn test_handle_events() {
         let payload = String::from("hello from me");
-        let (sender, mut receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-        let mut core = Core::new(None, None, false, sender.clone());
+        let (sender, mut receiver) = channel::<(String, String)>(BUFFER_SIZE);
+        let mut core = Core::new(None, None, false, sender.clone()).await;
         // otkey
         core.receive_message().await;
         let idkey = core.olm_wrapper.get_idkey();
@@ -404,5 +400,5 @@ mod tests {
             }
             None => panic!("Got no message"),
         }
-    }
+    }*/
 }

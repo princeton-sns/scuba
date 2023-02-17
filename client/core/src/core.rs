@@ -1,16 +1,14 @@
 use futures::channel::mpsc;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
 use crate::server_comm::{
     Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm, ToDelete,
 };
-
-// TODO persist natively
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FullPayload {
@@ -65,6 +63,11 @@ impl<C: CoreClient> Core<C> {
         let idkey = olm_wrapper.get_idkey();
         let hash_vectors = Mutex::new(HashVectors::new(idkey.clone()));
 
+        // Core needs to effectively register itself as a client of
+        // server_comm (no trait needed b/c only one implementation 
+        // will ever be used, at least at this point) - which is why
+        // Core::new() should return Arc<Core<C>>
+
         let arc_core = Arc::new(Core {
             olm_wrapper,
             server_comm: RwLock::new(None),
@@ -94,15 +97,6 @@ impl<C: CoreClient> Core<C> {
         self.olm_wrapper.get_idkey()
     }
 
-    // TODO register_listener
-    // probably not a callback, probably a CoreClient
-    // C: CoreClient, take an Arc<CoreClient>
-    // TODO message functions => by implemting a CoreClient trait
-    // TODO shim Client that forces waiting for messages
-
-    // TODO core should also register itself as a ServerCommClient
-    // in which case, Core::new() should return Arc<Core<C>>
-
     pub async fn send_message(
         &self,
         dst_idkeys: Vec<String>,
@@ -111,7 +105,7 @@ impl<C: CoreClient> Core<C> {
         let (common_payload, recipient_payloads) = self
             .hash_vectors
             .lock()
-            .unwrap()
+            .await
             .prepare_message(dst_idkeys.clone(), payload.to_string());
         let mut batch = Batch::new();
         for (idkey, recipient_payload) in recipient_payloads {
@@ -140,14 +134,18 @@ impl<C: CoreClient> Core<C> {
             .await
     }
 
-    pub async fn server_comm_callback(&self, event: eventsource_client::Result<Event>) {
-        println!("in server_comm_callback");
+    pub async fn server_comm_callback(
+        &self,
+        event: eventsource_client::Result<Event>
+    ) {
         match event {
+            // FIXME handle
             Err(err) => println!("err: {:?}", err),
             Ok(Event::Otkey) => {
-                println!("otkey event");
                 let otkeys = self.olm_wrapper.generate_otkeys(None);
                 // FIXME is this read()...await ok??
+                // had to use tokio's RwLock instead of std's in order to 
+                // make this Send
                 match self
                     .server_comm
                     .read()
@@ -161,11 +159,49 @@ impl<C: CoreClient> Core<C> {
                     Err(err) => panic!("Error sending otkeys: {:?}", err),
                 }
             }
-            Ok(Event::Msg(_)) => {
-                println!("msg event");
-                //self.client.lock().map(|client| {
-                //    client.client_callback();
-                //});
+            Ok(Event::Msg(msg_string)) => {
+                let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
+
+                let decrypted = self.olm_wrapper.decrypt(
+                    &msg.sender(),
+                    msg.payload().c_type(),
+                    &msg.payload().ciphertext(),
+                );
+
+                let full_payload = FullPayload::from_string(decrypted);
+                println!("full_payload: {:?}", full_payload);
+
+                // validate
+                match self.hash_vectors.lock().await.parse_message(
+                    &msg.sender(),
+                    full_payload.common,
+                    &full_payload.per_recipient,
+                ) {
+                    Ok(None) => println!("Validation succeeded, no message to process"),
+                    Ok(Some((seq, message))) => {
+                        // forward message to CoreClient
+                        self.client
+                            .read()
+                            .await
+                            .as_ref()
+                            .unwrap()
+                            .client_callback(msg.sender().clone(), message)
+                            .await;
+
+                        match self
+                            .server_comm
+                            .read().await.as_ref().unwrap()
+                            .delete_messages_from_server(&ToDelete::from_seq_id(
+                                seq.try_into().unwrap(),
+                            ))
+                            .await
+                        {
+                            Ok(_) => println!("Sent delete-message successfully"),
+                            Err(err) => panic!("Error sending delete-message: {:?}", err),
+                        }
+                    }
+                    Err(err) => panic!("Validation failed: {:?}", err),
+                }
             }
         }
     }
@@ -180,48 +216,6 @@ impl<C: CoreClient> Core<C> {
     // common vars to use
     pub async fn receive_message(&mut self) {
         unimplemented!()
-        // use futures::TryStreamExt;
-
-        // // FIXME
-        // match self.server_comm().try_next().await {
-        //     Ok(Some(Event::Msg(msg_string))) => {
-        //         let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
-
-        //         let decrypted = self.olm_wrapper.decrypt(
-        //             &msg.sender(),
-        //             msg.payload().c_type(),
-        //             &msg.payload().ciphertext(),
-        //         );
-
-        //         let full_payload = FullPayload::from_string(decrypted);
-
-        //         // validate
-        //         match self.hash_vectors.lock().unwrap().parse_message(
-        //             &msg.sender(),
-        //             full_payload.common,
-        //             &full_payload.per_recipient,
-        //         ) {
-        //             Ok(None) => println!("Validation succeeded, no message to process"),
-        //             Ok(Some((seq, message))) => {
-        //                 // forward message
-        //                 // FIXME are callbacks easier to compile to wasm?
-        //                 self.sender.try_send((msg.sender().clone(), message));
-
-        //                 match self
-        //                     .server_comm
-        //                     .read().unwrap().as_ref().unwrap()
-        //                     .delete_messages_from_server(&ToDelete::from_seq_id(
-        //                         seq.try_into().unwrap(),
-        //                     ))
-        //                     .await
-        //                 {
-        //                     Ok(_) => println!("Sent delete-message successfully"),
-        //                     Err(err) => panic!("Error sending delete-message: {:?}", err),
-        //                 }
-        //             }
-        //             Err(err) => panic!("Validation failed: {:?}", err),
-        //         }
-        //     }
     }
 }
 
@@ -259,7 +253,7 @@ mod tests {
     impl CoreClient for StreamClient {
         async fn client_callback(&self, sender: String, message: String) {
             use futures::SinkExt;
-            println!("in client_callback");
+            println!("-----in client_callback");
             self.sender
                 .lock()
                 .await

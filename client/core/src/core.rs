@@ -1,7 +1,8 @@
 use futures::channel::mpsc;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
@@ -72,7 +73,7 @@ impl<C: CoreClient> Core<C> {
         });
 
         {
-            let mut server_comm_guard = arc_core.server_comm.write().unwrap();
+            let mut server_comm_guard = arc_core.server_comm.write().await;
             let server_comm =
                 ServerComm::new(ip_arg, port_arg, idkey.clone(), Some(arc_core.clone())).await;
             *server_comm_guard = Some(server_comm);
@@ -81,12 +82,12 @@ impl<C: CoreClient> Core<C> {
         arc_core
     }
 
-    pub fn set_client(&self, client: Arc<C>) {
-        *self.client.write().unwrap() = Some(client);
+    pub async fn set_client(&self, client: Arc<C>) {
+        *self.client.write().await = Some(client);
     }
 
-    pub fn unset_client(&self) {
-        *self.client.write().unwrap() = None;
+    pub async fn unset_client(&self) {
+        *self.client.write().await = None;
     }
 
     pub fn idkey(&self) -> String {
@@ -119,7 +120,7 @@ impl<C: CoreClient> Core<C> {
             let (c_type, ciphertext) = self
                 .olm_wrapper
                 .encrypt(
-                    &self.server_comm.read().unwrap().as_ref().unwrap(),
+                    &self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
                     &full_payload,
                 )
@@ -132,7 +133,7 @@ impl<C: CoreClient> Core<C> {
         }
         self.server_comm
             .read()
-            .unwrap()
+            .await
             .as_ref()
             .unwrap()
             .send_message(&batch)
@@ -145,20 +146,20 @@ impl<C: CoreClient> Core<C> {
             Err(err) => println!("err: {:?}", err),
             Ok(Event::Otkey) => {
                 println!("otkey event");
-                //let otkeys = self.olm_wrapper.generate_otkeys(None);
-                //let server_comm_read_guard = self
-                //    .server_comm
-                //    .read()
-                //    .unwrap();
-                //match server_comm_read_guard
-                //    .as_ref()
-                //    .unwrap()
-                //    .add_otkeys_to_server(&otkeys.curve25519())
-                //    .await
-                //{
-                //    Ok(_) => println!("Sent otkeys successfully"),
-                //    Err(err) => panic!("Error sending otkeys: {:?}", err),
-                //}
+                let otkeys = self.olm_wrapper.generate_otkeys(None);
+                // FIXME is this read()...await ok??
+                match self
+                    .server_comm
+                    .read()
+                    .await
+                    .as_ref()
+                    .unwrap()
+                    .add_otkeys_to_server(&otkeys.curve25519())
+                    .await
+                {
+                    Ok(_) => println!("Sent otkeys successfully"),
+                    Err(err) => panic!("Error sending otkeys: {:?}", err),
+                }
             }
             Ok(Event::Msg(_)) => {
                 println!("msg event");
@@ -238,7 +239,6 @@ mod tests {
         sender: tokio::sync::Mutex<Sender<(String, String)>>,
     }
 
-    // TODO what is being received here?
     pub struct StreamClientReceiver {
         receiver: Receiver<(String, String)>,
     }
@@ -291,6 +291,14 @@ mod tests {
         let arc_core: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client)).await;
 
+        let payload = String::from("hello from me");
+        let idkey = arc_core.olm_wrapper.get_idkey();
+        let recipients = vec![idkey];
+
+        if let Err(err) = arc_core.send_message(recipients, &payload).await {
+            panic!("Error sending message: {:?}", err);
+        }
+
         match receiver.next().await {
             Some((sender, msg)) => {
                 println!("got SOME from core");
@@ -299,10 +307,6 @@ mod tests {
             }
             None => println!("got NONE from core"),
         };
-        //|(sender, msg)| {
-        //  println!("sender: ", sender);
-        //  println!("msg: ",  msg);
-        //});
     }
 
     /*

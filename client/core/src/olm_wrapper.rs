@@ -6,7 +6,6 @@ use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem;
-use std::sync::RwLock;
 
 // TODO sender-key optimization
 

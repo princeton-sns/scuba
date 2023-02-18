@@ -1,9 +1,9 @@
+use async_trait::async_trait;
 use futures::channel::mpsc;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use async_trait::async_trait;
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
@@ -66,7 +66,7 @@ impl<C: CoreClient> Core<C> {
         let hash_vectors = Mutex::new(HashVectors::new(idkey.clone()));
 
         // Core needs to effectively register itself as a client of
-        // server_comm (no trait needed b/c only one implementation 
+        // server_comm (no trait needed b/c only one implementation
         // will ever be used, at least at this point) - which is why
         // Core::new() should return Arc<Core<C>>
 
@@ -136,17 +136,15 @@ impl<C: CoreClient> Core<C> {
             .await
     }
 
-    pub async fn server_comm_callback(
-        &self,
-        event: eventsource_client::Result<Event>
-    ) {
+    pub async fn server_comm_callback(&self, event: eventsource_client::Result<Event>) {
+        println!("--callback - {:?}", self.olm_wrapper.get_idkey());
         match event {
             // FIXME handle
             Err(err) => println!("err: {:?}", err),
             Ok(Event::Otkey) => {
                 let otkeys = self.olm_wrapper.generate_otkeys(None);
                 // FIXME is this read()...await ok??
-                // had to use tokio's RwLock instead of std's in order to 
+                // had to use tokio's RwLock instead of std's in order to
                 // make this Send
                 match self
                     .server_comm
@@ -160,6 +158,7 @@ impl<C: CoreClient> Core<C> {
                     Ok(_) => println!("Sent otkeys successfully"),
                     Err(err) => panic!("Error sending otkeys: {:?}", err),
                 }
+                println!("FINISHED");
             }
             Ok(Event::Msg(msg_string)) => {
                 let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
@@ -192,7 +191,10 @@ impl<C: CoreClient> Core<C> {
 
                         match self
                             .server_comm
-                            .read().await.as_ref().unwrap()
+                            .read()
+                            .await
+                            .as_ref()
+                            .unwrap()
                             .delete_messages_from_server(&ToDelete::from_seq_id(
                                 seq.try_into().unwrap(),
                             ))
@@ -221,16 +223,10 @@ impl<C: CoreClient> Core<C> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::core::{Core, CoreClient, FullPayload};
-    use crate::server_comm::{Event, IncomingMessage, ToDelete};
-    use futures::channel::mpsc::{channel, Receiver, Sender};
-    use futures::StreamExt;
-    use std::sync::Arc;
+pub mod stream_client {
+    use crate::core::CoreClient;
     use async_trait::async_trait;
-
-    const BUFFER_SIZE: usize = 20;
+    use futures::channel::mpsc::{channel, Receiver, Sender};
 
     pub struct StreamClient {
         sender: tokio::sync::Mutex<Sender<(String, String)>>,
@@ -281,6 +277,17 @@ mod tests {
             self.receiver.size_hint()
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::stream_client::StreamClient;
+    use crate::core::{Core, FullPayload};
+    use crate::server_comm::{Event, IncomingMessage, ToDelete};
+    use futures::StreamExt;
+    use std::sync::Arc;
+
+    const BUFFER_SIZE: usize = 20;
 
     #[tokio::test]
     async fn test_send_message_to_self() {
@@ -304,7 +311,7 @@ mod tests {
                 println!("msg: {:?}", msg);
                 assert_eq!(sender, idkey);
                 assert_eq!(msg, payload);
-            },
+            }
             None => panic!("got NONE from core"),
         };
     }
@@ -317,14 +324,20 @@ mod tests {
             Core::new(None, None, false, Some(arc_client_a)).await;
         let idkey_a = arc_core_a.olm_wrapper.get_idkey();
 
+        println!("INITIALIZED A: {:?}", idkey_a);
+
         let (client_b, mut receiver_b) = StreamClient::new();
         let arc_client_b = Arc::new(client_b);
         let arc_core_b: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client_b)).await;
         let idkey_b = arc_core_b.olm_wrapper.get_idkey();
 
+        println!("INITIALIZED B: {:?}", idkey_b);
+
         let payload = String::from("hello from me");
         let recipients = vec![idkey_b.clone()];
+
+        println!("HERE");
 
         if let Err(err) = arc_core_a.send_message(recipients, &payload).await {
             panic!("Error sending message: {:?}", err);
@@ -334,13 +347,13 @@ mod tests {
             Some((sender, msg)) => {
                 assert_eq!(sender, idkey_a);
                 assert_eq!(msg, payload);
-            },
+            }
             None => panic!("b got NONE from core"),
         }
 
         match receiver_a.next().await {
             Some((_, _)) => panic!("a got SOME from core"),
-            None => {},
+            None => {}
         }
     }
 }

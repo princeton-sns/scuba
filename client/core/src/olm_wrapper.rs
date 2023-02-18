@@ -60,13 +60,14 @@ impl OlmWrapper {
     ) -> OlmSession {
         match server_comm.get_otkey_from_server(dst_idkey).await {
             Ok(dst_otkey) => {
-                match self
-                    .account
-                    .lock()
-                    .create_outbound_session(dst_idkey, &String::from(dst_otkey))
-                {
+                match self.account.lock().create_outbound_session(
+                    dst_idkey,
+                    &String::from(dst_otkey),
+                ) {
                     Ok(new_session) => return new_session,
-                    Err(err) => panic!("Error creating outbound session: {:?}", err),
+                    Err(err) => {
+                        panic!("Error creating outbound session: {:?}", err)
+                    }
                 }
             }
             Err(err) => panic!("Error getting otkey from server: {:?}", err),
@@ -84,9 +85,9 @@ impl OlmWrapper {
         }
     }
 
-    // TODO how many sessions with the same session_id should exist 
-    // at one time? (for decrypting delayed messages) -> 
-    // currently infinite
+    // TODO how many sessions with the same session_id should
+    // exist at one time? (for decrypting delayed messages)
+    // -> currently infinite
 
     async fn get_outbound_session<R, C: CoreClient>(
         &self,
@@ -107,17 +108,21 @@ impl OlmWrapper {
             {
                 return f(&sessions_list[sessions_list.len() - 1]);
             }
-            // wait if another thread has already started fetching otkeys
-            // and creating a new session, and then re-execute the loop
+            // wait if another thread has already started fetching
+            // otkeys and creating a new session, and then
+            // re-execute the loop
             if *is_fetching {
                 self.sessions_cv.wait(sessions).await;
-            // fetch otkeys from the server and create a new session
+            // fetch otkeys from the server and create a new
+            // session
             } else {
                 *is_fetching = true;
                 mem::drop(sessions);
-                let new_session = self.new_outbound_session(server_comm, dst_idkey).await;
+                let new_session =
+                    self.new_outbound_session(server_comm, dst_idkey).await;
                 let mut sessions = self.sessions.lock();
-                let (is_fetching, sessions_list) = sessions.get_mut(dst_idkey).unwrap();
+                let (is_fetching, sessions_list) =
+                    sessions.get_mut(dst_idkey).unwrap();
                 *is_fetching = false;
                 sessions_list.push(new_session);
                 self.sessions_cv.notify_all();
@@ -138,7 +143,8 @@ impl OlmWrapper {
                 if sessions.get(sender).is_none() {
                     panic!("No pairwise sessions exist for idkey {:?}", sender);
                 } else {
-                    let sessions_list = &mut sessions.get_mut(sender).unwrap().1;
+                    let sessions_list =
+                        &mut sessions.get_mut(sender).unwrap().1;
                     f(&sessions_list[sessions_list.len() - 1])
                 }
             }
@@ -158,9 +164,13 @@ impl OlmWrapper {
         }
     }
 
-    fn try_all_sessions_decrypt(&self, sender: &String, ciphertext: &OlmMessage) -> String {
-        // as long as get_inbound_session is called before this function the result
-        // will never be None/empty
+    fn try_all_sessions_decrypt(
+        &self,
+        sender: &String,
+        ciphertext: &OlmMessage,
+    ) -> String {
+        // as long as get_inbound_session is called before this
+        // function the result will never be None/empty
         let sessions = self.sessions.lock();
         let sessions_list = &sessions.get(sender).unwrap().1;
 
@@ -204,20 +214,33 @@ impl OlmWrapper {
         (c_type.into(), ciphertext)
     }
 
-    pub fn decrypt(&self, sender: &String, c_type: usize, ciphertext: &String) -> String {
+    pub fn decrypt(
+        &self,
+        sender: &String,
+        c_type: usize,
+        ciphertext: &String,
+    ) -> String {
         if self.turn_encryption_off {
             return ciphertext.to_string();
         }
         self.decrypt_helper(
             sender,
-            &OlmMessage::from_type_and_ciphertext(c_type, ciphertext.to_string()).unwrap(),
+            &OlmMessage::from_type_and_ciphertext(
+                c_type,
+                ciphertext.to_string(),
+            )
+            .unwrap(),
         )
     }
 
-    fn decrypt_helper(&self, sender: &String, ciphertext: &OlmMessage) -> String {
+    fn decrypt_helper(
+        &self,
+        sender: &String,
+        ciphertext: &OlmMessage,
+    ) -> String {
         if *sender == self.get_idkey() {
-            // FIXME handle dos attack where client poses as "self" - this
-            // unwrap will panic
+            // FIXME handle dos attack where client poses as "self" -
+            // this unwrap will panic
             return self.message_queue.lock().pop().unwrap().to_string();
         }
         let res = self.get_inbound_session(sender, ciphertext, |session| {
@@ -228,8 +251,11 @@ impl OlmWrapper {
             Ok(plaintext) => return plaintext,
             Err(err) => {
                 match ciphertext {
-                    // iterate through all sessions in case this message was delayed
-                    OlmMessage::Message(_) => self.try_all_sessions_decrypt(sender, ciphertext),
+                    // iterate through all sessions in case this message was
+                    // delayed
+                    OlmMessage::Message(_) => {
+                        self.try_all_sessions_decrypt(sender, ciphertext)
+                    }
                     OlmMessage::PreKey(_) => {
                         panic!(
                             "Error creating inbound session from prekey message: {:?}",

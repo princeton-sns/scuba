@@ -1,15 +1,16 @@
+use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use futures::channel::mpsc;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use async_condvar_fair::Condvar;
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
 use crate::server_comm::{
-    Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm, ToDelete,
+    Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm,
+    ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -19,15 +20,22 @@ pub struct FullPayload {
 }
 
 impl FullPayload {
-    fn new(common: CommonPayload, per_recipient: RecipientPayload) -> FullPayload {
+    fn new(
+        common: CommonPayload,
+        per_recipient: RecipientPayload,
+    ) -> FullPayload {
         Self {
             common,
             per_recipient,
         }
     }
 
-    fn to_string(common: CommonPayload, per_recipient: RecipientPayload) -> String {
-        serde_json::to_string(&FullPayload::new(common.clone(), per_recipient)).unwrap()
+    fn to_string(
+        common: CommonPayload,
+        per_recipient: RecipientPayload,
+    ) -> String {
+        serde_json::to_string(&FullPayload::new(common.clone(), per_recipient))
+            .unwrap()
     }
 
     fn from_string(msg: String) -> FullPayload {
@@ -84,8 +92,13 @@ impl<C: CoreClient> Core<C> {
 
         {
             let mut server_comm_guard = arc_core.server_comm.write().await;
-            let server_comm =
-                ServerComm::new(ip_arg, port_arg, idkey.clone(), Some(arc_core.clone())).await;
+            let server_comm = ServerComm::new(
+                ip_arg,
+                port_arg,
+                idkey.clone(),
+                Some(arc_core.clone()),
+            )
+            .await;
             *server_comm_guard = Some(server_comm);
         }
 
@@ -125,7 +138,10 @@ impl<C: CoreClient> Core<C> {
             .prepare_message(dst_idkeys.clone(), payload.to_string());
         let mut batch = Batch::new();
         for (idkey, recipient_payload) in recipient_payloads {
-            let full_payload = FullPayload::to_string(common_payload.clone(), recipient_payload);
+            let full_payload = FullPayload::to_string(
+                common_payload.clone(),
+                recipient_payload,
+            );
 
             let (c_type, ciphertext) = self
                 .olm_wrapper
@@ -150,7 +166,10 @@ impl<C: CoreClient> Core<C> {
             .await
     }
 
-    pub async fn server_comm_callback(&self, event: eventsource_client::Result<Event>) {
+    pub async fn server_comm_callback(
+        &self,
+        event: eventsource_client::Result<Event>,
+    ) {
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
@@ -178,7 +197,8 @@ impl<C: CoreClient> Core<C> {
                 }
             }
             Ok(Event::Msg(msg_string)) => {
-                let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
+                let msg: IncomingMessage =
+                    IncomingMessage::from_string(msg_string);
 
                 let decrypted = self.olm_wrapper.decrypt(
                     &msg.sender(),
@@ -194,7 +214,9 @@ impl<C: CoreClient> Core<C> {
                     full_payload.common,
                     &full_payload.per_recipient,
                 ) {
-                    Ok(None) => println!("Validation succeeded, no message to process"),
+                    Ok(None) => {
+                        println!("Validation succeeded, no message to process")
+                    }
                     Ok(Some((seq, message))) => {
                         // forward message to CoreClient
                         self.client
@@ -211,13 +233,18 @@ impl<C: CoreClient> Core<C> {
                             .await
                             .as_ref()
                             .unwrap()
-                            .delete_messages_from_server(&ToDelete::from_seq_id(
-                                seq.try_into().unwrap(),
-                            ))
+                            .delete_messages_from_server(
+                                &ToDelete::from_seq_id(seq.try_into().unwrap()),
+                            )
                             .await
                         {
-                            Ok(_) => println!("Sent delete-message successfully"),
-                            Err(err) => panic!("Error sending delete-message: {:?}", err),
+                            Ok(_) => {
+                                println!("Sent delete-message successfully")
+                            }
+                            Err(err) => panic!(
+                                "Error sending delete-message: {:?}",
+                                err
+                            ),
                         }
                     }
                     Err(err) => panic!("Validation failed: {:?}", err),
@@ -229,11 +256,12 @@ impl<C: CoreClient> Core<C> {
     // FIXME make immutable
     // self.olm_wrapper.need_mut_ref()
     // e.g. wrap olm_wrapper w Mutex (for now)
-    // rule: never put a thing into a Mutex which calls some async functions
-    // only wrap types that are used briefly, and make sure you unlock() before
+    // rule: never put a thing into a Mutex which calls some
+    // async functions only wrap types that are used
+    // briefly, and make sure you unlock() before
     // calling any asyncs
-    // TODO also, between unlock() and lock(), may have to recalculate any
-    // common vars to use
+    // TODO also, between unlock() and lock(), may have to
+    // recalculate any common vars to use
     pub async fn receive_message(&mut self) {
         unimplemented!()
     }

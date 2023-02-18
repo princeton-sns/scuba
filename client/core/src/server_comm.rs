@@ -142,7 +142,8 @@ pub struct ServerComm<C: CoreClient> {
     _pd: PhantomData<C>,
 }
 // wasm FIXME s reqwest and SEE
-// TODO make (some of) server comm a trait + would help make mockable
+// TODO make (some of) server comm a trait + would help make
+// mockable
 
 impl<C: CoreClient> ServerComm<C> {
     pub async fn new<'a>(
@@ -153,8 +154,9 @@ impl<C: CoreClient> ServerComm<C> {
     ) -> Self {
         let ip_addr = ip_arg.unwrap_or(IP_ADDR);
         let port_num = port_arg.unwrap_or(PORT_NUM);
-        let base_url = Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
-            .expect("Failed base_url construction");
+        let base_url =
+            Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
+                .expect("Failed base_url construction");
 
         let task_base_url = base_url.clone();
         let task_idkey = idkey.clone();
@@ -192,9 +194,13 @@ impl<C: CoreClient> ServerComm<C> {
                         SSE::Comment(_) => {}
                         SSE::Event(event) => match event.event_type.as_str() {
                             "otkey" => {
-                                println!("got OTKEY event from server - {:?}", task_idkey);
+                                println!(
+                                    "got OTKEY event from server - {:?}",
+                                    task_idkey
+                                );
                                 if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Otkey)).await;
+                                    core.server_comm_callback(Ok(Event::Otkey))
+                                        .await;
                                 }
                             }
                             "msg" => {
@@ -202,7 +208,10 @@ impl<C: CoreClient> ServerComm<C> {
                                 let msg = String::from(event.data);
                                 println!("msg: {:?}", msg);
                                 if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Msg(msg))).await;
+                                    core.server_comm_callback(Ok(Event::Msg(
+                                        msg,
+                                    )))
+                                    .await;
                                 }
                             }
                             _ => {}
@@ -231,7 +240,10 @@ impl<C: CoreClient> ServerComm<C> {
             .await
     }
 
-    pub async fn get_otkey_from_server(&self, dst_idkey: &String) -> Result<OtkeyResponse> {
+    pub async fn get_otkey_from_server(
+        &self,
+        dst_idkey: &String,
+    ) -> Result<OtkeyResponse> {
         let mut url = self.base_url.join("/devices/otkey").expect("");
         url.set_query(Some(
             &vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
@@ -239,7 +251,10 @@ impl<C: CoreClient> ServerComm<C> {
         self.client.get(url).send().await?.json().await
     }
 
-    pub async fn delete_messages_from_server(&self, to_delete: &ToDelete) -> Result<Response> {
+    pub async fn delete_messages_from_server(
+        &self,
+        to_delete: &ToDelete,
+    ) -> Result<Response> {
         self.client
             .delete(self.base_url.join("/self/messages").expect("").as_str())
             .header("Content-Type", "application/json")
@@ -266,7 +281,10 @@ impl<C: CoreClient> ServerComm<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm, ToDelete};
+    use super::{
+        Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm,
+        ToDelete,
+    };
     use crate::core::stream_client::StreamClient;
     use crate::core::Core;
     use crate::olm_wrapper::OlmWrapper;
@@ -284,10 +302,11 @@ mod tests {
     //        });
 
     //        {
-    //            let mut server_comm_guard = arc_core.server_comm.write().await;
-    //            let server_comm =
-    //                ServerComm::<StreamClient>::new(None, None, idkey, Some(arc_core.clone())).await;
-    //        }
+    //            let mut server_comm_guard =
+    // arc_core.server_comm.write().await;            let
+    // server_comm =                
+    // ServerComm::<StreamClient>::new(None, None, idkey,
+    // Some(arc_core.clone())).await;        }
 
     //        arc_core
     //    }
@@ -295,17 +314,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_new() {
-        let arc_core: Arc<Core<StreamClient>> = Core::new(None, None, false, None).await;
+        let arc_core: Arc<Core<StreamClient>> =
+            Core::new(None, None, false, None).await;
 
         //let olm_wrapper = OlmWrapper::new(false);
         //let idkey = olm_wrapper.get_idkey();
-        //let arc_core: Arc<Core<StreamClient>> = Arc::new(Core {
-        //    olm_wrapper,
+        //let arc_core: Arc<Core<StreamClient>> =
+        // Arc::new(Core {    olm_wrapper,
         //    server_comm: RwLock::new(None),
-        //    hash_vectors: Mutex::new(HashVectors::new(idkey.clone())),
+        //    hash_vectors:
+        // Mutex::new(HashVectors::new(idkey.clone())),
         //    client: RwLock::new(None),
         //});
-        //ServerComm::<StreamClient>::new(None, None, "abcd".to_string(), None).await;
+        //ServerComm::<StreamClient>::new(None, None,
+        // "abcd".to_string(), None).await;
     }
 
     /*

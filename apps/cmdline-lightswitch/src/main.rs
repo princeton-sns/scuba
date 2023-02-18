@@ -1,68 +1,68 @@
 #![feature(async_closure)]
 
-use std::collections::HashMap;
-use noise_core::core::Core;
+use async_trait::async_trait;
 use futures::channel::mpsc;
-use repl_rs::{Value, Repl, Command, Parameter};
+use noise_core::core::{Core, CoreClient};
 use repl_rs::Result as ReplResult;
+use repl_rs::{Command, Parameter, Repl, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task;
 
 const BUFFER_SIZE: usize = 10;
 
+struct LightswitchClient {}
+
+#[async_trait]
+impl CoreClient for LightswitchClient {
+    async fn client_callback(&self, sender: String, message: String) {
+        println!("in LIGHTSWITCH client_callback");
+    }
+}
+
 struct LightswitchApp {
-  receiver: mpsc::Receiver<(String, String)>,
-  core: Core,
+    core: Arc<Core<LightswitchClient>>,
 }
 
 impl LightswitchApp {
-  pub fn new() -> LightswitchApp {
-    let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-    Self {
-      receiver,
-      core: Core::new(None, None, false, sender),
+    pub async fn new() -> LightswitchApp {
+        let lightswitch_client = Arc::new(LightswitchClient {});
+        Self {
+            core: Core::new(None, None, false, Some(lightswitch_client)).await,
+        }
     }
-  }
 
-  // TODO Arc makes Self immutable, so need to use interior mutability
-  pub async fn receive_messages(&self) {
-    loop {
-      self.core.receive_message().await;
+    pub fn hello(
+        args: HashMap<String, Value>,
+        _context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        Ok(Some(format!("Hello, {}", args["who"])))
     }
-  }
-
-  pub fn hello(
-      args: HashMap<String, Value>,
-      _context: &mut Arc<Self>
-  ) -> ReplResult<Option<String>> {
-    Ok(Some(format!("Hello, {}", args["who"])))
-  }
 }
 
 #[tokio::main]
 async fn main() -> ReplResult<()> {
-    let app = Arc::new(LightswitchApp::new());
+    let app = Arc::new(LightswitchApp::new().await);
 
     let app_listener = app.clone();
 
     let repl_future = task::spawn_blocking(move || {
-      let mut repl = Repl::new(app)
-          .with_name("Lightswitch App")
-          .with_version("v0.1.0")
-          .with_description("Noise lightswitch app")
-          .add_command(
-              Command::new("hello", LightswitchApp::hello)
-                  .with_parameter(Parameter::new("who").set_required(true)?)?
-                  .with_help("Greetings!"),
-      );
+        let mut repl = Repl::new(app)
+            .with_name("Lightswitch App")
+            .with_version("v0.1.0")
+            .with_description("Noise lightswitch app")
+            .add_command(
+                Command::new("hello", LightswitchApp::hello)
+                    .with_parameter(Parameter::new("who").set_required(true)?)?
+                    .with_help("Greetings!"),
+            );
 
-      repl.run()
+        repl.run()
     });
 
-    let app_future = app_listener.receive_messages();
+    if let (Err(err),) = futures::join!(repl_future) {
+        panic!("Error joining threads: {:?}", err);
+    }
 
-    let (repl_res, app_res) = futures::join!(repl_future, app_future);
-    // FIXME check results
     Ok(())
 }
-

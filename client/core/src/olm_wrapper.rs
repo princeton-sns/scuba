@@ -84,8 +84,9 @@ impl OlmWrapper {
         }
     }
 
-    // TODO how many sessions with the same session_id should exist at one time?
-    // (for decrypting delayed messages) -> currently infinite
+    // TODO how many sessions with the same session_id should exist 
+    // at one time? (for decrypting delayed messages) -> 
+    // currently infinite
 
     async fn get_outbound_session<R, C: CoreClient>(
         &self,
@@ -95,19 +96,22 @@ impl OlmWrapper {
     ) -> R {
         loop {
             let mut sessions = self.sessions.lock();
-            // case 1: sessions[dst_idkey] is Some([])
+            // if sessions[dst_idkey] is None, make it Some([])
             let (is_fetching, sessions_list) = sessions
                 .entry(dst_idkey.to_string())
                 .or_insert_with(|| (false, Vec::new()));
-            // case 2: sessions[dst_idkey] is Some([...]) with received message
+            // if last session entry has received a message, it is valid
+            // so we use it
             if !sessions_list.is_empty()
                 && sessions_list[sessions_list.len() - 1].has_received_message()
             {
                 return f(&sessions_list[sessions_list.len() - 1]);
             }
-            // case 3: sessions[dst_idkey] is Some([...]) but no received message
+            // wait if another thread has already started fetching otkeys
+            // and creating a new session, and then re-execute the loop
             if *is_fetching {
                 self.sessions_cv.wait(sessions).await;
+            // fetch otkeys from the server and create a new session
             } else {
                 *is_fetching = true;
                 mem::drop(sessions);

@@ -10,7 +10,7 @@
 // get_contacts
 // get_pending_contacts
 
-// TODO implement sharing without CONTACTS/LINKED? or, at least,
-// minimize how the structure changes?
-// they are, indeed, special groups, but think about how special
-// they really need to be
+// TODO implement sharing without CONTACTS/LINKED? or, at
+// least, minimize how the structure changes?
+// they are, indeed, special groups, but think about how
+// special they really need to be

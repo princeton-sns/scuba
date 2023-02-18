@@ -141,10 +141,16 @@ impl Glue {
         }
     }
 
-    fn check_permissions(&self, sender: &String, message: &Message) -> Result<(), Error> {
+    fn check_permissions(
+        &self,
+        sender: &String,
+        message: &Message,
+    ) -> Result<(), Error> {
         // TODO actually check permissions
         match message {
-            Message::UpdateLinked(sender, temp_linked_name, members_to_add) => Ok(()),
+            Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
+                Ok(())
+            }
             Message::ConfirmUpdateLinked(new_linked_name, new_groups) => Ok(()),
             Message::SetGroup(group_id, group_val) => Ok(()),
             Message::LinkGroups(parent_id, child_id) => Ok(()),
@@ -178,12 +184,21 @@ impl Glue {
         //}
     }
 
-    async fn demux(&mut self, sender: &String, message: Message) -> Result<(), Error> {
+    async fn demux(
+        &mut self,
+        sender: &String,
+        message: Message,
+    ) -> Result<(), Error> {
         match message {
-            Message::UpdateLinked(sender, temp_linked_name, members_to_add) => self
-                .update_linked_group(sender, temp_linked_name, members_to_add)
+            Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
+                self.update_linked_group(
+                    sender,
+                    temp_linked_name,
+                    members_to_add,
+                )
                 .await
-                .map_err(Error::from),
+                .map_err(Error::from)
+            }
             Message::ConfirmUpdateLinked(new_linked_name, new_groups) => self
                 .device
                 .as_mut()
@@ -286,7 +301,8 @@ impl Glue {
     }
 
     pub async fn create_linked_device(&mut self, idkey: String) {
-        self.device = Some(Device::new(self.idkey(), None, Some(idkey.clone())));
+        self.device =
+            Some(Device::new(self.idkey(), None, Some(idkey.clone())));
 
         let linked_name = &self.device.as_ref().unwrap().linked_name().clone();
 
@@ -318,9 +334,14 @@ impl Glue {
         self.device
             .as_mut()
             .unwrap()
-            .update_linked_group(sender.clone(), temp_linked_name.clone(), members_to_add)
+            .update_linked_group(
+                sender.clone(),
+                temp_linked_name.clone(),
+                members_to_add,
+            )
             .map_err(Error::from);
-        let perm_linked_name = self.device.as_ref().unwrap().linked_name().to_string();
+        let perm_linked_name =
+            self.device.as_ref().unwrap().linked_name().to_string();
 
         // send all groups (TODO and data) to new members
         self.send_message(
@@ -350,12 +371,13 @@ impl Glue {
                 .as_ref()
                 .unwrap()
                 .linked_devices_excluding_self(),
-            &Message::to_string(&Message::DeleteOtherDevice(self.idkey())).unwrap(),
+            &Message::to_string(&Message::DeleteOtherDevice(self.idkey()))
+                .unwrap(),
         )
         .await;
 
-        // TODO wait for ACK that other devices have indeed received above
-        // messages before deleting current device
+        // TODO wait for ACK that other devices have indeed received
+        // above messages before deleting current device
         let idkey = self.idkey().clone();
         self.device
             .as_mut()
@@ -365,14 +387,18 @@ impl Glue {
             .map_err(Error::from)
     }
 
-    pub async fn delete_other_device(&mut self, to_delete: String) -> Result<(), Error> {
+    pub async fn delete_other_device(
+        &mut self,
+        to_delete: String,
+    ) -> Result<(), Error> {
         // TODO send to contact devices too
         self.send_message(
             self.device
                 .as_ref()
                 .unwrap()
                 .linked_devices_excluding_self_and_other(&to_delete),
-            &Message::to_string(&Message::DeleteOtherDevice(to_delete.clone())).unwrap(),
+            &Message::to_string(&Message::DeleteOtherDevice(to_delete.clone()))
+                .unwrap(),
         )
         .await;
 
@@ -382,8 +408,8 @@ impl Glue {
             .delete_device(to_delete.clone())
             .map_err(Error::from);
 
-        // TODO wait for ACK that other devices have indeed received above
-        // messages before deleting specified device
+        // TODO wait for ACK that other devices have indeed received
+        // above messages before deleting specified device
         self.send_message(
             vec![to_delete.clone()],
             &Message::to_string(&Message::DeleteSelfDevice).unwrap(),
@@ -396,8 +422,8 @@ impl Glue {
     pub async fn delete_all_devices(&mut self) {
         // TODO notify contacts
 
-        // TODO wait for ACK that contacts have indeed received above
-        // messages before deleting all devices
+        // TODO wait for ACK that contacts have indeed received
+        // above messages before deleting all devices
         self.send_message(
             self.device
                 .as_ref()
@@ -444,7 +470,8 @@ mod tests {
         glue_1.create_standalone_device();
 
         // send message
-        let message = Message::to_string(&Message::Test("hello".to_string())).unwrap();
+        let message =
+            Message::to_string(&Message::Test("hello".to_string())).unwrap();
         println!("sending message to device 0");
         glue_1.send_message(vec![glue_0.idkey()], &message).await;
 
@@ -490,7 +517,9 @@ mod tests {
         println!("LINKING <1> to <0>\n");
         glue_1.create_linked_device(glue_0.idkey()).await;
         // receive update_linked...
-        println!("Getting update_linked... on <0> and SENDING confirm_update...\n");
+        println!(
+            "Getting update_linked... on <0> and SENDING confirm_update...\n"
+        );
         glue_0.receive_message().await;
         // receive update_linked... loopback
         println!("Getting update_linked... LOOPBACK on <1>\n");

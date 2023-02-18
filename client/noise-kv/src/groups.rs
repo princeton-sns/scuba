@@ -21,7 +21,11 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn new(group_id: Option<String>, contact_level: bool, init_children: bool) -> Group {
+    pub fn new(
+        group_id: Option<String>,
+        contact_level: bool,
+        init_children: bool,
+    ) -> Group {
         let init_group_id: String;
         if group_id.is_none() {
             init_group_id = Uuid::new_v4().to_string();
@@ -110,7 +114,11 @@ impl GroupStore {
         self.store.get_mut(group_id)
     }
 
-    pub fn set_group(&mut self, group_id: String, group_val: Group) -> Option<Group> {
+    pub fn set_group(
+        &mut self,
+        group_id: String,
+        group_val: Group,
+    ) -> Option<Group> {
         self.store.insert(group_id, group_val)
     }
 
@@ -154,7 +162,11 @@ impl GroupStore {
         Ok(())
     }
 
-    pub fn add_child(&mut self, base_group_id: &String, to_child_id: &String) -> Result<(), Error> {
+    pub fn add_child(
+        &mut self,
+        base_group_id: &String,
+        to_child_id: &String,
+    ) -> Result<(), Error> {
         if self.get_group(base_group_id).is_none() {
             return Err(Error::GroupDoesNotExist(base_group_id.to_string()));
         }
@@ -173,7 +185,11 @@ impl GroupStore {
             .unwrap()
     }
 
-    pub fn remove_child(&mut self, base_group_id: &String, child_id: &String) -> Result<(), Error> {
+    pub fn remove_child(
+        &mut self,
+        base_group_id: &String,
+        child_id: &String,
+    ) -> Result<(), Error> {
         if self.get_group(base_group_id).is_none() {
             return Err(Error::GroupDoesNotExist(base_group_id.to_string()));
         }
@@ -206,7 +222,8 @@ impl GroupStore {
         }
 
         // set child of to_parent group
-        let mut to_parent_group = self.get_group_mut(to_parent_id).unwrap().clone();
+        let mut to_parent_group =
+            self.get_group_mut(to_parent_id).unwrap().clone();
         if to_parent_group.children.is_none() {
             return Err(Error::GroupHasNoChildren(to_parent_id.to_string()));
         }
@@ -214,14 +231,19 @@ impl GroupStore {
         self.set_group(to_parent_id.to_string(), to_parent_group);
 
         // set parent of to_child group
-        let mut to_child_group = self.get_group_mut(to_child_id).unwrap().clone();
+        let mut to_child_group =
+            self.get_group_mut(to_child_id).unwrap().clone();
         to_child_group.add_parent(to_parent_id.to_string());
         self.set_group(to_child_id.to_string(), to_child_group);
 
         Ok(())
     }
 
-    pub fn unlink_groups(&mut self, parent_id: &String, child_id: &String) -> Result<(), Error> {
+    pub fn unlink_groups(
+        &mut self,
+        parent_id: &String,
+        child_id: &String,
+    ) -> Result<(), Error> {
         if self.get_group(parent_id).is_none() {
             return Err(Error::GroupDoesNotExist(parent_id.to_string()));
         }
@@ -255,7 +277,8 @@ impl GroupStore {
 
         // delete from all parents' children lists
         for parent_id in &group_val.parents {
-            let mut parent_group = self.get_group_mut(&parent_id).unwrap().clone();
+            let mut parent_group =
+                self.get_group_mut(&parent_id).unwrap().clone();
             parent_group.remove_child(group_id);
             self.set_group(parent_id.to_string(), parent_group);
         }
@@ -263,7 +286,8 @@ impl GroupStore {
         // delete from any childrens' parents lists
         if let Some(children) = group_val.children {
             for child_id in children {
-                let mut child_group = self.get_group_mut(&child_id).unwrap().clone();
+                let mut child_group =
+                    self.get_group_mut(&child_id).unwrap().clone();
                 child_group.remove_parent(group_id);
                 self.set_group(child_id.to_string(), child_group);
             }
@@ -279,13 +303,21 @@ impl GroupStore {
         false
     }
 
-    pub fn add_members(&mut self, base_group_id: &String, ids_to_add: Vec<&String>) {
+    pub fn add_members(
+        &mut self,
+        base_group_id: &String,
+        ids_to_add: Vec<&String>,
+    ) {
         for id_to_add in ids_to_add {
             self.link_groups(base_group_id, id_to_add);
         }
     }
 
-    pub fn remove_members(&mut self, base_group_id: &String, ids_to_remove: Vec<&String>) {
+    pub fn remove_members(
+        &mut self,
+        base_group_id: &String,
+        ids_to_remove: Vec<&String>,
+    ) {
         for id_to_remove in ids_to_remove {
             self.unlink_groups(base_group_id, id_to_remove);
         }
@@ -333,7 +365,10 @@ impl GroupStore {
         &self.store
     }
 
-    pub fn get_all_subgroups<'a>(&'a self, group_id: &'a String) -> HashMap<String, Group> {
+    pub fn get_all_subgroups<'a>(
+        &'a self,
+        group_id: &'a String,
+    ) -> HashMap<String, Group> {
         let mut subgroups = HashMap::<String, Group>::new();
         let mut visited = HashSet::<&String>::new();
         let mut to_visit = Vec::<&String>::new();
@@ -360,7 +395,11 @@ impl GroupStore {
         subgroups
     }
 
-    pub fn is_group_member<'a>(&'a self, is_member_id: &'a String, group_id: &'a String) -> bool {
+    pub fn is_group_member<'a>(
+        &'a self,
+        is_member_id: &'a String,
+        group_id: &'a String,
+    ) -> bool {
         let mut visited = HashSet::<&String>::new();
         let mut to_visit = Vec::<&String>::new();
         to_visit.push(group_id);
@@ -387,7 +426,11 @@ impl GroupStore {
         false
     }
 
-    pub fn group_replace(group: &mut Group, id_to_replace: String, replacement_id: String) {
+    pub fn group_replace(
+        group: &mut Group,
+        id_to_replace: String,
+        replacement_id: String,
+    ) {
         if group.group_id() == &id_to_replace {
             group.group_id = replacement_id.clone();
         }
@@ -549,7 +592,8 @@ mod tests {
             vec![group_0.group_id(), group_1.group_id(), group_2.group_id()],
         );
 
-        let new_base_group = group_store.get_group(base_group.group_id()).unwrap();
+        let new_base_group =
+            group_store.get_group(base_group.group_id()).unwrap();
         assert_eq!(
             new_base_group.children.as_ref().unwrap(),
             &HashSet::from([
@@ -599,7 +643,8 @@ mod tests {
             vec![group_0.group_id(), group_2.group_id()],
         );
 
-        let new_base_group = group_store.get_group(base_group.group_id()).unwrap();
+        let new_base_group =
+            group_store.get_group(base_group.group_id()).unwrap();
         assert_eq!(
             new_base_group.children.as_ref().unwrap(),
             &HashSet::from([group_1.group_id.clone()]),
@@ -669,7 +714,8 @@ mod tests {
         );
 
         assert_eq!(
-            group_store.resolve_ids(vec![group_0.group_id(), group_1.group_id()]),
+            group_store
+                .resolve_ids(vec![group_0.group_id(), group_1.group_id()]),
             expected_ids
         );
     }

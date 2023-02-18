@@ -304,7 +304,7 @@ mod tests {
     //        {
     //            let mut server_comm_guard =
     // arc_core.server_comm.write().await;            let
-    // server_comm =                
+    // server_comm =
     // ServerComm::<StreamClient>::new(None, None, idkey,
     // Some(arc_core.clone())).await;        }
 

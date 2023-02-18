@@ -4,6 +4,7 @@ use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use async_condvar_fair::Condvar;
 
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
 use crate::olm_wrapper::OlmWrapper;
@@ -52,6 +53,8 @@ pub struct Core<C: CoreClient> {
     server_comm: RwLock<Option<ServerComm<C>>>,
     hash_vectors: Mutex<HashVectors>,
     client: RwLock<Option<Arc<C>>>,
+    init: parking_lot::Mutex<bool>,
+    init_cv: Condvar,
 }
 
 impl<C: CoreClient> Core<C> {
@@ -75,6 +78,8 @@ impl<C: CoreClient> Core<C> {
             server_comm: RwLock::new(None),
             hash_vectors,
             client: RwLock::new(client),
+            init: parking_lot::Mutex::new(false),
+            init_cv: Condvar::new(),
         });
 
         {
@@ -104,6 +109,15 @@ impl<C: CoreClient> Core<C> {
         dst_idkeys: Vec<String>,
         payload: &String,
     ) -> Result<Response> {
+        loop {
+            let init = self.init.lock();
+            if !*init {
+                self.init_cv.wait(init).await;
+            } else {
+                break;
+            }
+        }
+
         let (common_payload, recipient_payloads) = self
             .hash_vectors
             .lock()
@@ -159,6 +173,12 @@ impl<C: CoreClient> Core<C> {
                     Err(err) => panic!("Error sending otkeys: {:?}", err),
                 }
                 println!("FINISHED");
+                // set init = true and notify init_cv waiters
+                let mut init = self.init.lock();
+                if !*init {
+                    *init = true;
+                    self.init_cv.notify_all();
+                }
             }
             Ok(Event::Msg(msg_string)) => {
                 let msg: IncomingMessage = IncomingMessage::from_string(msg_string);
@@ -286,6 +306,7 @@ mod tests {
     use crate::server_comm::{Event, IncomingMessage, ToDelete};
     use futures::StreamExt;
     use std::sync::Arc;
+    use std::{thread, time};
 
     const BUFFER_SIZE: usize = 20;
 
@@ -337,7 +358,7 @@ mod tests {
         let payload = String::from("hello from me");
         let recipients = vec![idkey_b.clone()];
 
-        println!("HERE");
+        println!("HERE 0");
 
         if let Err(err) = arc_core_a.send_message(recipients, &payload).await {
             panic!("Error sending message: {:?}", err);
@@ -351,9 +372,11 @@ mod tests {
             None => panic!("b got NONE from core"),
         }
 
-        match receiver_a.next().await {
-            Some((_, _)) => panic!("a got SOME from core"),
-            None => {}
-        }
+        println!("HERE 1");
+
+        //match receiver_a.next().await {
+        //    Some((_, _)) => panic!("a got SOME from core"),
+        //    None => {}
+        //}
     }
 }

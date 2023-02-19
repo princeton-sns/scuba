@@ -1,10 +1,9 @@
-#![feature(async_closure)]
-
 use async_trait::async_trait;
 use futures::channel::mpsc;
 use noise_core::core::{Core, CoreClient};
-use repl_rs::Result as ReplResult;
-use repl_rs::{Command, Parameter, Repl, Value};
+use reedline_repl_rs::clap::Command;
+use reedline_repl_rs::Repl;
+use reedline_repl_rs::Result as ReplResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task;
@@ -17,11 +16,14 @@ struct LightswitchClient {}
 impl CoreClient for LightswitchClient {
     async fn client_callback(&self, sender: String, message: String) {
         println!("in LIGHTSWITCH client_callback");
+        println!("sender: {:?}", sender);
+        println!("message: {:?}", message);
     }
 }
 
 struct LightswitchApp {
     core: Arc<Core<LightswitchClient>>,
+    light: bool,
 }
 
 impl LightswitchApp {
@@ -29,14 +31,41 @@ impl LightswitchApp {
         let lightswitch_client = Arc::new(LightswitchClient {});
         Self {
             core: Core::new(None, None, false, Some(lightswitch_client)).await,
+            light: false,
         }
     }
 
-    pub fn hello(
-        args: HashMap<String, Value>,
-        _context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        Ok(Some(format!("Hello, {}", args["who"])))
+    async fn send_message(
+        &self,
+        message: &String,
+    ) -> reqwest::Result<reqwest::Response> {
+        self.core
+            .send_message(vec![self.core.idkey()], message)
+            .await
+    }
+
+    pub async fn on(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
+        //if context.light {
+        //    return Ok(Some(format!("Light is already on")));
+        //}
+        //context.light = true;
+
+        let message = String::from("on");
+        context.send_message(&message).await;
+
+        Ok(Some(format!("Turning light on")))
+    }
+
+    pub async fn off(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
+        //if !context.light {
+        //    return Ok(Some(format!("Light is already off")));
+        //}
+        //context.light = false;
+
+        let message = String::from("off");
+        context.send_message(&message).await;
+
+        Ok(Some(format!("Turning light off")))
     }
 }
 
@@ -46,23 +75,16 @@ async fn main() -> ReplResult<()> {
 
     let app_listener = app.clone();
 
-    let repl_future = task::spawn_blocking(move || {
-        let mut repl = Repl::new(app)
-            .with_name("Lightswitch App")
-            .with_version("v0.1.0")
-            .with_description("Noise lightswitch app")
-            .add_command(
-                Command::new("hello", LightswitchApp::hello)
-                    .with_parameter(Parameter::new("who").set_required(true)?)?
-                    .with_help("Greetings!"),
-            );
+    let mut repl = Repl::new(app)
+        .with_name("Lightswitch App")
+        .with_version("v0.1.0")
+        .with_description("Noise lightswitch app")
+        .with_command_async(Command::new("on"), |_, context| {
+            Box::pin(LightswitchApp::on(context))
+        })
+        .with_command_async(Command::new("off"), |_, context| {
+            Box::pin(LightswitchApp::off(context))
+        });
 
-        repl.run()
-    });
-
-    if let (Err(err),) = futures::join!(repl_future) {
-        panic!("Error joining threads: {:?}", err);
-    }
-
-    Ok(())
+    repl.run_async().await
 }

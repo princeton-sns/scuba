@@ -5,11 +5,12 @@ use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use parking_lot::RwLock;
 
 #[derive(Clone)]
 struct LightswitchApp {
     core: Option<Arc<Core<LightswitchApp>>>,
-    light: bool,
+    light: Arc<RwLock<bool>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,17 +34,19 @@ impl CoreClient for LightswitchApp {
     async fn client_callback(&self, sender: String, message: String) {
         match Operation::from_string(message) {
             Operation::On => {
-                if self.light {
+                if *self.light.read() {
                     println!("Light is already on");
                 } else {
                     println!("Turning light on");
+                    *self.light.write() = true;
                 }
             }
             Operation::Off => {
-                if !self.light {
+                if !*self.light.read() {
                     println!("Light is already off");
                 } else {
                     println!("Turning light on");
+                    *self.light.write() = false;
                 }
             }
         }
@@ -54,7 +57,7 @@ impl LightswitchApp {
     pub async fn new() -> LightswitchApp {
         let mut lightswitch_app = LightswitchApp {
             core: None,
-            light: false,
+            light: Arc::new(RwLock::new(false)),
         };
         let core = Core::new(
             None,
@@ -103,8 +106,6 @@ impl LightswitchApp {
 #[tokio::main]
 async fn main() -> ReplResult<()> {
     let app = Arc::new(LightswitchApp::new().await);
-
-    //let app_listener = app.clone();
 
     // TODO print out own idkey
     let mut repl = Repl::new(app)

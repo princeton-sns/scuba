@@ -179,34 +179,34 @@ impl<C: CoreClient> ServerComm<C> {
             .stream();
 
             loop {
-                println!("IN LOOP");
+                //println!("IN LOOP");
                 match listener.as_mut().try_next().await {
                     Err(err) => {
-                        println!("got ERR from server: {:?}", err);
+                        //println!("got ERR from server: {:?}", err);
                         if let Some(ref core) = core_option {
                             core.server_comm_callback(Err(err)).await;
                         }
                     }
                     Ok(None) => {
-                        println!("got NONE from server")
+                        //println!("got NONE from server")
                     }
                     Ok(Some(event)) => match event {
                         SSE::Comment(_) => {}
                         SSE::Event(event) => match event.event_type.as_str() {
                             "otkey" => {
-                                println!(
-                                    "got OTKEY event from server - {:?}",
-                                    task_idkey
-                                );
+                                //println!(
+                                //    "got OTKEY event from server - {:?}",
+                                //    task_idkey
+                                //);
                                 if let Some(ref core) = core_option {
                                     core.server_comm_callback(Ok(Event::Otkey))
                                         .await;
                                 }
                             }
                             "msg" => {
-                                println!("got MSG event from server");
+                                //println!("got MSG event from server");
                                 let msg = String::from(event.data);
-                                println!("msg: {:?}", msg);
+                                //println!("msg: {:?}", msg);
                                 if let Some(ref core) = core_option {
                                     core.server_comm_callback(Ok(Event::Msg(
                                         msg,
@@ -268,7 +268,7 @@ impl<C: CoreClient> ServerComm<C> {
         &self,
         to_add: &HashMap<String, String>,
     ) -> Result<Response> {
-        println!("ADDING OTKEYS TO SERVER");
+        //println!("ADDING OTKEYS TO SERVER");
         self.client
             .post(self.base_url.join("/self/otkeys").expect("").as_str())
             .header("Content-Type", "application/json")

@@ -1,7 +1,6 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use futures::channel::mpsc;
-use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -121,7 +120,7 @@ impl<C: CoreClient> Core<C> {
         &self,
         dst_idkeys: Vec<String>,
         payload: &String,
-    ) -> Result<Response> {
+    ) -> reqwest::Result<reqwest::Response> {
         loop {
             let init = self.init.lock();
             if !*init {
@@ -186,7 +185,7 @@ impl<C: CoreClient> Core<C> {
                     .add_otkeys_to_server(&otkeys.curve25519())
                     .await
                 {
-                    Ok(_) => println!("Sent otkeys successfully"),
+                    Ok(_) => {} //println!("Sent otkeys successfully"),
                     Err(err) => panic!("Error sending otkeys: {:?}", err),
                 }
                 // set init = true and notify init_cv waiters
@@ -215,7 +214,8 @@ impl<C: CoreClient> Core<C> {
                     &full_payload.per_recipient,
                 ) {
                     Ok(None) => {
-                        println!("Validation succeeded, no message to process")
+                        //println!("Validation succeeded,
+                        // no message to process")
                     }
                     Ok(Some((seq, message))) => {
                         // forward message to CoreClient
@@ -239,7 +239,9 @@ impl<C: CoreClient> Core<C> {
                             .await
                         {
                             Ok(_) => {
-                                println!("Sent delete-message successfully")
+                                //println!("Sent
+                                // delete-message
+                                // successfully")
                             }
                             Err(err) => panic!(
                                 "Error sending delete-message: {:?}",

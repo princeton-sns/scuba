@@ -11,4 +11,6 @@ futures = "0.3.26"
 noise-core = { path = "../../client/core" }
 reedline-repl-rs = { version = "1.0.3", features = ["async"] }
 reqwest = "0.11.14"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
 tokio = { version = "1.25.0", features = ["macros", "io-std", "io-util", "rt", "rt-multi-thread"] }

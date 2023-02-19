@@ -1,71 +1,102 @@
 use async_trait::async_trait;
-use futures::channel::mpsc;
 use noise_core::core::{Core, CoreClient};
 use reedline_repl_rs::clap::Command;
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::task;
 
-const BUFFER_SIZE: usize = 10;
+#[derive(Clone)]
+struct LightswitchApp {
+    core: Option<Arc<Core<LightswitchApp>>>,
+    light: bool,
+}
 
-struct LightswitchClient {}
+#[derive(Serialize, Deserialize)]
+enum Operation {
+    On,
+    Off,
+}
 
-#[async_trait]
-impl CoreClient for LightswitchClient {
-    async fn client_callback(&self, sender: String, message: String) {
-        println!("in LIGHTSWITCH client_callback");
-        println!("sender: {:?}", sender);
-        println!("message: {:?}", message);
+impl Operation {
+    fn to_string(op: Operation) -> String {
+        serde_json::to_string(&op).unwrap()
+    }
+
+    fn from_string(string: String) -> Operation {
+        serde_json::from_str(string.as_str()).unwrap()
     }
 }
 
-struct LightswitchApp {
-    core: Arc<Core<LightswitchClient>>,
-    light: bool,
+#[async_trait]
+impl CoreClient for LightswitchApp {
+    async fn client_callback(&self, sender: String, message: String) {
+        match Operation::from_string(message) {
+            Operation::On => {
+                if self.light {
+                    println!("Light is already on");
+                } else {
+                    println!("Turning light on");
+                }
+            }
+            Operation::Off => {
+                if !self.light {
+                    println!("Light is already off");
+                } else {
+                    println!("Turning light on");
+                }
+            }
+        }
+    }
 }
 
 impl LightswitchApp {
     pub async fn new() -> LightswitchApp {
-        let lightswitch_client = Arc::new(LightswitchClient {});
-        Self {
-            core: Core::new(None, None, false, Some(lightswitch_client)).await,
+        let mut lightswitch_app = LightswitchApp {
+            core: None,
             light: false,
-        }
+        };
+        let core = Core::new(
+            None,
+            None,
+            false,
+            Some(Arc::new(lightswitch_app.clone())),
+        )
+        .await;
+        lightswitch_app.core = Some(core);
+        lightswitch_app
     }
 
     async fn send_message(
         &self,
         message: &String,
     ) -> reqwest::Result<reqwest::Response> {
+        let idkey = self.core.as_ref().unwrap().idkey().to_string();
         self.core
-            .send_message(vec![self.core.idkey()], message)
+            .as_ref()
+            .unwrap()
+            .send_message(vec![idkey], message)
             .await
     }
 
     pub async fn on(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
-        //if context.light {
-        //    return Ok(Some(format!("Light is already on")));
-        //}
-        //context.light = true;
-
-        let message = String::from("on");
-        context.send_message(&message).await;
-
-        Ok(Some(format!("Turning light on")))
+        match context
+            .send_message(&Operation::to_string(Operation::On))
+            .await
+        {
+            Ok(_) => Ok(None),
+            Err(err) => panic!("Error sending message to server: {:?}", err),
+        }
     }
 
     pub async fn off(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
-        //if !context.light {
-        //    return Ok(Some(format!("Light is already off")));
-        //}
-        //context.light = false;
-
-        let message = String::from("off");
-        context.send_message(&message).await;
-
-        Ok(Some(format!("Turning light off")))
+        match context
+            .send_message(&Operation::to_string(Operation::Off))
+            .await
+        {
+            Ok(_) => Ok(None),
+            Err(err) => panic!("Error sending message to server: {:?}", err),
+        }
     }
 }
 
@@ -73,8 +104,9 @@ impl LightswitchApp {
 async fn main() -> ReplResult<()> {
     let app = Arc::new(LightswitchApp::new().await);
 
-    let app_listener = app.clone();
+    //let app_listener = app.clone();
 
+    // TODO print out own idkey
     let mut repl = Repl::new(app)
         .with_name("Lightswitch App")
         .with_version("v0.1.0")

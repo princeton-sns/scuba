@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use noise_core::core::{Core, CoreClient};
+use parking_lot::RwLock;
 use reedline_repl_rs::clap::Command;
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 #[derive(Clone)]
 struct LightswitchApp {

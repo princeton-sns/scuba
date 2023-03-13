@@ -42,6 +42,10 @@ impl Operation {
     }
 }
 
+// FIXME lightbulb doesn't actually need to be separate,
+// just needs to receive these messages (like any other
+// client of the app that should know what the current state
+// of the bulb is) - so the problem is how to add groups?
 #[async_trait]
 impl CoreClient for LightswitchApp {
     async fn client_callback(&self, sender: String, message: String) {
@@ -74,8 +78,8 @@ impl LightswitchApp {
             light: Arc::new(RwLock::new(false)),
         };
         let core = Core::new(
-            None,
-            None,
+            Some("sns26.cs.princeton.edu"),
+            Some("8000"),
             false,
             Some(Arc::new(lightswitch_app.clone())),
         )

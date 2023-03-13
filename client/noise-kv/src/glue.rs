@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 use uuid::Uuid;
 
-use noise_core::core::{Core, FullPayload};
+use noise_core::core::{Core, CoreClient, FullPayload};
 
 use crate::data::BasicData;
 use crate::devices::Device;
@@ -69,18 +69,18 @@ enum Error {
     StreamErr,
 }
 
-pub struct Glue {
-    core: Core,
+pub struct Glue<C: CoreClient> {
+    core: Core<C>,
     pub device: Option<Device>,
     receiver: mpsc::Receiver<(String, String)>,
 }
 
-impl Glue {
+impl<C: CoreClient> Glue<C> {
     pub fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off_arg: bool,
-    ) -> Glue {
+    ) -> Glue<C> {
         let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
         Self {
             core: Core::new(ip_arg, port_arg, turn_encryption_off_arg, sender),

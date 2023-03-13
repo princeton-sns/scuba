@@ -1,16 +1,12 @@
 use crate::core::{Core, CoreClient};
-use crate::olm_wrapper::OlmWrapper;
 use eventsource_client::{Client, ClientBuilder, SSE};
 use futures::TryStreamExt;
-use futures::{
-    task::{Context, Poll},
-    Stream,
-};
+//use futures::Stream;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::pin::Pin;
+//use std::pin::Pin;
 use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
@@ -138,7 +134,7 @@ pub struct ServerComm<C: CoreClient> {
     base_url: Url,
     idkey: String,
     client: reqwest::Client,
-    listener_task_handle: tokio::task::JoinHandle<()>,
+    _listener_task_handle: tokio::task::JoinHandle<()>,
     _pd: PhantomData<C>,
 }
 // wasm FIXME s reqwest and SEE
@@ -160,7 +156,7 @@ impl<C: CoreClient> ServerComm<C> {
 
         let task_base_url = base_url.clone();
         let task_idkey = idkey.clone();
-        let listener_task_handle = tokio::spawn(async move {
+        let _listener_task_handle = tokio::spawn(async move {
             let mut listener = Box::new(
                 ClientBuilder::for_url(
                     task_base_url
@@ -225,7 +221,7 @@ impl<C: CoreClient> ServerComm<C> {
             base_url,
             idkey,
             client: reqwest::Client::new(),
-            listener_task_handle,
+            _listener_task_handle,
             _pd: PhantomData,
         }
     }

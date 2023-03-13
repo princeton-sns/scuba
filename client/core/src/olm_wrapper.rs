@@ -112,7 +112,7 @@ impl OlmWrapper {
             // otkeys and creating a new session, and then
             // re-execute the loop
             if *is_fetching {
-                self.sessions_cv.wait(sessions).await;
+                let _ = self.sessions_cv.wait(sessions).await;
             // fetch otkeys from the server and create a new
             // session
             } else {

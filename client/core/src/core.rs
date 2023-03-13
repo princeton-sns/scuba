@@ -1,6 +1,5 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
-use futures::channel::mpsc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -39,14 +38,6 @@ impl FullPayload {
 
     fn from_string(msg: String) -> FullPayload {
         serde_json::from_str(msg.as_str()).unwrap()
-    }
-
-    fn common(&self) -> &CommonPayload {
-        &self.common
-    }
-
-    fn per_recipient(&self) -> &RecipientPayload {
-        &self.per_recipient
     }
 }
 
@@ -124,7 +115,7 @@ impl<C: CoreClient> Core<C> {
         loop {
             let init = self.init.lock();
             if !*init {
-                self.init_cv.wait(init).await;
+                let _ = self.init_cv.wait(init).await;
             } else {
                 break;
             }
@@ -327,13 +318,9 @@ pub mod stream_client {
 #[cfg(test)]
 mod tests {
     use crate::core::stream_client::StreamClient;
-    use crate::core::{Core, FullPayload};
-    use crate::server_comm::{Event, IncomingMessage, ToDelete};
+    use crate::core::Core;
     use futures::StreamExt;
     use std::sync::Arc;
-    use std::{thread, time};
-
-    const BUFFER_SIZE: usize = 20;
 
     #[tokio::test]
     async fn test_send_message_to_self_only() {
@@ -399,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_message_to_others_only() {
-        let (client_a, mut receiver_a) = StreamClient::new();
+        let (client_a, _receiver_a) = StreamClient::new();
         let arc_client_a = Arc::new(client_a);
         let arc_core_a: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client_a)).await;

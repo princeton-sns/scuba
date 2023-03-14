@@ -3,21 +3,13 @@ use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BasicData {
-    data_id: String,
-    data_val: String,
+    pub data_id: String,
+    pub data_val: String,
 }
 
 impl BasicData {
     pub fn new(data_id: String, data_val: String) -> BasicData {
         Self { data_id, data_val }
-    }
-
-    fn data_id(&self) -> &String {
-        &self.data_id
-    }
-
-    fn data_val(&self) -> &String {
-        &self.data_val
     }
 }
 
@@ -34,16 +26,17 @@ impl BasicData {
 //  }
 //}
 
+/*
 pub struct Validator {
     general: fn(&String, &BasicData) -> bool,
     //per_type: Option<fn(&BasicData) -> bool>,
 }
 
 fn default_general(data_id: &String, data_val: &BasicData) -> bool {
-    if data_id.is_empty() || data_val.data_id().is_empty() {
+    if data_id.is_empty() || data_val.data_id.is_empty() {
         return false;
     }
-    if data_id != data_val.data_id() {
+    if data_id != data_val.data_id {
         return false;
     }
     true
@@ -88,6 +81,7 @@ impl Validator {
         self.general = callback;
     }
 }
+*/
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct DataStore {
@@ -112,10 +106,6 @@ impl DataStore {
         self.store.get(data_id)
     }
 
-    pub fn get_data_mut(&mut self, data_id: &String) -> Option<&mut BasicData> {
-        self.store.get_mut(data_id)
-    }
-
     pub fn set_data(
         &mut self,
         data_id: String,
@@ -134,8 +124,8 @@ impl DataStore {
 }
 
 mod tests {
-    //use crate::data::{BasicData, DataStore};
-    //use std::collections::HashMap;
+    use crate::data::{BasicData, DataStore};
+    use std::collections::HashMap;
 
     #[test]
     fn test_new() {
@@ -146,16 +136,16 @@ mod tests {
     fn test_set_get_data() {
         let mut data_store = DataStore::new();
         let data = BasicData::new(String::from("0"), String::from("val"));
-        data_store.set_data(data.data_id().to_string(), data.clone());
-        assert_eq!(*data_store.get_data(data.data_id()).unwrap(), data);
+        data_store.set_data(data.data_id.to_string(), data.clone());
+        assert_eq!(*data_store.get_data(&data.data_id).unwrap(), data);
     }
 
     #[test]
     fn test_delete_data() {
         let mut data_store = DataStore::new();
         let data = BasicData::new(String::from("0"), String::from("val"));
-        data_store.set_data(data.data_id().to_string(), data.clone());
-        data_store.delete_data(data.data_id());
-        assert_eq!(data_store.get_data(data.data_id()), None);
+        data_store.set_data(data.data_id.to_string(), data.clone());
+        data_store.delete_data(&data.data_id);
+        assert_eq!(data_store.get_data(&data.data_id), None);
     }
 }

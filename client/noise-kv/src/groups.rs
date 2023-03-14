@@ -110,10 +110,6 @@ impl GroupStore {
         self.store.get(group_id)
     }
 
-    pub fn get_group_mut(&mut self, group_id: &String) -> Option<&mut Group> {
-        self.store.get_mut(group_id)
-    }
-
     pub fn set_group(
         &mut self,
         group_id: String,
@@ -135,7 +131,7 @@ impl GroupStore {
             return Err(Error::GroupDoesNotExist(to_parent_id.to_string()));
         }
 
-        let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+        let mut base_group = self.get_group(base_group_id).unwrap().clone();
         base_group.add_parent(to_parent_id.to_string());
         self.set_group(base_group_id.to_string(), base_group);
 
@@ -155,7 +151,7 @@ impl GroupStore {
             return Err(Error::GroupDoesNotExist(parent_id.to_string()));
         }
 
-        let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+        let mut base_group = self.get_group(base_group_id).unwrap().clone();
         base_group.remove_parent(parent_id);
         self.set_group(base_group_id.to_string(), base_group);
 
@@ -175,7 +171,7 @@ impl GroupStore {
             return Err(Error::GroupDoesNotExist(to_child_id.to_string()));
         }
 
-        let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+        let mut base_group = self.get_group(base_group_id).unwrap().clone();
         base_group
             .add_child(to_child_id.to_string())
             .map(|_| {
@@ -198,7 +194,7 @@ impl GroupStore {
             return Err(Error::GroupDoesNotExist(child_id.to_string()));
         }
 
-        let mut base_group = self.get_group_mut(base_group_id).unwrap().clone();
+        let mut base_group = self.get_group(base_group_id).unwrap().clone();
         base_group
             .remove_child(child_id)
             .map(|_| {
@@ -223,7 +219,7 @@ impl GroupStore {
 
         // set child of to_parent group
         let mut to_parent_group =
-            self.get_group_mut(to_parent_id).unwrap().clone();
+            self.get_group(to_parent_id).unwrap().clone();
         if to_parent_group.children.is_none() {
             return Err(Error::GroupHasNoChildren(to_parent_id.to_string()));
         }
@@ -232,7 +228,7 @@ impl GroupStore {
 
         // set parent of to_child group
         let mut to_child_group =
-            self.get_group_mut(to_child_id).unwrap().clone();
+            self.get_group(to_child_id).unwrap().clone();
         to_child_group.add_parent(to_parent_id.to_string());
         self.set_group(to_child_id.to_string(), to_child_group);
 
@@ -253,7 +249,7 @@ impl GroupStore {
         }
 
         // unset child of parent group
-        let mut parent_group = self.get_group_mut(parent_id).unwrap().clone();
+        let mut parent_group = self.get_group(parent_id).unwrap().clone();
         if parent_group.children.is_none() {
             return Err(Error::GroupHasNoChildren(parent_id.to_string()));
         }
@@ -261,7 +257,7 @@ impl GroupStore {
         self.set_group(parent_id.to_string(), parent_group);
 
         // unset parent of child group
-        let mut child_group = self.get_group_mut(child_id).unwrap().clone();
+        let mut child_group = self.get_group(child_id).unwrap().clone();
         child_group.remove_parent(parent_id);
         self.set_group(child_id.to_string(), child_group);
 
@@ -278,7 +274,7 @@ impl GroupStore {
         // delete from all parents' children lists
         for parent_id in &group_val.parents {
             let mut parent_group =
-                self.get_group_mut(&parent_id).unwrap().clone();
+                self.get_group(&parent_id).unwrap().clone();
             parent_group.remove_child(group_id);
             self.set_group(parent_id.to_string(), parent_group);
         }
@@ -287,7 +283,7 @@ impl GroupStore {
         if let Some(children) = group_val.children {
             for child_id in children {
                 let mut child_group =
-                    self.get_group_mut(&child_id).unwrap().clone();
+                    self.get_group(&child_id).unwrap().clone();
                 child_group.remove_parent(group_id);
                 self.set_group(child_id.to_string(), child_group);
             }
@@ -323,8 +319,8 @@ impl GroupStore {
         }
     }
 
-    pub fn resolve_ids<'a>(&'a self, ids: Vec<&'a String>) -> HashSet<&String> {
-        let mut resolved_ids = HashSet::<&String>::new();
+    pub fn resolve_ids<'a>(&'a self, ids: Vec<&'a String>) -> HashSet<String> {
+        let mut resolved_ids = HashSet::<String>::new();
         let mut visited = HashSet::<&String>::new();
 
         for id in ids {
@@ -336,7 +332,7 @@ impl GroupStore {
 
     fn resolve_ids_helper<'a>(
         &'a self,
-        resolved_ids: &mut HashSet<&'a String>,
+        resolved_ids: &mut HashSet<String>,
         visited: &mut HashSet<&'a String>,
         id: &'a String,
     ) {
@@ -356,7 +352,7 @@ impl GroupStore {
                     to_visit.push(&child);
                 }
             } else {
-                resolved_ids.insert(cur_id);
+                resolved_ids.insert(cur_id.clone());
             }
         }
     }
@@ -426,6 +422,7 @@ impl GroupStore {
         false
     }
 
+    // TODO remove/re-add to store?
     pub fn group_replace(
         group: &mut Group,
         id_to_replace: String,
@@ -464,9 +461,9 @@ impl GroupStore {
 }
 
 mod tests {
-    //use crate::groups::{Group, GroupStore};
-    //use std::collections::HashMap;
-    //use std::collections::HashSet;
+    use crate::groups::{Group, GroupStore};
+    use std::collections::HashMap;
+    use std::collections::HashSet;
 
     #[test]
     fn test_new() {
@@ -702,10 +699,10 @@ mod tests {
         );
 
         let expected_ids = HashSet::from([
-            group_0a.group_id(),
-            group_0b.group_id(),
-            group_1a.group_id(),
-            group_1b.group_id(),
+            group_0a.group_id().clone(),
+            group_0b.group_id().clone(),
+            group_1a.group_id().clone(),
+            group_1b.group_id().clone(),
         ]);
 
         assert_eq!(
@@ -721,9 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_ids_cycles() {
-        // TODO
-    }
+    fn test_resolve_ids_cycles() {}
 
     #[test]
     fn test_is_member() {}

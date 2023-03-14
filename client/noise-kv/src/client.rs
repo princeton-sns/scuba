@@ -3,14 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
+use parking_lot::RwLock;
 
 use noise_core::core::{Core, CoreClient};
 
 use crate::data::BasicData;
 use crate::devices::Device;
-use crate::groups::Group; //, GroupStore};
-
-const BUFFER_SIZE: usize = 20;
+use crate::groups::Group;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum Operation {
@@ -46,7 +45,7 @@ impl Operation {
 }
 
 #[derive(Debug, PartialEq, Error)]
-enum Error {
+pub enum Error {
     #[error("")]
     InsufficientPermissions,
     #[error("")]
@@ -70,7 +69,7 @@ enum Error {
 #[derive(Clone)]
 pub struct NoiseKVClient {
     core: Option<Arc<Core<NoiseKVClient>>>,
-    pub device: Option<Device>,
+    pub device: Arc<RwLock<Option<Device>>>,
 }
 
 #[async_trait]
@@ -107,7 +106,7 @@ impl NoiseKVClient {
     ) -> NoiseKVClient {
         let mut client = NoiseKVClient {
             core: None,
-            device: None,
+            device: Arc::new(RwLock::new(None)),
         };
         let core = Core::new(
             ip_arg,
@@ -128,7 +127,7 @@ impl NoiseKVClient {
     /* Sending-side functions */
 
     async fn send_message(
-        &mut self,
+        &self,
         dst_idkeys: Vec<String>,
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
@@ -180,9 +179,11 @@ impl NoiseKVClient {
         //  Operation::UpdateData(data_id, data_val) => {
         //  //| Operation::DeleteData =>
         //    self.device
+        //        .read()
         //        .as_ref()
         //        .unwrap()
-        //        .data_store()
+        //        .data_store
+        //        .read()
         //        .validator()
         //        .validate(&data_id, &data_val)
         //  },
@@ -191,7 +192,7 @@ impl NoiseKVClient {
     }
 
     async fn demux(
-        &mut self,
+        &self,
         //_sender: &String,
         operation: Operation,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -207,96 +208,119 @@ impl NoiseKVClient {
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::ConfirmUpdateLinked(new_linked_name, new_groups) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .confirm_update_linked_group(new_linked_name, new_groups)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::SetGroup(group_id, group_val) => {
                 self.device
-                    .as_mut()
+                    .read()
+                    .as_ref()
                     .unwrap()
                     .group_store
+                    .lock()
                     .set_group(group_id, group_val);
                 Ok(())
             }
             Operation::LinkGroups(parent_id, child_id) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .group_store
+                .lock()
                 .link_groups(&parent_id, &child_id)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::DeleteGroup(group_id) => {
                 self.device
-                    .as_mut()
+                    .read()
+                    .as_ref()
                     .unwrap()
                     .group_store
+                    .lock()
                     .delete_group(&group_id);
                 Ok(())
             }
             Operation::AddParent(group_id, parent_id) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .group_store
+                .lock()
                 .add_parent(&group_id, &parent_id)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::RemoveParent(group_id, parent_id) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .group_store
+                .lock()
                 .remove_parent(&group_id, &parent_id)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::AddChild(group_id, child_id) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .group_store
+                .lock()
                 .add_child(&group_id, &child_id)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::RemoveChild(group_id, child_id) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .group_store
+                .lock()
                 .remove_child(&group_id, &child_id)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
             Operation::UpdateData(data_id, data_val) => {
                 self.device
-                    .as_mut()
+                    .read()
+                    .as_ref()
                     .unwrap()
-                    .data_store_mut()
+                    .data_store
+                    .write()
                     .set_data(data_id, data_val);
                 Ok(())
             }
             Operation::DeleteData(data_id) => {
                 self.device
-                    .as_mut()
+                    .read()
+                    .as_ref()
                     .unwrap()
-                    .data_store_mut()
+                    .data_store
+                    .write()
                     .delete_data(&data_id);
                 Ok(())
             }
             Operation::DeleteSelfDevice => {
                 let idkey = self.idkey().clone();
                 self.device
-                    .as_mut()
+                    .read()
+                    .as_ref()
                     .unwrap()
                     .delete_device(idkey)
-                    .map(|_| self.device = None)
+                    .map(|_| {
+                        *self.device.write() = None;
+                    })
                     .map_err(Error::from)
                     .map_err(Box::<dyn std::error::Error>::from)
             }
             Operation::DeleteOtherDevice(idkey_to_delete) => self
                 .device
-                .as_mut()
+                .read()
+                .as_ref()
                 .unwrap()
                 .delete_device(idkey_to_delete)
                 .map_err(Error::from)
@@ -310,21 +334,23 @@ impl NoiseKVClient {
 
     /* Remaining functionality */
 
-    pub fn create_standalone_device(&mut self) {
-        self.device = Some(Device::new(self.idkey(), None, None));
+    pub fn create_standalone_device(&self) {
+        *self.device.write() = Some(Device::new(self.idkey(), None, None));
     }
 
-    pub async fn create_linked_device(&mut self, idkey: String) {
-        self.device =
+    pub async fn create_linked_device(&self, idkey: String) {
+        *self.device.write() =
             Some(Device::new(self.idkey(), None, Some(idkey.clone())));
 
-        let linked_name = &self.device.as_ref().unwrap().linked_name().clone();
+        let linked_name = &self.device.read().as_ref().unwrap().linked_name.read().clone();
 
         let linked_members_to_add = self
             .device
-            .as_mut()
+            .read()
+            .as_ref()
             .unwrap()
             .group_store
+            .lock()
             .get_all_subgroups(linked_name);
 
         self.send_message(
@@ -340,13 +366,14 @@ impl NoiseKVClient {
     }
 
     async fn update_linked_group(
-        &mut self,
+        &self,
         sender: String,
         temp_linked_name: String,
         members_to_add: HashMap<String, Group>,
     ) -> Result<(), Error> {
         self.device
-            .as_mut()
+            .read()
+            .as_ref()
             .unwrap()
             .update_linked_group(
                 //sender.clone(),
@@ -355,7 +382,7 @@ impl NoiseKVClient {
             )
             .map_err(Error::from);
         let perm_linked_name =
-            self.device.as_ref().unwrap().linked_name().to_string();
+            self.device.read().as_ref().unwrap().linked_name.read().to_string();
 
         // send all groups (TODO and data) to new members
         self.send_message(
@@ -363,9 +390,11 @@ impl NoiseKVClient {
             &Operation::to_string(&Operation::ConfirmUpdateLinked(
                 perm_linked_name,
                 self.device
+                    .read()
                     .as_ref()
                     .unwrap()
                     .group_store
+                    .lock()
                     .get_all_groups()
                     .clone(),
             ))
@@ -378,10 +407,11 @@ impl NoiseKVClient {
         Ok(())
     }
 
-    pub async fn delete_self_device(&mut self) -> Result<(), Error> {
+    pub async fn delete_self_device(&self) -> Result<(), Error> {
         // TODO send to contact devices too
         self.send_message(
             self.device
+                .read()
                 .as_ref()
                 .unwrap()
                 .linked_devices_excluding_self(),
@@ -394,20 +424,22 @@ impl NoiseKVClient {
         // above operations before deleting current device
         let idkey = self.idkey().clone();
         self.device
-            .as_mut()
+            .read()
+            .as_ref()
             .unwrap()
             .delete_device(idkey)
-            .map(|_| self.device = None)
+            .map(|_| *self.device.write() = None)
             .map_err(Error::from)
     }
 
     pub async fn delete_other_device(
-        &mut self,
+        &self,
         to_delete: String,
     ) -> Result<(), Error> {
         // TODO send to contact devices too
         self.send_message(
             self.device
+                .read()
                 .as_ref()
                 .unwrap()
                 .linked_devices_excluding_self_and_other(&to_delete),
@@ -419,7 +451,8 @@ impl NoiseKVClient {
         .await;
 
         self.device
-            .as_mut()
+            .read()
+            .as_ref()
             .unwrap()
             .delete_device(to_delete.clone())
             .map_err(Error::from);
@@ -435,18 +468,19 @@ impl NoiseKVClient {
         Ok(())
     }
 
-    pub async fn delete_all_devices(&mut self) {
+    pub async fn delete_all_devices(&self) {
         // TODO notify contacts
 
         // TODO wait for ACK that contacts have indeed received
         // above operations before deleting all devices
         self.send_message(
             self.device
+                .read()
                 .as_ref()
                 .unwrap()
                 .linked_devices()
                 .iter()
-                .map(|&x| x.clone())
+                .map(|x| x.clone())
                 .collect::<Vec<String>>(),
             &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
         )
@@ -454,212 +488,186 @@ impl NoiseKVClient {
     }
 }
 
-/*
 mod tests {
-    use crate::glue::{Glue, Operation};
-    use crate::groups::Group;
-    use futures::channel::mpsc;
-
-    #[tokio::test]
-    async fn test_channels() {
-        let (mut sender, mut receiver) = mpsc::channel::<String>(10);
-        let msg = String::from("hello");
-        sender.try_send(msg.clone());
-        match receiver.try_next() {
-            Ok(Some(recv_msg)) => assert_eq!(recv_msg, msg),
-            Ok(None) => panic!("None received"),
-            Err(err) => panic!("Error: {:?}", err),
-        }
-    }
+    use crate::client::{NoiseKVClient, Operation};
 
     #[tokio::test]
     async fn test_handle_events() {
-        let mut glue_0 = Glue::new(None, None, false);
-        // upload otkeys to server
-        glue_0.core.receive_message().await;
+        let mut client_0 = NoiseKVClient::new(None, None, false).await;
         println!("creating device 0");
-        glue_0.create_standalone_device();
+        client_0.create_standalone_device();
 
-        let mut glue_1 = Glue::new(None, None, false);
-        // upload otkeys to server
-        glue_1.core.receive_message().await;
+        let mut client_1 = NoiseKVClient::new(None, None, false).await;
         println!("creating device 1");
-        glue_1.create_standalone_device();
+        client_1.create_standalone_device();
 
         // send operation
         let operation =
             Operation::to_string(&Operation::Test("hello".to_string())).unwrap();
         println!("sending operation to device 0");
-        glue_1.send_message(vec![glue_0.idkey()], &operation).await;
+        client_1.send_message(vec![client_0.idkey()], &operation).await;
 
-        // receive operation
-        println!("getting operation");
-        glue_0.receive_operation().await;
+        // FIXME exits before client_callback can run - how to wait?
     }
 
     #[tokio::test]
     async fn test_update_linked_group() {
-        let mut glue_0 = Glue::new(None, None, false);
-        // upload otkeys to server
-        glue_0.core.receive_message().await;
+        let mut client_0 = NoiseKVClient::new(None, None, false).await;
         println!("creating device 0");
-        glue_0.create_standalone_device();
+        client_0.create_standalone_device();
 
-        let mut glue_1 = Glue::new(None, None, false);
-        // upload otkeys to server
-        glue_1.core.receive_message().await;
+        let mut client_1 = NoiseKVClient::new(None, None, false).await;
+
         println!("creating device 1");
-
         // also sends operation to device 0 to link devices
-        glue_1.create_linked_device(glue_0.idkey()).await;
+        client_1.create_linked_device(client_0.idkey()).await;
 
-        // receive operation
-        println!("getting operation");
-        glue_0.receive_operation().await;
+        // FIXME exits before client_callback can run - how to wait?
     }
 
+/*
     #[tokio::test]
     async fn test_confirm_update_linked_group() {
-        let mut glue_0 = Glue::new(None, None, false);
+        let mut client_0 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_0.core.receive_message().await;
+        client_0.core.receive_message().await;
 
-        glue_0.create_standalone_device();
+        client_0.create_standalone_device();
 
-        let mut glue_1 = Glue::new(None, None, false);
+        let mut client_1 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_1.core.receive_message().await;
+        client_1.core.receive_message().await;
 
         // also sends message to device 0 to link devices
         println!("LINKING <1> to <0>\n");
-        glue_1.create_linked_device(glue_0.idkey()).await;
+        client_1.create_linked_device(client_0.idkey()).await;
         // receive update_linked...
         println!(
             "Getting update_linked... on <0> and SENDING confirm_update...\n"
         );
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
         // receive update_linked... loopback
         println!("Getting update_linked... LOOPBACK on <1>\n");
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked...
         println!("Getting confirm_update... on <1>\n");
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked... loopback
         println!("Getting confirm_update... LOOPBACK on <0>\n");
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
     }
 
     #[tokio::test]
     async fn test_delete_self_device() {
-        let mut glue_0 = Glue::new(None, None, false);
+        let mut client_0 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_0.core.receive_message().await;
-        glue_0.create_standalone_device();
+        client_0.core.receive_message().await;
+        client_0.create_standalone_device();
 
-        let mut glue_1 = Glue::new(None, None, false);
+        let mut client_1 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_1.core.receive_message().await;
+        client_1.core.receive_message().await;
 
         // also sends operation to device 0 to link devices
-        glue_1.create_linked_device(glue_0.idkey()).await;
+        client_1.create_linked_device(client_0.idkey()).await;
         // receive update_linked...
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
         // receive update_linked... loopback
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked...
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked... loopback
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
 
         // delete device
-        glue_0.delete_self_device().await;
-        assert_eq!(glue_0.device, None);
+        client_0.delete_self_device().await;
+        assert_eq!(client_0.device, None);
 
         // receive delete message
         println!(
-            "glue_1.device: {:#?}",
-            glue_1.device.as_ref().unwrap().group_store
+            "client_1.device: {:#?}",
+            client_1.device.as_ref().unwrap().group_store.lock()
         );
-        assert_eq!(glue_1.device.as_ref().unwrap().linked_devices().len(), 2);
-        glue_1.receive_operation().await;
+        assert_eq!(client_1.device.as_ref().unwrap().linked_devices().len(), 2);
+        client_1.receive_operation().await;
         println!(
-            "glue_1.device: {:#?}",
-            glue_1.device.as_ref().unwrap().group_store
+            "client_1.device: {:#?}",
+            client_1.device.as_ref().unwrap().group_store.lock()
         );
-        assert_eq!(glue_1.device.as_ref().unwrap().linked_devices().len(), 1);
+        assert_eq!(client_1.device.as_ref().unwrap().linked_devices().len(), 1);
     }
 
     #[tokio::test]
     async fn test_delete_other_device() {
-        let mut glue_0 = Glue::new(None, None, false);
+        let mut client_0 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_0.core.receive_message().await;
-        glue_0.create_standalone_device();
+        client_0.core.receive_message().await;
+        client_0.create_standalone_device();
 
-        let mut glue_1 = Glue::new(None, None, false);
+        let mut client_1 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_1.core.receive_message().await;
+        client_1.core.receive_message().await;
 
         // also sends operation to device 0 to link devices
-        glue_1.create_linked_device(glue_0.idkey()).await;
+        client_1.create_linked_device(client_0.idkey()).await;
         // receive update_linked...
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
         // receive update_linked... loopback
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked...
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked... loopback
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
 
         // delete device
         println!(
-            "glue_0.device: {:#?}",
-            glue_0.device.as_ref().unwrap().group_store
+            "client_0.device: {:#?}",
+            client_0.device.read().as_ref().unwrap().group_store.lock()
         );
-        assert_eq!(glue_0.device.as_ref().unwrap().linked_devices().len(), 2);
-        glue_0.delete_other_device(glue_1.idkey().clone()).await;
+        assert_eq!(client_0.device.read().as_ref().unwrap().linked_devices().len(), 2);
+        client_0.delete_other_device(client_1.idkey().clone()).await;
         println!(
-            "glue_0.device: {:#?}",
-            glue_0.device.as_ref().unwrap().group_store
+            "client_0.device: {:#?}",
+            client_0.device.read().as_ref().unwrap().group_store.lock()
         );
-        assert_eq!(glue_0.device.as_ref().unwrap().linked_devices().len(), 1);
+        assert_eq!(client_0.device.read().as_ref().unwrap().linked_devices().len(), 1);
 
         // receive delete operation
-        glue_1.receive_operation().await;
-        assert_eq!(glue_1.device, None);
+        client_1.receive_operation().await;
+        assert_eq!(client_1.device.read(), None);
     }
 
     #[tokio::test]
     async fn test_delete_all_devices() {
-        let mut glue_0 = Glue::new(None, None, false);
+        let mut client_0 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_0.core.receive_message().await;
-        glue_0.create_standalone_device();
+        client_0.core.receive_message().await;
+        client_0.create_standalone_device();
 
-        let mut glue_1 = Glue::new(None, None, false);
+        let mut client_1 = NoiseKVClient::new(None, None, false).await;
         // upload otkeys to server
-        glue_1.core.receive_message().await;
+        client_1.core.receive_message().await;
 
         // also sends operation to device 0 to link devices
-        glue_1.create_linked_device(glue_0.idkey()).await;
+        client_1.create_linked_device(client_0.idkey()).await;
         // receive update_linked...
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
         // receive update_linked... loopback
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked...
-        glue_1.receive_operation().await;
+        client_1.receive_operation().await;
         // receive confirm_update_linked... loopback
-        glue_0.receive_operation().await;
+        client_0.receive_operation().await;
 
         // delete all devices
-        glue_0.delete_all_devices().await;
-        assert_ne!(glue_0.device, None);
-        assert_ne!(glue_1.device, None);
+        client_0.delete_all_devices().await;
+        assert_ne!(client_0.device.read(), None);
+        assert_ne!(client_1.device.read(), None);
 
-        glue_0.receive_operation().await;
-        glue_1.receive_operation().await;
-        assert_eq!(glue_0.device, None);
-        assert_eq!(glue_1.device, None);
+        client_0.receive_operation().await;
+        client_1.receive_operation().await;
+        assert_eq!(client_0.device.read(), None);
+        assert_eq!(client_1.device.read(), None);
     }
-}
 */
+}

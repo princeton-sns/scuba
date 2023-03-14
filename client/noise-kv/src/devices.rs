@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
+use parking_lot::{Mutex, RwLock};
+use std::sync::Arc;
 
 use crate::data::DataStore;
 use crate::groups::{Group, GroupStore};
@@ -12,13 +14,13 @@ pub enum Error {
     DeviceHasChildren,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Device {
-    idkey: String,
-    pub group_store: GroupStore,
-    data_store: DataStore,
-    linked_name: String,
-    pending_link_idkey: Option<String>,
+    idkey: Arc<RwLock<String>>,
+    pub group_store: Arc<Mutex<GroupStore>>,
+    pub data_store: Arc<RwLock<DataStore>>,
+    pub linked_name: Arc<RwLock<String>>,
+    pending_link_idkey: Arc<RwLock<Option<String>>>,
 }
 
 impl Device {
@@ -43,28 +45,21 @@ impl Device {
         group_store.link_groups(&linked_name, &idkey);
 
         Self {
-            idkey,
-            group_store,
-            data_store: DataStore::new(),
-            linked_name,
-            pending_link_idkey,
+            idkey: Arc::new(RwLock::new(idkey)),
+            group_store: Arc::new(Mutex::new(group_store)),
+            data_store: Arc::new(RwLock::new(DataStore::new())),
+            linked_name: Arc::new(RwLock::new(linked_name)),
+            pending_link_idkey: Arc::new(RwLock::new(pending_link_idkey)),
         }
-    }
-
-    pub fn idkey(&self) -> &String {
-        &self.idkey
-    }
-
-    pub fn linked_name(&self) -> &String {
-        &self.linked_name
     }
 
     pub fn linked_devices_excluding_self(&self) -> Vec<String> {
         self.group_store
-            .resolve_ids(vec![self.linked_name()])
+            .lock()
+            .resolve_ids(vec![&self.linked_name.read()])
             .iter()
-            .filter(|&x| *x != self.idkey())
-            .map(|&x| x.clone())
+            .filter(|&x| *x != *self.idkey.read())
+            .map(|x| x.clone())
             .collect::<Vec<String>>()
     }
 
@@ -73,53 +68,34 @@ impl Device {
         other: &String,
     ) -> Vec<String> {
         self.group_store
-            .resolve_ids(vec![self.linked_name()])
+            .lock()
+            .resolve_ids(vec![&self.linked_name.read()])
             .iter()
-            .filter(|&x| *x != self.idkey() && *x != other)
-            .map(|&x| x.clone())
+            .filter(|&x| *x != *self.idkey.read() && *x != *other)
+            .map(|x| x.clone())
             .collect::<Vec<String>>()
     }
 
-    pub fn linked_devices(&self) -> HashSet<&String> {
-        self.group_store.resolve_ids(vec![self.linked_name()])
+    pub fn linked_devices(&self) -> HashSet<String> {
+        self.group_store.lock().resolve_ids(vec![&self.linked_name.read()])
     }
 
-    //pub fn group_store(&self) -> &GroupStore {
-    //  &self.group_store
-    //}
-
-    //pub fn group_store_mut(&mut self) -> &mut GroupStore {
-    //  &mut self.group_store
-    //}
-
-    pub fn data_store(&self) -> &DataStore {
-        &self.data_store
+    // FIXME use
+    fn set_pending_link_idkey(&self, idkey: String) {
+        *self.pending_link_idkey.write() = Some(idkey);
     }
 
-    pub fn data_store_mut(&mut self) -> &mut DataStore {
-        &mut self.data_store
-    }
-
-    fn set_pending_link_idkey(&mut self, idkey: String) {
-        self.pending_link_idkey = Some(idkey);
-    }
-
-    fn get_pending_link_idkey(&self) -> &Option<String> {
-        &self.pending_link_idkey
-    }
-
-    fn clear_pending_link_idkey(&mut self) {
-        self.pending_link_idkey = None;
+    fn clear_pending_link_idkey(&self) {
+        *self.pending_link_idkey.write() = None;
     }
 
     // TODO user needs to confirm via, e.g. pop-up
     pub fn update_linked_group(
-        &mut self,
-        //sender: String,
+        &self,
         temp_linked_name: String,
         mut members_to_add: HashMap<String, Group>,
     ) -> Result<(), Error> {
-        let perm_linked_name = self.linked_name().clone();
+        let perm_linked_name = self.linked_name.read().clone();
 
         let temp_linked_group =
             members_to_add.get(&temp_linked_name).unwrap().clone();
@@ -135,31 +111,32 @@ impl Device {
 
         // set all groups whose id is not temp_linked_name
         members_to_add.iter_mut().for_each(|(id, val)| {
-            self.group_store.set_group(id.to_string(), val.clone());
+            self.group_store.lock().set_group(id.to_string(), val.clone());
         });
 
         // merge temp_linked_name group into perm_linked_name group
         for parent in temp_linked_group.parents() {
-            self.group_store.add_parent(&perm_linked_name, parent);
+            self.group_store.lock().add_parent(&perm_linked_name, parent);
         }
         for child in temp_linked_group.children().as_ref().unwrap() {
-            self.group_store.add_child(&perm_linked_name, child);
+            self.group_store.lock().add_child(&perm_linked_name, child);
         }
 
         Ok(())
     }
 
     pub fn confirm_update_linked_group(
-        &mut self,
+        &self,
         new_linked_name: String,
         new_groups: HashMap<String, Group>,
     ) -> Result<(), Error> {
         println!("IN CONFIRM_UPDATE_LINKED_GROUP");
-        self.group_store.delete_group(&self.linked_name.clone());
+        self.group_store.lock().delete_group(&self.linked_name.read().clone());
 
-        self.linked_name = new_linked_name;
+        *self.linked_name.write() = new_linked_name;
         for (group_id, group_val) in new_groups.iter() {
             self.group_store
+                .lock()
                 .set_group(group_id.to_string(), group_val.clone());
         }
 
@@ -173,9 +150,9 @@ impl Device {
     // GC'd when the `device` field of the glue object is
     // set to `None`. But in the future, this function
     // should be used to clean up any related persistent data
-    pub fn delete_device(&mut self, to_delete: String) -> Result<(), Error> {
+    pub fn delete_device(&self, to_delete: String) -> Result<(), Error> {
         let device_group =
-            self.group_store.get_group(&to_delete).unwrap().clone();
+            self.group_store.lock().get_group(&to_delete).unwrap().clone();
         if device_group.children().as_ref().is_some() {
             return Err(Error::DeviceHasChildren);
         }
@@ -183,16 +160,19 @@ impl Device {
         // remove child link to this device from
         // every parent (should have no children)
         for parent in device_group.parents().iter() {
-            self.group_store.remove_child(parent, &to_delete);
+            self.group_store.lock().remove_child(parent, &to_delete);
         }
 
-        self.group_store.delete_group(&to_delete);
+        self.group_store.lock().delete_group(&to_delete);
 
         Ok(())
     }
 }
 
 mod tests {
+    use crate::devices::Device;
+    use std::collections::HashSet;
+
     #[test]
     fn test_new_standalone() {
         let idkey = String::from("0");
@@ -200,7 +180,8 @@ mod tests {
         let device =
             Device::new(idkey.clone(), Some(linked_name.clone()), None);
 
-        let linked_group = device.group_store.get_group(&linked_name).unwrap();
+        let group_store = device.group_store.lock();
+        let linked_group = group_store.get_group(&linked_name).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name);
         assert_eq!(linked_group.contact_level(), &false);
         assert_eq!(linked_group.parents(), &HashSet::<String>::new());
@@ -209,7 +190,7 @@ mod tests {
             &Some(HashSet::<String>::from([idkey.clone()]))
         );
 
-        let idkey_group = device.group_store.get_group(&idkey).unwrap();
+        let idkey_group = group_store.get_group(&idkey).unwrap();
         assert_eq!(idkey_group.group_id(), &idkey);
         assert_eq!(idkey_group.contact_level(), &false);
         assert_eq!(
@@ -218,9 +199,9 @@ mod tests {
         );
         assert_eq!(idkey_group.children(), &None);
 
-        assert_eq!(device.idkey, idkey);
-        assert_eq!(device.linked_name, linked_name);
-        assert_eq!(device.pending_link_idkey, None);
+        assert_eq!(*device.idkey.read(), idkey);
+        assert_eq!(*device.linked_name.read(), linked_name);
+        assert_eq!(*device.pending_link_idkey.read(), None);
     }
 
     #[test]
@@ -229,29 +210,29 @@ mod tests {
         let linked_name = String::from("linked");
         let device_0 =
             Device::new(idkey.clone(), Some(linked_name.clone()), None);
-        assert_eq!(device_0.linked_name(), &linked_name);
+        assert_eq!(&*device_0.linked_name.read(), &linked_name);
 
         let device_1 = Device::new(idkey, None, None);
-        assert_ne!(device_1.linked_name(), &linked_name);
+        assert_ne!(&*device_1.linked_name.read(), &linked_name);
     }
 
     #[test]
     fn test_update_linked_group() {
         let idkey_0 = String::from("0");
         let mut device_0 = Device::new(idkey_0.clone(), None, None);
-        let linked_name_0 = device_0.linked_name().clone();
+        let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 =
-            device_0.group_store.get_all_subgroups(&linked_name_0);
+            device_0.group_store.lock().get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
         let device_1 = Device::new(
             idkey_1.clone(),
             None,
-            Some(device_0.linked_name().to_string()),
+            Some(device_0.linked_name.read().clone()),
         );
-        let linked_name_1 = device_1.linked_name().clone();
+        let linked_name_1 = device_1.linked_name.read().clone();
         let linked_members_1 =
-            device_1.group_store.get_all_subgroups(&linked_name_1);
+            device_1.group_store.lock().get_all_subgroups(&linked_name_1);
 
         assert_ne!(linked_name_0, linked_name_1);
         assert_ne!(linked_members_0, linked_members_1);
@@ -260,7 +241,6 @@ mod tests {
 
         // simulate send and receive of UpdateLinked message
         match device_0.update_linked_group(
-            idkey_1.clone(),
             linked_name_1.clone(),
             linked_members_1.clone(),
         ) {
@@ -269,7 +249,7 @@ mod tests {
         }
 
         let merged_linked_members =
-            device_0.group_store.get_all_subgroups(&linked_name_0);
+            device_0.group_store.lock().get_all_subgroups(&linked_name_0);
         assert_eq!(merged_linked_members.len(), 3);
 
         let merged_linked_group =
@@ -302,23 +282,22 @@ mod tests {
     fn test_confirm_update_linked() {
         let idkey_0 = String::from("0");
         let mut device_0 = Device::new(idkey_0.clone(), None, None);
-        let linked_name_0 = device_0.linked_name().clone();
+        let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 =
-            device_0.group_store.get_all_subgroups(&linked_name_0);
+            device_0.group_store.lock().get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
         let mut device_1 = Device::new(
             idkey_1.clone(),
             None,
-            Some(device_0.linked_name().to_string()),
+            Some(device_0.linked_name.read().clone()),
         );
-        let linked_name_1 = device_1.linked_name().clone();
+        let linked_name_1 = device_1.linked_name.read().clone();
         let linked_members_1 =
-            device_1.group_store.get_all_subgroups(&linked_name_1);
+            device_1.group_store.lock().get_all_subgroups(&linked_name_1);
 
         // simulate send and receive of UpdateLinked message
         match device_0.update_linked_group(
-            idkey_1.clone(),
             linked_name_1.clone(),
             linked_members_1.clone(),
         ) {
@@ -329,7 +308,7 @@ mod tests {
         // simulate send and receive of ConfirmUpdateLinked message
         match device_1.confirm_update_linked_group(
             linked_name_0.clone(),
-            device_0.group_store.get_all_groups().clone(),
+            device_0.group_store.lock().get_all_groups().clone(),
         ) {
             Ok(_) => println!("Update succeeded"),
             Err(err) => {
@@ -338,7 +317,7 @@ mod tests {
         }
 
         let merged_linked_members =
-            device_1.group_store.get_all_subgroups(&linked_name_0);
+            device_1.group_store.lock().get_all_subgroups(&linked_name_0);
         assert_eq!(merged_linked_members.len(), 3);
 
         let merged_linked_group =
@@ -371,23 +350,22 @@ mod tests {
     fn test_delete_self_device() {
         let idkey_0 = String::from("0");
         let mut device_0 = Device::new(idkey_0.clone(), None, None);
-        let linked_name_0 = device_0.linked_name().clone();
+        let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 =
-            device_0.group_store.get_all_subgroups(&linked_name_0);
+            device_0.group_store.lock().get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
         let mut device_1 = Device::new(
             idkey_1.clone(),
             None,
-            Some(device_0.linked_name().to_string()),
+            Some(device_0.linked_name.read().clone()),
         );
-        let linked_name_1 = device_1.linked_name().clone();
+        let linked_name_1 = device_1.linked_name.read().clone();
         let linked_members_1 =
-            device_1.group_store.get_all_subgroups(&linked_name_1);
+            device_1.group_store.lock().get_all_subgroups(&linked_name_1);
 
         // simulate send and receive of UpdateLinked message
         match device_0.update_linked_group(
-            idkey_1.clone(),
             linked_name_1.clone(),
             linked_members_1.clone(),
         ) {
@@ -398,7 +376,7 @@ mod tests {
         // simulate send and receive of ConfirmUpdateLinked message
         match device_1.confirm_update_linked_group(
             linked_name_0.clone(),
-            device_0.group_store.get_all_groups().clone(),
+            device_0.group_store.lock().get_all_groups().clone(),
         ) {
             Ok(_) => println!("Update succeeded"),
             Err(err) => {
@@ -412,7 +390,7 @@ mod tests {
         }
 
         let linked_members =
-            device_1.group_store.get_all_subgroups(&linked_name_0);
+            device_1.group_store.lock().get_all_subgroups(&linked_name_0);
         assert_eq!(linked_members.len(), 2);
 
         let linked_group = linked_members.get(&linked_name_0).unwrap();
@@ -438,23 +416,22 @@ mod tests {
     fn test_delete_other_device() {
         let idkey_0 = String::from("0");
         let mut device_0 = Device::new(idkey_0.clone(), None, None);
-        let linked_name_0 = device_0.linked_name().clone();
+        let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 =
-            device_0.group_store.get_all_subgroups(&linked_name_0);
+            device_0.group_store.lock().get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
         let mut device_1 = Device::new(
             idkey_1.clone(),
             None,
-            Some(device_0.linked_name().to_string()),
+            Some(device_0.linked_name.read().clone()),
         );
-        let linked_name_1 = device_1.linked_name().clone();
+        let linked_name_1 = device_1.linked_name.read().clone();
         let linked_members_1 =
-            device_1.group_store.get_all_subgroups(&linked_name_1);
+            device_1.group_store.lock().get_all_subgroups(&linked_name_1);
 
         // simulate send and receive of UpdateLinked message
         match device_0.update_linked_group(
-            idkey_1.clone(),
             linked_name_1.clone(),
             linked_members_1.clone(),
         ) {
@@ -465,7 +442,7 @@ mod tests {
         // simulate send and receive of ConfirmUpdateLinked message
         match device_1.confirm_update_linked_group(
             linked_name_0.clone(),
-            device_0.group_store.get_all_groups().clone(),
+            device_0.group_store.lock().get_all_groups().clone(),
         ) {
             Ok(_) => println!("Update succeeded"),
             Err(err) => {
@@ -479,7 +456,7 @@ mod tests {
         }
 
         let linked_members =
-            device_0.group_store.get_all_subgroups(&linked_name_0);
+            device_0.group_store.lock().get_all_subgroups(&linked_name_0);
         assert_eq!(linked_members.len(), 2);
 
         let linked_group = linked_members.get(&linked_name_0).unwrap();

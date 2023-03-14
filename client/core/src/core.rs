@@ -43,7 +43,11 @@ impl FullPayload {
 
 #[async_trait]
 pub trait CoreClient: Sync + Send + 'static {
-    async fn client_callback(&self, sender: String, message: String);
+    async fn client_callback(
+        &self,
+        sender: String,
+        message: String,
+    ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 pub struct Core<C: CoreClient> {
@@ -176,7 +180,7 @@ impl<C: CoreClient> Core<C> {
                     .add_otkeys_to_server(&otkeys.curve25519())
                     .await
                 {
-                    Ok(_) => {} //println!("Sent otkeys successfully"),
+                    Ok(_) => {}
                     Err(err) => panic!("Error sending otkeys: {:?}", err),
                 }
                 // set init = true and notify init_cv waiters
@@ -204,19 +208,24 @@ impl<C: CoreClient> Core<C> {
                     full_payload.common,
                     &full_payload.per_recipient,
                 ) {
-                    Ok(None) => {
-                        //println!("Validation succeeded,
-                        // no message to process")
-                    }
+                    // No message to forward
+                    Ok(None) => {}
+                    // Forward message
                     Ok(Some((seq, message))) => {
-                        // forward message to CoreClient
-                        self.client
+                        match self
+                            .client
                             .read()
                             .await
                             .as_ref()
                             .unwrap()
                             .client_callback(msg.sender().clone(), message)
-                            .await;
+                            .await
+                        {
+                            Ok(_) => {}
+                            Err(err) => {
+                                panic!("Error in client callback: {:?}", err)
+                            }
+                        }
 
                         match self
                             .server_comm
@@ -229,11 +238,7 @@ impl<C: CoreClient> Core<C> {
                             )
                             .await
                         {
-                            Ok(_) => {
-                                //println!("Sent
-                                // delete-message
-                                // successfully")
-                            }
+                            Ok(_) => {}
                             Err(err) => panic!(
                                 "Error sending delete-message: {:?}",
                                 err
@@ -255,9 +260,9 @@ impl<C: CoreClient> Core<C> {
     // calling any asyncs
     // TODO also, between unlock() and lock(), may have to
     // recalculate any common vars to use
-    pub async fn receive_message(&mut self) {
-        unimplemented!()
-    }
+    //pub async fn receive_message(&mut self) {
+    //    unimplemented!()
+    //}
 }
 
 pub mod stream_client {
@@ -288,7 +293,11 @@ pub mod stream_client {
 
     #[async_trait]
     impl CoreClient for StreamClient {
-        async fn client_callback(&self, sender: String, message: String) {
+        async fn client_callback(
+            &self,
+            sender: String,
+            message: String,
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use futures::SinkExt;
             self.sender
                 .lock()
@@ -296,6 +305,7 @@ pub mod stream_client {
                 .send((sender, message))
                 .await
                 .unwrap();
+            Ok(())
         }
     }
 

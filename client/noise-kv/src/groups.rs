@@ -94,7 +94,7 @@ impl Group {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GroupStore {
     store: HashMap<String, Group>,
 }
@@ -464,9 +464,9 @@ impl GroupStore {
 }
 
 mod tests {
-    use crate::groups::{Group, GroupStore};
-    use std::collections::HashMap;
-    use std::collections::HashSet;
+    //use crate::groups::{Group, GroupStore};
+    //use std::collections::HashMap;
+    //use std::collections::HashSet;
 
     #[test]
     fn test_new() {

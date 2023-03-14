@@ -48,7 +48,11 @@ impl Operation {
 // of the bulb is) - so the problem is how to add groups?
 #[async_trait]
 impl CoreClient for LightswitchApp {
-    async fn client_callback(&self, sender: String, message: String) {
+    async fn client_callback(
+        &self,
+        sender: String,
+        message: String,
+    ) -> Result<(), Error> {
         println!("{}", paint_white_bold(format!("FROM: {}", sender).as_str()));
         match Operation::from_string(message) {
             Operation::On => {
@@ -68,6 +72,7 @@ impl CoreClient for LightswitchApp {
                 }
             }
         }
+        Ok(())
     }
 }
 

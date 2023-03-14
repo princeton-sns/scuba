@@ -89,7 +89,7 @@ impl Validator {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct DataStore {
     store: HashMap<String, BasicData>,
     //validator: Validator,
@@ -134,8 +134,8 @@ impl DataStore {
 }
 
 mod tests {
-    use crate::data::{BasicData, DataStore};
-    use std::collections::HashMap;
+    //use crate::data::{BasicData, DataStore};
+    //use std::collections::HashMap;
 
     #[test]
     fn test_new() {

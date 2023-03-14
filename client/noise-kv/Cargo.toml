@@ -14,3 +14,5 @@ tokio = { version = "1.23.0", features = ["macros"] }
 thiserror = "1.0.38"
 reqwest = "0.11.13"
 futures = "0.3.25"
+async-trait = "0.1.66"
+parking_lot = { version = "0.12.1", features = ["send_guard"] }

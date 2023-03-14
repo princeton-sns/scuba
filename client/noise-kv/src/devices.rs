@@ -12,7 +12,7 @@ pub enum Error {
     DeviceHasChildren,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Device {
     idkey: String,
     pub group_store: GroupStore,
@@ -115,12 +115,10 @@ impl Device {
     // TODO user needs to confirm via, e.g. pop-up
     pub fn update_linked_group(
         &mut self,
-        sender: String,
+        //sender: String,
         temp_linked_name: String,
         mut members_to_add: HashMap<String, Group>,
     ) -> Result<(), Error> {
-        println!("IN UPDATE_LINKED_GROUP");
-        let currently_linked_devices = self.linked_devices();
         let perm_linked_name = self.linked_name().clone();
 
         let temp_linked_group =
@@ -195,10 +193,6 @@ impl Device {
 }
 
 mod tests {
-    use crate::devices::Device;
-    use crate::groups::{Group, GroupStore};
-    use std::collections::HashSet;
-
     #[test]
     fn test_new_standalone() {
         let idkey = String::from("0");

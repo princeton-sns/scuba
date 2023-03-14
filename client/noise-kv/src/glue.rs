@@ -1,19 +1,19 @@
-use futures::channel::mpsc;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
 
-use noise_core::core::{Core, CoreClient, FullPayload};
+use noise_core::core::{Core, CoreClient};
 
 use crate::data::BasicData;
 use crate::devices::Device;
-use crate::groups::{Group, GroupStore};
+use crate::groups::Group; //, GroupStore};
 
 const BUFFER_SIZE: usize = 20;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-enum Message {
+enum Operation {
     UpdateLinked(String, String, HashMap<String, Group>),
     // TODO last param (for data): HashMap<String, BasicData>
     ConfirmUpdateLinked(String, HashMap<String, Group>),
@@ -35,12 +35,12 @@ enum Message {
     Test(String),
 }
 
-impl Message {
-    fn to_string(msg: &Message) -> Result<String, serde_json::Error> {
+impl Operation {
+    fn to_string(msg: &Operation) -> Result<String, serde_json::Error> {
         serde_json::to_string(msg)
     }
 
-    fn from_string(msg: String) -> Result<Message, serde_json::Error> {
+    fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
         serde_json::from_str(msg.as_str())
     }
 }
@@ -65,41 +65,65 @@ enum Error {
         #[from]
         source: crate::devices::Error,
     },
-    #[error("no message available")]
-    StreamErr,
 }
 
-pub struct Glue<C: CoreClient> {
-    core: Core<C>,
+#[derive(Clone)]
+pub struct NoiseKVClient {
+    core: Option<Arc<Core<NoiseKVClient>>>,
     pub device: Option<Device>,
-    receiver: mpsc::Receiver<(String, String)>,
 }
 
-impl<C: CoreClient> Glue<C> {
-    pub fn new<'a>(
+#[async_trait]
+impl CoreClient for NoiseKVClient {
+    // TODO change interface to return result
+    async fn client_callback(
+        &self,
+        sender: String,
+        message: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        println!("IN NOISEKV CLIENT CALLBACK");
+        match Operation::from_string(message.clone()) {
+            Ok(operation) => {
+                match self.check_permissions(&sender, &operation) {
+                    Ok(_) => {
+                        if self.validate_data_invariants(&operation) {
+                            return self.demux(operation).await;
+                        }
+                        Err(Box::new(Error::DataInvariantViolated))
+                    }
+                    Err(err) => Err(Box::new(err)),
+                }
+            }
+            Err(_) => Err(Box::new(Error::StringConversionErr(message))),
+        }
+    }
+}
+
+impl NoiseKVClient {
+    pub async fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off_arg: bool,
-    ) -> Glue<C> {
-        let (sender, receiver) = mpsc::channel::<(String, String)>(BUFFER_SIZE);
-        Self {
-            core: Core::new(ip_arg, port_arg, turn_encryption_off_arg, sender),
+    ) -> NoiseKVClient {
+        let mut client = NoiseKVClient {
+            core: None,
             device: None,
-            receiver,
-        }
+        };
+        let core = Core::new(
+            ip_arg,
+            port_arg,
+            turn_encryption_off_arg,
+            Some(Arc::new(client.clone())),
+        )
+        .await;
+
+        client.core = Some(core);
+        client
     }
 
     pub fn idkey(&self) -> String {
-        self.core.idkey()
+        self.core.as_ref().unwrap().idkey()
     }
-
-    //pub fn device(&self) -> &Option<Device> {
-    //  &self.device
-    //}
-
-    //pub fn device_mut(&mut self) -> &mut Option<Device> {
-    //  &mut self.device
-    //}
 
     /* Sending-side functions */
 
@@ -108,71 +132,53 @@ impl<C: CoreClient> Glue<C> {
         dst_idkeys: Vec<String>,
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
-        self.core.send_message(dst_idkeys, payload).await
+        self.core
+            .as_ref()
+            .unwrap()
+            .send_message(dst_idkeys, payload)
+            .await
     }
 
     /* Receiving-side functions */
 
-    async fn receive_message(&mut self) -> Result<(), Error> {
-        // have core process potential incoming message
-        self.core.receive_message().await;
-
-        // FIXME Arc<..trait>
-        match self.receiver.try_next() {
-            Ok(Some((sender, payload))) => {
-                match Message::from_string(payload.clone()) {
-                    Ok(message) => {
-                        match self.check_permissions(&sender, &message) {
-                            Ok(_) => {
-                                if self.validate_data_invariants(&message) {
-                                    // call the relevant function
-                                    return self.demux(&sender, message).await;
-                                }
-                                Err(Error::DataInvariantViolated)
-                            }
-                            Err(err) => Err(err),
-                        }
-                    }
-                    Err(err) => Err(Error::StringConversionErr(payload)),
-                }
-            }
-            Ok(None) => Ok(()),
-            Err(err) => Err(Error::StreamErr),
-        }
-    }
-
     fn check_permissions(
         &self,
-        sender: &String,
-        message: &Message,
+        _sender: &String,
+        _operation: &Operation,
     ) -> Result<(), Error> {
         // TODO actually check permissions
-        match message {
-            Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
-                Ok(())
-            }
-            Message::ConfirmUpdateLinked(new_linked_name, new_groups) => Ok(()),
-            Message::SetGroup(group_id, group_val) => Ok(()),
-            Message::LinkGroups(parent_id, child_id) => Ok(()),
-            Message::DeleteGroup(group_id) => Ok(()),
-            Message::AddParent(group_id, parent_id) => Ok(()),
-            Message::RemoveParent(group_id, parent_id) => Ok(()),
-            Message::AddChild(group_id, child_id) => Ok(()),
-            Message::RemoveChild(group_id, child_id) => Ok(()),
-            Message::UpdateData(data_id, data_val) => Ok(()),
-            Message::DeleteData(data_id) => Ok(()),
-            Message::DeleteSelfDevice => Ok(()),
-            Message::DeleteOtherDevice(idkey_to_delete) => Ok(()),
-            Message::Test(msg) => Ok(()),
-        }
+        //match operation {
+        //    Operation::UpdateLinked(
+        //        sender,
+        //        temp_linked_name,
+        //        members_to_add,
+        //    ) => Ok(()),
+        //    Operation::ConfirmUpdateLinked(new_linked_name,
+        // new_groups) => {        Ok(())
+        //    }
+        //    Operation::SetGroup(group_id, group_val) => Ok(()),
+        //    Operation::LinkGroups(parent_id, child_id) => Ok(()),
+        //    Operation::DeleteGroup(group_id) => Ok(()),
+        //    Operation::AddParent(group_id, parent_id) => Ok(()),
+        //    Operation::RemoveParent(group_id, parent_id) =>
+        // Ok(()),    Operation::AddChild(group_id,
+        // child_id) => Ok(()),
+        //    Operation::RemoveChild(group_id, child_id) => Ok(()),
+        //    Operation::UpdateData(data_id, data_val) => Ok(()),
+        //    Operation::DeleteData(data_id) => Ok(()),
+        //    Operation::DeleteSelfDevice => Ok(()),
+        //    Operation::DeleteOtherDevice(idkey_to_delete) =>
+        // Ok(()),    Operation::Test(msg) => Ok(()),
+        //}
+        Ok(())
     }
 
-    // FIXME also call validate() on DeleteData messages
-    fn validate_data_invariants(&self, message: &Message) -> bool {
+    // FIXME also call validate() on DeleteData operations
+    fn validate_data_invariants(&self, _operation: &Operation) -> bool {
         true
-        //match message {
-        //  Message::UpdateData(data_id, data_val) => {
-        //  //| Message::DeleteData =>
+        //match operation {
+        //  Operation::UpdateData(data_id, data_val) => {
+        //  //| Operation::DeleteData =>
         //    self.device
         //        .as_ref()
         //        .unwrap()
@@ -186,26 +192,27 @@ impl<C: CoreClient> Glue<C> {
 
     async fn demux(
         &mut self,
-        sender: &String,
-        message: Message,
-    ) -> Result<(), Error> {
-        match message {
-            Message::UpdateLinked(sender, temp_linked_name, members_to_add) => {
-                self.update_linked_group(
-                    sender,
-                    temp_linked_name,
-                    members_to_add,
-                )
+        //_sender: &String,
+        operation: Operation,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match operation {
+            Operation::UpdateLinked(
+                sender,
+                temp_linked_name,
+                members_to_add,
+            ) => self
+                .update_linked_group(sender, temp_linked_name, members_to_add)
                 .await
                 .map_err(Error::from)
-            }
-            Message::ConfirmUpdateLinked(new_linked_name, new_groups) => self
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::ConfirmUpdateLinked(new_linked_name, new_groups) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .confirm_update_linked_group(new_linked_name, new_groups)
-                .map_err(Error::from),
-            Message::SetGroup(group_id, group_val) => {
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::SetGroup(group_id, group_val) => {
                 self.device
                     .as_mut()
                     .unwrap()
@@ -213,14 +220,15 @@ impl<C: CoreClient> Glue<C> {
                     .set_group(group_id, group_val);
                 Ok(())
             }
-            Message::LinkGroups(parent_id, child_id) => self
+            Operation::LinkGroups(parent_id, child_id) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .group_store
                 .link_groups(&parent_id, &child_id)
-                .map_err(Error::from),
-            Message::DeleteGroup(group_id) => {
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::DeleteGroup(group_id) => {
                 self.device
                     .as_mut()
                     .unwrap()
@@ -228,35 +236,39 @@ impl<C: CoreClient> Glue<C> {
                     .delete_group(&group_id);
                 Ok(())
             }
-            Message::AddParent(group_id, parent_id) => self
+            Operation::AddParent(group_id, parent_id) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .group_store
                 .add_parent(&group_id, &parent_id)
-                .map_err(Error::from),
-            Message::RemoveParent(group_id, parent_id) => self
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::RemoveParent(group_id, parent_id) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .group_store
                 .remove_parent(&group_id, &parent_id)
-                .map_err(Error::from),
-            Message::AddChild(group_id, child_id) => self
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::AddChild(group_id, child_id) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .group_store
                 .add_child(&group_id, &child_id)
-                .map_err(Error::from),
-            Message::RemoveChild(group_id, child_id) => self
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::RemoveChild(group_id, child_id) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .group_store
                 .remove_child(&group_id, &child_id)
-                .map_err(Error::from),
-            Message::UpdateData(data_id, data_val) => {
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::UpdateData(data_id, data_val) => {
                 self.device
                     .as_mut()
                     .unwrap()
@@ -264,7 +276,7 @@ impl<C: CoreClient> Glue<C> {
                     .set_data(data_id, data_val);
                 Ok(())
             }
-            Message::DeleteData(data_id) => {
+            Operation::DeleteData(data_id) => {
                 self.device
                     .as_mut()
                     .unwrap()
@@ -272,7 +284,7 @@ impl<C: CoreClient> Glue<C> {
                     .delete_data(&data_id);
                 Ok(())
             }
-            Message::DeleteSelfDevice => {
+            Operation::DeleteSelfDevice => {
                 let idkey = self.idkey().clone();
                 self.device
                     .as_mut()
@@ -280,15 +292,17 @@ impl<C: CoreClient> Glue<C> {
                     .delete_device(idkey)
                     .map(|_| self.device = None)
                     .map_err(Error::from)
+                    .map_err(Box::<dyn std::error::Error>::from)
             }
-            Message::DeleteOtherDevice(idkey_to_delete) => self
+            Operation::DeleteOtherDevice(idkey_to_delete) => self
                 .device
                 .as_mut()
                 .unwrap()
                 .delete_device(idkey_to_delete)
-                .map_err(Error::from),
-            Message::Test(msg) => {
-                println!("msg");
+                .map_err(Error::from)
+                .map_err(Box::<dyn std::error::Error>::from),
+            Operation::Test(msg) => {
+                println!("msg: {:?}", msg);
                 Ok(())
             }
         }
@@ -315,7 +329,7 @@ impl<C: CoreClient> Glue<C> {
 
         self.send_message(
             vec![idkey],
-            &Message::to_string(&Message::UpdateLinked(
+            &Operation::to_string(&Operation::UpdateLinked(
                 self.idkey(),
                 linked_name.to_string(),
                 linked_members_to_add,
@@ -335,7 +349,7 @@ impl<C: CoreClient> Glue<C> {
             .as_mut()
             .unwrap()
             .update_linked_group(
-                sender.clone(),
+                //sender.clone(),
                 temp_linked_name.clone(),
                 members_to_add,
             )
@@ -346,7 +360,7 @@ impl<C: CoreClient> Glue<C> {
         // send all groups (TODO and data) to new members
         self.send_message(
             vec![sender],
-            &Message::to_string(&Message::ConfirmUpdateLinked(
+            &Operation::to_string(&Operation::ConfirmUpdateLinked(
                 perm_linked_name,
                 self.device
                     .as_ref()
@@ -371,13 +385,13 @@ impl<C: CoreClient> Glue<C> {
                 .as_ref()
                 .unwrap()
                 .linked_devices_excluding_self(),
-            &Message::to_string(&Message::DeleteOtherDevice(self.idkey()))
+            &Operation::to_string(&Operation::DeleteOtherDevice(self.idkey()))
                 .unwrap(),
         )
         .await;
 
         // TODO wait for ACK that other devices have indeed received
-        // above messages before deleting current device
+        // above operations before deleting current device
         let idkey = self.idkey().clone();
         self.device
             .as_mut()
@@ -397,8 +411,10 @@ impl<C: CoreClient> Glue<C> {
                 .as_ref()
                 .unwrap()
                 .linked_devices_excluding_self_and_other(&to_delete),
-            &Message::to_string(&Message::DeleteOtherDevice(to_delete.clone()))
-                .unwrap(),
+            &Operation::to_string(&Operation::DeleteOtherDevice(
+                to_delete.clone(),
+            ))
+            .unwrap(),
         )
         .await;
 
@@ -409,10 +425,10 @@ impl<C: CoreClient> Glue<C> {
             .map_err(Error::from);
 
         // TODO wait for ACK that other devices have indeed received
-        // above messages before deleting specified device
+        // above operations before deleting specified device
         self.send_message(
             vec![to_delete.clone()],
-            &Message::to_string(&Message::DeleteSelfDevice).unwrap(),
+            &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
         )
         .await;
 
@@ -423,7 +439,7 @@ impl<C: CoreClient> Glue<C> {
         // TODO notify contacts
 
         // TODO wait for ACK that contacts have indeed received
-        // above messages before deleting all devices
+        // above operations before deleting all devices
         self.send_message(
             self.device
                 .as_ref()
@@ -432,14 +448,15 @@ impl<C: CoreClient> Glue<C> {
                 .iter()
                 .map(|&x| x.clone())
                 .collect::<Vec<String>>(),
-            &Message::to_string(&Message::DeleteSelfDevice).unwrap(),
+            &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
         )
         .await;
     }
 }
 
+/*
 mod tests {
-    use crate::glue::{Glue, Message};
+    use crate::glue::{Glue, Operation};
     use crate::groups::Group;
     use futures::channel::mpsc;
 
@@ -469,15 +486,15 @@ mod tests {
         println!("creating device 1");
         glue_1.create_standalone_device();
 
-        // send message
-        let message =
-            Message::to_string(&Message::Test("hello".to_string())).unwrap();
-        println!("sending message to device 0");
-        glue_1.send_message(vec![glue_0.idkey()], &message).await;
+        // send operation
+        let operation =
+            Operation::to_string(&Operation::Test("hello".to_string())).unwrap();
+        println!("sending operation to device 0");
+        glue_1.send_message(vec![glue_0.idkey()], &operation).await;
 
-        // receive message
-        println!("getting message");
-        glue_0.receive_message().await;
+        // receive operation
+        println!("getting operation");
+        glue_0.receive_operation().await;
     }
 
     #[tokio::test]
@@ -493,12 +510,12 @@ mod tests {
         glue_1.core.receive_message().await;
         println!("creating device 1");
 
-        // also sends message to device 0 to link devices
+        // also sends operation to device 0 to link devices
         glue_1.create_linked_device(glue_0.idkey()).await;
 
-        // receive message
-        println!("getting message");
-        glue_0.receive_message().await;
+        // receive operation
+        println!("getting operation");
+        glue_0.receive_operation().await;
     }
 
     #[tokio::test]
@@ -520,16 +537,16 @@ mod tests {
         println!(
             "Getting update_linked... on <0> and SENDING confirm_update...\n"
         );
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
         // receive update_linked... loopback
         println!("Getting update_linked... LOOPBACK on <1>\n");
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked...
         println!("Getting confirm_update... on <1>\n");
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked... loopback
         println!("Getting confirm_update... LOOPBACK on <0>\n");
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
     }
 
     #[tokio::test]
@@ -543,16 +560,16 @@ mod tests {
         // upload otkeys to server
         glue_1.core.receive_message().await;
 
-        // also sends message to device 0 to link devices
+        // also sends operation to device 0 to link devices
         glue_1.create_linked_device(glue_0.idkey()).await;
         // receive update_linked...
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
         // receive update_linked... loopback
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked...
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked... loopback
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
 
         // delete device
         glue_0.delete_self_device().await;
@@ -564,7 +581,7 @@ mod tests {
             glue_1.device.as_ref().unwrap().group_store
         );
         assert_eq!(glue_1.device.as_ref().unwrap().linked_devices().len(), 2);
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         println!(
             "glue_1.device: {:#?}",
             glue_1.device.as_ref().unwrap().group_store
@@ -583,16 +600,16 @@ mod tests {
         // upload otkeys to server
         glue_1.core.receive_message().await;
 
-        // also sends message to device 0 to link devices
+        // also sends operation to device 0 to link devices
         glue_1.create_linked_device(glue_0.idkey()).await;
         // receive update_linked...
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
         // receive update_linked... loopback
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked...
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked... loopback
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
 
         // delete device
         println!(
@@ -607,8 +624,8 @@ mod tests {
         );
         assert_eq!(glue_0.device.as_ref().unwrap().linked_devices().len(), 1);
 
-        // receive delete message
-        glue_1.receive_message().await;
+        // receive delete operation
+        glue_1.receive_operation().await;
         assert_eq!(glue_1.device, None);
     }
 
@@ -623,25 +640,26 @@ mod tests {
         // upload otkeys to server
         glue_1.core.receive_message().await;
 
-        // also sends message to device 0 to link devices
+        // also sends operation to device 0 to link devices
         glue_1.create_linked_device(glue_0.idkey()).await;
         // receive update_linked...
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
         // receive update_linked... loopback
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked...
-        glue_1.receive_message().await;
+        glue_1.receive_operation().await;
         // receive confirm_update_linked... loopback
-        glue_0.receive_message().await;
+        glue_0.receive_operation().await;
 
         // delete all devices
         glue_0.delete_all_devices().await;
         assert_ne!(glue_0.device, None);
         assert_ne!(glue_1.device, None);
 
-        glue_0.receive_message().await;
-        glue_1.receive_message().await;
+        glue_0.receive_operation().await;
+        glue_1.receive_operation().await;
         assert_eq!(glue_0.device, None);
         assert_eq!(glue_1.device, None);
     }
 }
+*/

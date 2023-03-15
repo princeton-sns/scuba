@@ -218,8 +218,7 @@ impl GroupStore {
         }
 
         // set child of to_parent group
-        let mut to_parent_group =
-            self.get_group(to_parent_id).unwrap().clone();
+        let mut to_parent_group = self.get_group(to_parent_id).unwrap().clone();
         if to_parent_group.children.is_none() {
             return Err(Error::GroupHasNoChildren(to_parent_id.to_string()));
         }
@@ -227,8 +226,7 @@ impl GroupStore {
         self.set_group(to_parent_id.to_string(), to_parent_group);
 
         // set parent of to_child group
-        let mut to_child_group =
-            self.get_group(to_child_id).unwrap().clone();
+        let mut to_child_group = self.get_group(to_child_id).unwrap().clone();
         to_child_group.add_parent(to_parent_id.to_string());
         self.set_group(to_child_id.to_string(), to_child_group);
 
@@ -273,8 +271,7 @@ impl GroupStore {
 
         // delete from all parents' children lists
         for parent_id in &group_val.parents {
-            let mut parent_group =
-                self.get_group(&parent_id).unwrap().clone();
+            let mut parent_group = self.get_group(&parent_id).unwrap().clone();
             parent_group.remove_child(group_id);
             self.set_group(parent_id.to_string(), parent_group);
         }

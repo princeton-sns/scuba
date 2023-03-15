@@ -1,9 +1,9 @@
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use parking_lot::RwLock;
 
 use noise_core::core::{Core, CoreClient};
 
@@ -342,7 +342,14 @@ impl NoiseKVClient {
         *self.device.write() =
             Some(Device::new(self.idkey(), None, Some(idkey.clone())));
 
-        let linked_name = &self.device.read().as_ref().unwrap().linked_name.read().clone();
+        let linked_name = &self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone();
 
         let linked_members_to_add = self
             .device
@@ -381,8 +388,14 @@ impl NoiseKVClient {
                 members_to_add,
             )
             .map_err(Error::from);
-        let perm_linked_name =
-            self.device.read().as_ref().unwrap().linked_name.read().to_string();
+        let perm_linked_name = self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .to_string();
 
         // send all groups (TODO and data) to new members
         self.send_message(
@@ -503,11 +516,15 @@ mod tests {
 
         // send operation
         let operation =
-            Operation::to_string(&Operation::Test("hello".to_string())).unwrap();
+            Operation::to_string(&Operation::Test("hello".to_string()))
+                .unwrap();
         println!("sending operation to device 0");
-        client_1.send_message(vec![client_0.idkey()], &operation).await;
+        client_1
+            .send_message(vec![client_0.idkey()], &operation)
+            .await;
 
-        // FIXME exits before client_callback can run - how to wait?
+        // FIXME exits before client_callback can run - how
+        // to wait?
     }
 
     #[tokio::test]
@@ -522,152 +539,153 @@ mod tests {
         // also sends operation to device 0 to link devices
         client_1.create_linked_device(client_0.idkey()).await;
 
-        // FIXME exits before client_callback can run - how to wait?
+        // FIXME exits before client_callback can run - how
+        // to wait?
     }
 
-/*
-    #[tokio::test]
-    async fn test_confirm_update_linked_group() {
-        let mut client_0 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_0.core.receive_message().await;
+    /*
+        #[tokio::test]
+        async fn test_confirm_update_linked_group() {
+            let mut client_0 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_0.core.receive_message().await;
 
-        client_0.create_standalone_device();
+            client_0.create_standalone_device();
 
-        let mut client_1 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_1.core.receive_message().await;
+            let mut client_1 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_1.core.receive_message().await;
 
-        // also sends message to device 0 to link devices
-        println!("LINKING <1> to <0>\n");
-        client_1.create_linked_device(client_0.idkey()).await;
-        // receive update_linked...
-        println!(
-            "Getting update_linked... on <0> and SENDING confirm_update...\n"
-        );
-        client_0.receive_operation().await;
-        // receive update_linked... loopback
-        println!("Getting update_linked... LOOPBACK on <1>\n");
-        client_1.receive_operation().await;
-        // receive confirm_update_linked...
-        println!("Getting confirm_update... on <1>\n");
-        client_1.receive_operation().await;
-        // receive confirm_update_linked... loopback
-        println!("Getting confirm_update... LOOPBACK on <0>\n");
-        client_0.receive_operation().await;
-    }
+            // also sends message to device 0 to link devices
+            println!("LINKING <1> to <0>\n");
+            client_1.create_linked_device(client_0.idkey()).await;
+            // receive update_linked...
+            println!(
+                "Getting update_linked... on <0> and SENDING confirm_update...\n"
+            );
+            client_0.receive_operation().await;
+            // receive update_linked... loopback
+            println!("Getting update_linked... LOOPBACK on <1>\n");
+            client_1.receive_operation().await;
+            // receive confirm_update_linked...
+            println!("Getting confirm_update... on <1>\n");
+            client_1.receive_operation().await;
+            // receive confirm_update_linked... loopback
+            println!("Getting confirm_update... LOOPBACK on <0>\n");
+            client_0.receive_operation().await;
+        }
 
-    #[tokio::test]
-    async fn test_delete_self_device() {
-        let mut client_0 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_0.core.receive_message().await;
-        client_0.create_standalone_device();
+        #[tokio::test]
+        async fn test_delete_self_device() {
+            let mut client_0 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_0.core.receive_message().await;
+            client_0.create_standalone_device();
 
-        let mut client_1 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_1.core.receive_message().await;
+            let mut client_1 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_1.core.receive_message().await;
 
-        // also sends operation to device 0 to link devices
-        client_1.create_linked_device(client_0.idkey()).await;
-        // receive update_linked...
-        client_0.receive_operation().await;
-        // receive update_linked... loopback
-        client_1.receive_operation().await;
-        // receive confirm_update_linked...
-        client_1.receive_operation().await;
-        // receive confirm_update_linked... loopback
-        client_0.receive_operation().await;
+            // also sends operation to device 0 to link devices
+            client_1.create_linked_device(client_0.idkey()).await;
+            // receive update_linked...
+            client_0.receive_operation().await;
+            // receive update_linked... loopback
+            client_1.receive_operation().await;
+            // receive confirm_update_linked...
+            client_1.receive_operation().await;
+            // receive confirm_update_linked... loopback
+            client_0.receive_operation().await;
 
-        // delete device
-        client_0.delete_self_device().await;
-        assert_eq!(client_0.device, None);
+            // delete device
+            client_0.delete_self_device().await;
+            assert_eq!(client_0.device, None);
 
-        // receive delete message
-        println!(
-            "client_1.device: {:#?}",
-            client_1.device.as_ref().unwrap().group_store.lock()
-        );
-        assert_eq!(client_1.device.as_ref().unwrap().linked_devices().len(), 2);
-        client_1.receive_operation().await;
-        println!(
-            "client_1.device: {:#?}",
-            client_1.device.as_ref().unwrap().group_store.lock()
-        );
-        assert_eq!(client_1.device.as_ref().unwrap().linked_devices().len(), 1);
-    }
+            // receive delete message
+            println!(
+                "client_1.device: {:#?}",
+                client_1.device.as_ref().unwrap().group_store.lock()
+            );
+            assert_eq!(client_1.device.as_ref().unwrap().linked_devices().len(), 2);
+            client_1.receive_operation().await;
+            println!(
+                "client_1.device: {:#?}",
+                client_1.device.as_ref().unwrap().group_store.lock()
+            );
+            assert_eq!(client_1.device.as_ref().unwrap().linked_devices().len(), 1);
+        }
 
-    #[tokio::test]
-    async fn test_delete_other_device() {
-        let mut client_0 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_0.core.receive_message().await;
-        client_0.create_standalone_device();
+        #[tokio::test]
+        async fn test_delete_other_device() {
+            let mut client_0 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_0.core.receive_message().await;
+            client_0.create_standalone_device();
 
-        let mut client_1 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_1.core.receive_message().await;
+            let mut client_1 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_1.core.receive_message().await;
 
-        // also sends operation to device 0 to link devices
-        client_1.create_linked_device(client_0.idkey()).await;
-        // receive update_linked...
-        client_0.receive_operation().await;
-        // receive update_linked... loopback
-        client_1.receive_operation().await;
-        // receive confirm_update_linked...
-        client_1.receive_operation().await;
-        // receive confirm_update_linked... loopback
-        client_0.receive_operation().await;
+            // also sends operation to device 0 to link devices
+            client_1.create_linked_device(client_0.idkey()).await;
+            // receive update_linked...
+            client_0.receive_operation().await;
+            // receive update_linked... loopback
+            client_1.receive_operation().await;
+            // receive confirm_update_linked...
+            client_1.receive_operation().await;
+            // receive confirm_update_linked... loopback
+            client_0.receive_operation().await;
 
-        // delete device
-        println!(
-            "client_0.device: {:#?}",
-            client_0.device.read().as_ref().unwrap().group_store.lock()
-        );
-        assert_eq!(client_0.device.read().as_ref().unwrap().linked_devices().len(), 2);
-        client_0.delete_other_device(client_1.idkey().clone()).await;
-        println!(
-            "client_0.device: {:#?}",
-            client_0.device.read().as_ref().unwrap().group_store.lock()
-        );
-        assert_eq!(client_0.device.read().as_ref().unwrap().linked_devices().len(), 1);
+            // delete device
+            println!(
+                "client_0.device: {:#?}",
+                client_0.device.read().as_ref().unwrap().group_store.lock()
+            );
+            assert_eq!(client_0.device.read().as_ref().unwrap().linked_devices().len(), 2);
+            client_0.delete_other_device(client_1.idkey().clone()).await;
+            println!(
+                "client_0.device: {:#?}",
+                client_0.device.read().as_ref().unwrap().group_store.lock()
+            );
+            assert_eq!(client_0.device.read().as_ref().unwrap().linked_devices().len(), 1);
 
-        // receive delete operation
-        client_1.receive_operation().await;
-        assert_eq!(client_1.device.read(), None);
-    }
+            // receive delete operation
+            client_1.receive_operation().await;
+            assert_eq!(client_1.device.read(), None);
+        }
 
-    #[tokio::test]
-    async fn test_delete_all_devices() {
-        let mut client_0 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_0.core.receive_message().await;
-        client_0.create_standalone_device();
+        #[tokio::test]
+        async fn test_delete_all_devices() {
+            let mut client_0 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_0.core.receive_message().await;
+            client_0.create_standalone_device();
 
-        let mut client_1 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_1.core.receive_message().await;
+            let mut client_1 = NoiseKVClient::new(None, None, false).await;
+            // upload otkeys to server
+            client_1.core.receive_message().await;
 
-        // also sends operation to device 0 to link devices
-        client_1.create_linked_device(client_0.idkey()).await;
-        // receive update_linked...
-        client_0.receive_operation().await;
-        // receive update_linked... loopback
-        client_1.receive_operation().await;
-        // receive confirm_update_linked...
-        client_1.receive_operation().await;
-        // receive confirm_update_linked... loopback
-        client_0.receive_operation().await;
+            // also sends operation to device 0 to link devices
+            client_1.create_linked_device(client_0.idkey()).await;
+            // receive update_linked...
+            client_0.receive_operation().await;
+            // receive update_linked... loopback
+            client_1.receive_operation().await;
+            // receive confirm_update_linked...
+            client_1.receive_operation().await;
+            // receive confirm_update_linked... loopback
+            client_0.receive_operation().await;
 
-        // delete all devices
-        client_0.delete_all_devices().await;
-        assert_ne!(client_0.device.read(), None);
-        assert_ne!(client_1.device.read(), None);
+            // delete all devices
+            client_0.delete_all_devices().await;
+            assert_ne!(client_0.device.read(), None);
+            assert_ne!(client_1.device.read(), None);
 
-        client_0.receive_operation().await;
-        client_1.receive_operation().await;
-        assert_eq!(client_0.device.read(), None);
-        assert_eq!(client_1.device.read(), None);
-    }
-*/
+            client_0.receive_operation().await;
+            client_1.receive_operation().await;
+            assert_eq!(client_0.device.read(), None);
+            assert_eq!(client_1.device.read(), None);
+        }
+    */
 }

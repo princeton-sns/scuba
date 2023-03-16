@@ -16,3 +16,4 @@ reqwest = "0.11.13"
 futures = "0.3.25"
 async-trait = "0.1.66"
 parking_lot = { version = "0.12.1", features = ["send_guard"] }
+async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }

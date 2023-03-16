@@ -82,7 +82,8 @@ impl Device {
             .resolve_ids(vec![&self.linked_name.read()])
     }
 
-    // FIXME use
+    // TODO use when linking a pre-existing device to another set of
+    // devices
     fn set_pending_link_idkey(&self, idkey: String) {
         *self.pending_link_idkey.write() = Some(idkey);
     }

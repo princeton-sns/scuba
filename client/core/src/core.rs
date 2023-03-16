@@ -43,11 +43,7 @@ impl FullPayload {
 
 #[async_trait]
 pub trait CoreClient: Sync + Send + 'static {
-    async fn client_callback(
-        &self,
-        sender: String,
-        message: String,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    async fn client_callback(&self, sender: String, message: String);
 }
 
 pub struct Core<C: CoreClient> {
@@ -63,10 +59,10 @@ impl<C: CoreClient> Core<C> {
     pub async fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
-        turn_encryption_off_arg: bool,
+        turn_encryption_off: bool,
         client: Option<Arc<C>>,
     ) -> Arc<Core<C>> {
-        let olm_wrapper = OlmWrapper::new(turn_encryption_off_arg);
+        let olm_wrapper = OlmWrapper::new(turn_encryption_off);
         let idkey = olm_wrapper.get_idkey();
         let hash_vectors = Mutex::new(HashVectors::new(idkey.clone()));
 
@@ -125,11 +121,13 @@ impl<C: CoreClient> Core<C> {
             }
         }
 
+        println!("sending message ({:?})", self.idkey());
         let (common_payload, recipient_payloads) = self
             .hash_vectors
             .lock()
             .await
             .prepare_message(dst_idkeys.clone(), payload.to_string());
+        println!("prepared message");
         let mut batch = Batch::new();
         for (idkey, recipient_payload) in recipient_payloads {
             let full_payload = FullPayload::to_string(
@@ -151,6 +149,7 @@ impl<C: CoreClient> Core<C> {
                 Payload::new(c_type, ciphertext),
             ));
         }
+        println!("sending to server_comm");
         self.server_comm
             .read()
             .await
@@ -164,13 +163,11 @@ impl<C: CoreClient> Core<C> {
         &self,
         event: eventsource_client::Result<Event>,
     ) {
+        println!("receiving message ({:?})", self.idkey());
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
                 let otkeys = self.olm_wrapper.generate_otkeys(None);
-                // FIXME is this read()...await ok??
-                // had to use tokio's RwLock instead of std's in order to
-                // make this Send
                 match self
                     .server_comm
                     .read()
@@ -201,6 +198,7 @@ impl<C: CoreClient> Core<C> {
                 );
 
                 let full_payload = FullPayload::from_string(decrypted);
+                println!("got: {:?}", full_payload);
 
                 // validate
                 match self.hash_vectors.lock().await.parse_message(
@@ -209,24 +207,21 @@ impl<C: CoreClient> Core<C> {
                     &full_payload.per_recipient,
                 ) {
                     // No message to forward
-                    Ok(None) => {}
+                    Ok(None) => {
+                        println!("val only");
+                    }
                     // Forward message
                     Ok(Some((seq, message))) => {
-                        match self
-                            .client
+                        println!("forwarding");
+                        self.client
                             .read()
                             .await
                             .as_ref()
                             .unwrap()
                             .client_callback(msg.sender().clone(), message)
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(err) => {
-                                panic!("Error in client callback: {:?}", err)
-                            }
-                        }
+                            .await;
 
+                        // TODO allow client to determine when to send these
                         match self
                             .server_comm
                             .read()
@@ -250,19 +245,6 @@ impl<C: CoreClient> Core<C> {
             }
         }
     }
-
-    // FIXME make immutable
-    // self.olm_wrapper.need_mut_ref()
-    // e.g. wrap olm_wrapper w Mutex (for now)
-    // rule: never put a thing into a Mutex which calls some
-    // async functions only wrap types that are used
-    // briefly, and make sure you unlock() before
-    // calling any asyncs
-    // TODO also, between unlock() and lock(), may have to
-    // recalculate any common vars to use
-    //pub async fn receive_message(&mut self) {
-    //    unimplemented!()
-    //}
 }
 
 pub mod stream_client {
@@ -293,11 +275,7 @@ pub mod stream_client {
 
     #[async_trait]
     impl CoreClient for StreamClient {
-        async fn client_callback(
-            &self,
-            sender: String,
-            message: String,
-        ) -> Result<(), Box<dyn std::error::Error>> {
+        async fn client_callback(&self, sender: String, message: String) {
             use futures::SinkExt;
             self.sender
                 .lock()
@@ -305,7 +283,6 @@ pub mod stream_client {
                 .send((sender, message))
                 .await
                 .unwrap();
-            Ok(())
         }
     }
 

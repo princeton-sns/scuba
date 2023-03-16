@@ -28,11 +28,11 @@ pub struct OlmWrapper {
 // TODO impl Error enum
 
 impl OlmWrapper {
-    pub fn new(turn_encryption_off_arg: bool) -> Self {
+    pub fn new(turn_encryption_off: bool) -> Self {
         let account = Mutex::new(OlmAccount::new());
         let idkeys = account.lock().parsed_identity_keys();
         Self {
-            turn_encryption_off: turn_encryption_off_arg,
+            turn_encryption_off,
             idkeys,
             account,
             message_queue: Mutex::new(Vec::new()),

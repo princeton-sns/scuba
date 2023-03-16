@@ -121,11 +121,16 @@ impl<C: CoreClient> Core<C> {
             }
         }
 
-        println!("sending message ({:?})", self.idkey());
-        let (common_payload, recipient_payloads) = self
-            .hash_vectors
-            .lock()
-            .await
+        println!("---sending message ({:?})", self.idkey());
+        println!("-dst_idkeys: {:?}", dst_idkeys);
+        println!("-payload: {:?}", payload);
+        let mut hash_vectors = self.hash_vectors.lock().await;
+        println!("...GOT LOCK...");
+        //let (common_payload, recipient_payloads) = self
+        //    .hash_vectors
+        //    .lock()
+        //    .await
+        let (common_payload, recipient_payloads) = hash_vectors
             .prepare_message(dst_idkeys.clone(), payload.to_string());
         println!("prepared message");
         let mut batch = Batch::new();
@@ -163,7 +168,7 @@ impl<C: CoreClient> Core<C> {
         &self,
         event: eventsource_client::Result<Event>,
     ) {
-        println!("receiving message ({:?})", self.idkey());
+        println!("---receiving message ({:?})", self.idkey());
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
@@ -198,9 +203,65 @@ impl<C: CoreClient> Core<C> {
                 );
 
                 let full_payload = FullPayload::from_string(decrypted);
-                println!("got: {:?}", full_payload);
+                println!("-sender: {:?}", &msg.sender());
+                println!("-got: {:?}", full_payload.common);
 
-                // validate
+                // If an incoming message is to be forwarded to the client
+                // callback, the lock on hash_vectors below is not released
+                // until _after_ the client callback finishes (technically,
+                // it is not even released until the
+                // deleted_messages_from_server() function returns). If the
+                // client callback tries to send a message (e.g. when linking a
+                // device, the client callback will receive an UpdateLinked
+                // message and subsequently try to reply with a
+                // ConfirmUpdateLinked message), the code will deadlock because
+                // hash_vectors lock is still held by the line below.
+                // tokio::sync doesn't provide a function for unlocking the
+                // Mutex, but the Mutex needs to be asynchronous b/c when
+                // sending a message, encrypt() is async, and the lock needs (?)
+                // to be held across that .await point.
+
+                // Actually, the worst thing that (I think) can happen if the
+                // mutex is _sync_ is that messages will be reordered sending
+                // side? Which violates sender-side ordering (translated to
+                // real-time ordering).
+
+                // Is this valid? Proof by contradiction: Say client A start to
+                // send message X, meaning it updates its pending messages list
+                // and prepares to send along its current hash_vector head state
+                // (lets call this hvX). Then the thread doing this work yields
+                // at the first encrypt() call, at which point client A now
+                // starts to send message Y - updates pending messages list and
+                // prepares hvY to be sent. Assuming message X is going to a
+                // superset of message Y's recipients, and asumming each per-
+                // recipient message is encrypted in lockstep (i.e. the threads
+                // alternate between X and Y), encryption for Y will complete
+                // first, be sent to the server first, and probably ordered
+                // before X, although its hash vector state comes
+                // chronologically after X. A mutual recipient of both messages
+                // X and Y (say, client B) will receive Y first, find that hvY
+                // does not match up with its current hash_vector state, and
+                // conclude that the server has performed some reordering
+                // attack. So, releasing the lock on the hash_vectors mutex
+                // before the .await point in send_message would be invalid.
+
+                // The other option is to release the lock on the hash_vectors
+                // mutex before the .await point on the client callback in this
+                // function (server_comm_callback). At this point, messages have
+                // already been sent correctly and (lets assume) ordered
+                // correctly by the server. If message X begins to be processed
+                // by client B, it will be added to the hash_vectors data
+                // structure of client B in the right order (no ordering
+                // violation will be detected). Then, the mutex is unlocked,
+                // and another thread starts processing message Y, which again
+                // is added to the hash_vectors data structure correctly, but
+                // could be sent to the application before message X. Depending
+                // on the conflict resolution schemes, X could overwrite the
+                // changes made by Y, which were intended to come after X.
+
+                // AND I don't even know yet how to unlock() tokio's async
+                // mutex...
+
                 match self.hash_vectors.lock().await.parse_message(
                     &msg.sender(),
                     full_payload.common,
@@ -213,6 +274,7 @@ impl<C: CoreClient> Core<C> {
                     // Forward message
                     Ok(Some((seq, message))) => {
                         println!("forwarding");
+                        // TODO unlock hash_vectors mutex here?
                         self.client
                             .read()
                             .await

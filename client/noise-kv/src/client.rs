@@ -1,7 +1,6 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
-use parking_lot::Mutex;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -332,13 +331,13 @@ impl NoiseKVClient {
 
     pub fn create_standalone_device(&self) {
         *self.device.write() = Some(Device::new(self.idkey(), None, None));
-        //println!("standalone idkey: {:?}", self.idkey());
+        println!("standalone idkey: {:?}", self.idkey());
     }
 
     pub async fn create_linked_device(&self, idkey: String) {
         *self.device.write() =
             Some(Device::new(self.idkey(), None, Some(idkey.clone())));
-        //println!("linked idkey: {:?}", self.idkey());
+        println!("linked idkey: {:?}", self.idkey());
 
         let linked_name = &self
             .device
@@ -358,16 +357,21 @@ impl NoiseKVClient {
             .lock()
             .get_all_subgroups(linked_name);
 
-        self.send_message(
-            vec![idkey],
-            &Operation::to_string(&Operation::UpdateLinked(
-                self.idkey(),
-                linked_name.to_string(),
-                linked_members_to_add,
-            ))
-            .unwrap(),
-        )
-        .await;
+        match self
+            .send_message(
+                vec![idkey],
+                &Operation::to_string(&Operation::UpdateLinked(
+                    self.idkey(),
+                    linked_name.to_string(),
+                    linked_members_to_add,
+                ))
+                .unwrap(),
+            )
+            .await
+        {
+            Ok(_) => println!("!sent UpdateLinked!"),
+            Err(err) => panic!("Error sending UpdateLinked: {:?}", err),
+        }
     }
 
     async fn update_linked_group(
@@ -380,11 +384,7 @@ impl NoiseKVClient {
             .read()
             .as_ref()
             .unwrap()
-            .update_linked_group(
-                //sender.clone(),
-                temp_linked_name.clone(),
-                members_to_add,
-            )
+            .update_linked_group(temp_linked_name.clone(), members_to_add)
             .map_err(Error::from);
         let perm_linked_name = self
             .device
@@ -396,23 +396,27 @@ impl NoiseKVClient {
             .to_string();
 
         // send all groups (TODO and data) to new members
-        println!("sending confirm_update_linked");
-        self.send_message(
-            vec![sender],
-            &Operation::to_string(&Operation::ConfirmUpdateLinked(
-                perm_linked_name,
-                self.device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .group_store
-                    .lock()
-                    .get_all_groups()
-                    .clone(),
-            ))
-            .unwrap(),
-        )
-        .await;
+        match self
+            .send_message(
+                vec![sender],
+                &Operation::to_string(&Operation::ConfirmUpdateLinked(
+                    perm_linked_name,
+                    self.device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .group_store
+                        .lock()
+                        .get_all_groups()
+                        .clone(),
+                ))
+                .unwrap(),
+            )
+            .await
+        {
+            Ok(_) => println!("!sent ConfirmUpdateLinked!"),
+            Err(err) => panic!("Error sending ConfirmUpdateLinked: {:?}", err),
+        }
 
         // TODO notify contacts of new members
 
@@ -668,29 +672,21 @@ mod tests {
         }
     }
 
-    /*
     #[tokio::test]
-    async fn test_update_linked_group() {
+    async fn test_create_linked_device() {
         let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        assert!(client_0.core.is_some());
-        println!("created client 0");
         let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        assert!(client_1.core.is_some());
-        println!("created client 1");
 
         client_0.create_standalone_device();
-        assert!(client_0.core.is_some());
-        println!("created device 0");
-        // also sends operation to device 0 to link devices
-        println!("creating linked device 1");
+        // sends operation to device 0 to link devices
         client_1.create_linked_device(client_0.idkey()).await;
-        assert!(client_1.core.is_some());
 
-        // wait for client_0 callback to complete
-        println!("waiting for client_0 callback");
+        println!("client_0 idkey = {:?}", client_0.idkey());
+        println!("client_1 idkey = {:?}", client_1.idkey());
+
         loop {
             let ctr = client_0.ctr.lock();
-            println!("ctr: {:?}", *ctr);
+            println!("ctr_0 (test): {:?}", *ctr);
             if *ctr != 0 {
                 let _ = client_0.ctr_cv.wait(ctr).await;
             } else {
@@ -698,11 +694,9 @@ mod tests {
             }
         }
 
-        // wait for client_1 callback to complete
-        println!("waiting for client_1 callback");
         loop {
             let ctr = client_1.ctr.lock();
-            println!("ctr: {:?}", *ctr);
+            println!("ctr_1 (test): {:?}", *ctr);
             if *ctr != 0 {
                 let _ = client_1.ctr_cv.wait(ctr).await;
             } else {
@@ -713,6 +707,7 @@ mod tests {
         // TODO check state
     }
 
+    /*
     #[tokio::test]
     async fn test_confirm_update_linked_group() {
         let mut client_0 = NoiseKVClient::new(None, None, false).await;

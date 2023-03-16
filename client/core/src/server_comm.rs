@@ -1,12 +1,10 @@
 use crate::core::{Core, CoreClient};
 use eventsource_client::{Client, ClientBuilder, SSE};
 use futures::TryStreamExt;
-//use futures::Stream;
 use reqwest::{Response, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-//use std::pin::Pin;
 use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
@@ -264,7 +262,6 @@ impl<C: CoreClient> ServerComm<C> {
         &self,
         to_add: &HashMap<String, String>,
     ) -> Result<Response> {
-        //println!("ADDING OTKEYS TO SERVER");
         self.client
             .post(self.base_url.join("/self/otkeys").expect("").as_str())
             .header("Content-Type", "application/json")

@@ -1,6 +1,7 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -53,6 +54,10 @@ pub struct Core<C: CoreClient> {
     client: RwLock<Option<Arc<C>>>,
     init: parking_lot::Mutex<bool>,
     init_cv: Condvar,
+    outgoing_queue: Arc<parking_lot::Mutex<VecDeque<CommonPayload>>>,
+    incoming_queue: Arc<parking_lot::Mutex<VecDeque<CommonPayload>>>,
+    oq_cv: Condvar,
+    iq_cv: Condvar,
 }
 
 impl<C: CoreClient> Core<C> {
@@ -78,6 +83,16 @@ impl<C: CoreClient> Core<C> {
             client: RwLock::new(client),
             init: parking_lot::Mutex::new(false),
             init_cv: Condvar::new(),
+            outgoing_queue: Arc::new(parking_lot::Mutex::new(VecDeque::<
+                CommonPayload,
+            >::new(
+            ))),
+            incoming_queue: Arc::new(parking_lot::Mutex::new(VecDeque::<
+                CommonPayload,
+            >::new(
+            ))),
+            oq_cv: Condvar::new(),
+            iq_cv: Condvar::new(),
         });
 
         {
@@ -121,16 +136,34 @@ impl<C: CoreClient> Core<C> {
             }
         }
 
+        println!("");
         println!("---sending message ({:?})", self.idkey());
-        println!("-dst_idkeys: {:?}", dst_idkeys);
-        println!("-payload: {:?}", payload);
+        println!("");
         println!("...TRYING SEND LOCK...");
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         println!("...GOT SEND LOCK...");
         let (common_payload, recipient_payloads) = hash_vectors_guard
             .prepare_message(dst_idkeys.clone(), payload.to_string());
+
+        // FIXME What if common_payloads are identical?
+        // If they're identical here, they can trigger a reordering detection,
+        // but if they're identical upon reception, they won't negatively affect
+        // the application (since they're identical).
+
+        // Worst case, we add a sequence number to differentiate between
+        // identical outgoing common_payloads.
+
+        // However, as long as clients .await on their send_message() function,
+        // will there ever be a case where messages get reordered sending-side?
+        // Unless the client is multithreaded, I don't think so
+
+        // add to outgoing_queue before releasing lock
+        self.outgoing_queue.lock().push_back(common_payload.clone());
+        println!("-----ADDING CP TO OQ: {:?}", common_payload.clone());
+
         core::mem::drop(hash_vectors_guard);
-        println!("prepared message");
+        println!("...UNLOCKED SEND...");
+
         let mut batch = Batch::new();
         for (idkey, recipient_payload) in recipient_payloads {
             let full_payload = FullPayload::to_string(
@@ -152,7 +185,21 @@ impl<C: CoreClient> Core<C> {
                 Payload::new(c_type, ciphertext),
             ));
         }
-        println!("sending to server_comm");
+
+        // loop until front of queue is ready to send
+        loop {
+            let mut oq_guard = self.outgoing_queue.lock();
+            println!("-----SEND LOOP");
+            println!("oq_guard.front(): {:?}", oq_guard.front());
+            if oq_guard.front() != Some(&common_payload) {
+                let _ = self.oq_cv.wait(oq_guard).await;
+            } else {
+                println!("~~POPPING~~");
+                oq_guard.pop_front();
+                break;
+            }
+        }
+
         self.server_comm
             .read()
             .await
@@ -166,7 +213,9 @@ impl<C: CoreClient> Core<C> {
         &self,
         event: eventsource_client::Result<Event>,
     ) {
+        println!("");
         println!("---receiving message ({:?})", self.idkey());
+        println!("");
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
@@ -201,8 +250,6 @@ impl<C: CoreClient> Core<C> {
                 );
 
                 let full_payload = FullPayload::from_string(decrypted);
-                println!("-sender: {:?}", &msg.sender());
-                println!("-got: {:?}", full_payload.common);
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released
@@ -262,10 +309,36 @@ impl<C: CoreClient> Core<C> {
                 println!("...GOT RECV LOCK...");
                 let parsed_res = hash_vectors_guard.parse_message(
                     &msg.sender(),
-                    full_payload.common,
+                    full_payload.common.clone(),
                     &full_payload.per_recipient,
                 );
+
+                // add to incoming_queue before releasing lock
+                self.incoming_queue
+                    .lock()
+                    .push_back(full_payload.common.clone());
+                println!(
+                    "-----ADDING CP TO IQ: {:?}",
+                    full_payload.common.clone()
+                );
+
                 core::mem::drop(hash_vectors_guard);
+                println!("...UNLOCKED RECV...");
+
+                // loop until front of queue is ready to forward
+                loop {
+                    let mut iq_guard = self.incoming_queue.lock();
+                    println!("-----RECV LOOP");
+                    println!("iq_guard.front(): {:?}", iq_guard.front());
+                    if iq_guard.front() != Some(&full_payload.common) {
+                        let _ = self.iq_cv.wait(iq_guard).await;
+                    } else {
+                        println!("~~POPPING~~");
+                        iq_guard.pop_front();
+                        break;
+                    }
+                }
+
                 match parsed_res {
                     // No message to forward
                     Ok(None) => {
@@ -301,7 +374,9 @@ impl<C: CoreClient> Core<C> {
                             ),
                         }
                     }
-                    Err(err) => panic!("Validation failed: {:?}", err),
+                    Err(err) => {
+                        panic!("Validation failed: {:?}", err);
+                    }
                 }
             }
         }

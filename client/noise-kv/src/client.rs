@@ -320,10 +320,7 @@ impl NoiseKVClient {
                 .delete_device(idkey_to_delete)
                 .map_err(Error::from)
                 .map_err(Box::<dyn std::error::Error>::from),
-            Operation::Test(msg) => {
-                println!("msg: {:?}", msg);
-                Ok(())
-            }
+            Operation::Test(msg) => Ok(()),
         }
     }
 
@@ -331,13 +328,11 @@ impl NoiseKVClient {
 
     pub fn create_standalone_device(&self) {
         *self.device.write() = Some(Device::new(self.idkey(), None, None));
-        println!("standalone idkey: {:?}", self.idkey());
     }
 
     pub async fn create_linked_device(&self, idkey: String) {
         *self.device.write() =
             Some(Device::new(self.idkey(), None, Some(idkey.clone())));
-        println!("linked idkey: {:?}", self.idkey());
 
         let linked_name = &self
             .device
@@ -369,7 +364,7 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => println!("!sent UpdateLinked!"),
+            Ok(_) => {}
             Err(err) => panic!("Error sending UpdateLinked: {:?}", err),
         }
     }
@@ -414,7 +409,7 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => println!("!sent ConfirmUpdateLinked!"),
+            Ok(_) => {}
             Err(err) => panic!("Error sending ConfirmUpdateLinked: {:?}", err),
         }
 
@@ -508,7 +503,8 @@ impl NoiseKVClient {
 impl CoreClient for NoiseKVClient {
     async fn client_callback(&self, sender: String, message: String) {
         println!("IN NOISEKV CLIENT CALLBACK");
-        println!("message: {:?}", message);
+        println!("---idkey: {:?}", self.idkey());
+        println!("---message: {:?}", message);
 
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
@@ -705,6 +701,117 @@ mod tests {
         }
 
         // TODO check state
+    }
+
+    #[tokio::test]
+    async fn test_serialization() {
+        let mut client_0 = NoiseKVClient::new(None, None, false, Some(0)).await;
+        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_2 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_3 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_4 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_5 = NoiseKVClient::new(None, None, false, Some(2)).await;
+
+        client_0.create_standalone_device();
+        client_1.create_standalone_device();
+        client_2.create_standalone_device();
+        client_3.create_standalone_device();
+        client_4.create_standalone_device();
+        client_5.create_standalone_device();
+
+        println!("client_0 idkey = {:?}", client_0.idkey());
+        println!("client_1 idkey = {:?}", client_1.idkey());
+        println!("client_2 idkey = {:?}", client_2.idkey());
+        println!("client_3 idkey = {:?}", client_3.idkey());
+        println!("client_4 idkey = {:?}", client_4.idkey());
+        println!("client_5 idkey = {:?}", client_5.idkey());
+
+        // construct a large message with many recipients
+        // message size actually doesn't even matter because we .await
+        // on send_message()
+        let vec = vec![0x78; 1024]; //4096];
+        let operation_1 = Operation::to_string(&Operation::Test(
+            std::str::from_utf8(vec.as_slice()).unwrap().to_string(),
+        ))
+        .unwrap();
+        let recipients_1 = vec![
+            client_1.idkey(),
+            client_2.idkey(),
+            client_3.idkey(),
+            client_4.idkey(),
+            client_5.idkey(),
+        ];
+
+        // construct a small message with a subset of recipients
+        let operation_2 =
+            Operation::to_string(&Operation::Test("small".to_string()))
+                .unwrap();
+        let recipients_2 = vec![client_5.idkey()];
+
+        // send the messages
+        client_0.send_message(recipients_1, &operation_1).await;
+        client_0.send_message(recipients_2, &operation_2).await;
+
+        // unnecessary
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_1.ctr.lock();
+            println!("ctr_1 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_1.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_2.ctr.lock();
+            println!("ctr_2 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_2.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_3.ctr.lock();
+            println!("ctr_3 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_3.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_4.ctr.lock();
+            println!("ctr_4 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_4.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_5.ctr.lock();
+            println!("ctr_5 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_5.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
     }
 
     /*

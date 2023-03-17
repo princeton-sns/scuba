@@ -124,14 +124,12 @@ impl<C: CoreClient> Core<C> {
         println!("---sending message ({:?})", self.idkey());
         println!("-dst_idkeys: {:?}", dst_idkeys);
         println!("-payload: {:?}", payload);
-        let mut hash_vectors = self.hash_vectors.lock().await;
-        println!("...GOT LOCK...");
-        //let (common_payload, recipient_payloads) = self
-        //    .hash_vectors
-        //    .lock()
-        //    .await
-        let (common_payload, recipient_payloads) = hash_vectors
+        println!("...TRYING SEND LOCK...");
+        let mut hash_vectors_guard = self.hash_vectors.lock().await;
+        println!("...GOT SEND LOCK...");
+        let (common_payload, recipient_payloads) = hash_vectors_guard
             .prepare_message(dst_idkeys.clone(), payload.to_string());
+        core::mem::drop(hash_vectors_guard);
         println!("prepared message");
         let mut batch = Batch::new();
         for (idkey, recipient_payload) in recipient_payloads {
@@ -259,14 +257,16 @@ impl<C: CoreClient> Core<C> {
                 // on the conflict resolution schemes, X could overwrite the
                 // changes made by Y, which were intended to come after X.
 
-                // AND I don't even know yet how to unlock() tokio's async
-                // mutex...
-
-                match self.hash_vectors.lock().await.parse_message(
+                println!("...TRYING RECV LOCK...");
+                let mut hash_vectors_guard = self.hash_vectors.lock().await;
+                println!("...GOT RECV LOCK...");
+                let parsed_res = hash_vectors_guard.parse_message(
                     &msg.sender(),
                     full_payload.common,
                     &full_payload.per_recipient,
-                ) {
+                );
+                core::mem::drop(hash_vectors_guard);
+                match parsed_res {
                     // No message to forward
                     Ok(None) => {
                         println!("val only");
@@ -274,7 +274,6 @@ impl<C: CoreClient> Core<C> {
                     // Forward message
                     Ok(Some((seq, message))) => {
                         println!("forwarding");
-                        // TODO unlock hash_vectors mutex here?
                         self.client
                             .read()
                             .await

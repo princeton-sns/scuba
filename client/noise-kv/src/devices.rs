@@ -339,6 +339,8 @@ mod tests {
             }
         }
 
+        assert_eq!(device_1.pending_link_idkey.read().as_ref(), None);
+
         let merged_linked_members = device_1
             .group_store
             .lock()

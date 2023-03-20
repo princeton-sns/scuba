@@ -700,7 +700,23 @@ mod tests {
             }
         }
 
-        // TODO check state
+        let linked_name_0: String = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .to_string();
+        let linked_name_1: String = client_1
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .to_string();
+        assert_eq!(linked_name_0, linked_name_1);
     }
 
     #[tokio::test]
@@ -727,9 +743,9 @@ mod tests {
         println!("client_5 idkey = {:?}", client_5.idkey());
 
         // construct a large message with many recipients
-        // message size actually doesn't even matter because we .await
+        // FIXME message size actually doesn't even matter because we .await
         // on send_message()
-        let vec = vec![0x78; 1024]; //4096];
+        let vec = vec![0x78; 1024];
         let operation_1 = Operation::to_string(&Operation::Test(
             std::str::from_utf8(vec.as_slice()).unwrap().to_string(),
         ))
@@ -815,37 +831,6 @@ mod tests {
     }
 
     /*
-    #[tokio::test]
-    async fn test_confirm_update_linked_group() {
-        let mut client_0 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_0.core.receive_message().await;
-
-        client_0.create_standalone_device();
-
-        let mut client_1 = NoiseKVClient::new(None, None, false).await;
-        // upload otkeys to server
-        client_1.core.receive_message().await;
-
-        // also sends message to device 0 to link devices
-        println!("LINKING <1> to <0>\n");
-        client_1.create_linked_device(client_0.idkey()).await;
-        // receive update_linked...
-        println!(
-            "Getting update_linked... on <0> and SENDING confirm_update...\n"
-        );
-        client_0.receive_operation().await;
-        // receive update_linked... loopback
-        println!("Getting update_linked... LOOPBACK on <1>\n");
-        client_1.receive_operation().await;
-        // receive confirm_update_linked...
-        println!("Getting confirm_update... on <1>\n");
-        client_1.receive_operation().await;
-        // receive confirm_update_linked... loopback
-        println!("Getting confirm_update... LOOPBACK on <0>\n");
-        client_0.receive_operation().await;
-    }
-
     #[tokio::test]
     async fn test_delete_self_device() {
         let mut client_0 = NoiseKVClient::new(None, None, false).await;

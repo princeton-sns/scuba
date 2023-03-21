@@ -2,7 +2,7 @@ use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -17,8 +17,8 @@ enum Operation {
     UpdateLinked(String, String, HashMap<String, Group>),
     // TODO last param (for data): HashMap<String, BasicData>
     ConfirmUpdateLinked(String, HashMap<String, Group>),
-    //  UpdateContact,
-    //  ConfirmUpdatedContact,
+    AddContact(String, String, HashMap<String, Group>),
+    ConfirmAddContact(String, HashMap<String, Group>),
     SetGroup(String, Group),
     LinkGroups(String, String),
     DeleteGroup(String),
@@ -151,6 +151,8 @@ impl NoiseKVClient {
         //    Operation::ConfirmUpdateLinked(new_linked_name,
         // new_groups) => {        Ok(())
         //    }
+        //    Operation::AddContact => Ok(()),
+        //    Operation::ConfirmAddContact => Ok(()),
         //    Operation::SetGroup(group_id, group_val) => Ok(()),
         //    Operation::LinkGroups(parent_id, child_id) => Ok(()),
         //    Operation::DeleteGroup(group_id) => Ok(()),
@@ -187,10 +189,7 @@ impl NoiseKVClient {
         //}
     }
 
-    async fn demux(
-        &self,
-        operation: Operation,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn demux(&self, operation: Operation) -> Result<(), Error> {
         match operation {
             Operation::UpdateLinked(
                 sender,
@@ -199,16 +198,26 @@ impl NoiseKVClient {
             ) => self
                 .update_linked_group(sender, temp_linked_name, members_to_add)
                 .await
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::ConfirmUpdateLinked(new_linked_name, new_groups) => self
                 .device
                 .read()
                 .as_ref()
                 .unwrap()
                 .confirm_update_linked_group(new_linked_name, new_groups)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
+            Operation::AddContact(sender, contact_name, contact_devices) => {
+                self.add_contact(sender, contact_name, contact_devices)
+                    .await
+                    .map_err(Error::from)
+            }
+            Operation::ConfirmAddContact(contact_name, contact_devices) => self
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .add_contact(contact_name, contact_devices)
+                .map_err(Error::from),
             Operation::SetGroup(group_id, group_val) => {
                 self.device
                     .read()
@@ -227,8 +236,7 @@ impl NoiseKVClient {
                 .group_store
                 .lock()
                 .link_groups(&parent_id, &child_id)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::DeleteGroup(group_id) => {
                 self.device
                     .read()
@@ -247,8 +255,7 @@ impl NoiseKVClient {
                 .group_store
                 .lock()
                 .add_parent(&group_id, &parent_id)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::RemoveParent(group_id, parent_id) => self
                 .device
                 .read()
@@ -257,8 +264,7 @@ impl NoiseKVClient {
                 .group_store
                 .lock()
                 .remove_parent(&group_id, &parent_id)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::AddChild(group_id, child_id) => self
                 .device
                 .read()
@@ -267,8 +273,7 @@ impl NoiseKVClient {
                 .group_store
                 .lock()
                 .add_child(&group_id, &child_id)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::RemoveChild(group_id, child_id) => self
                 .device
                 .read()
@@ -277,8 +282,7 @@ impl NoiseKVClient {
                 .group_store
                 .lock()
                 .remove_child(&group_id, &child_id)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::UpdateData(data_id, data_val) => {
                 self.device
                     .read()
@@ -310,7 +314,6 @@ impl NoiseKVClient {
                         *self.device.write() = None;
                     })
                     .map_err(Error::from)
-                    .map_err(Box::<dyn std::error::Error>::from)
             }
             Operation::DeleteOtherDevice(idkey_to_delete) => self
                 .device
@@ -318,13 +321,12 @@ impl NoiseKVClient {
                 .as_ref()
                 .unwrap()
                 .delete_device(idkey_to_delete)
-                .map_err(Error::from)
-                .map_err(Box::<dyn std::error::Error>::from),
+                .map_err(Error::from),
             Operation::Test(msg) => Ok(()),
         }
     }
 
-    /* Remaining functionality */
+    /* Remaining top-level functionality */
 
     pub fn create_standalone_device(&self) {
         *self.device.write() = Some(Device::new(self.idkey(), None, None));
@@ -334,7 +336,7 @@ impl NoiseKVClient {
         *self.device.write() =
             Some(Device::new(self.idkey(), None, Some(idkey.clone())));
 
-        let linked_name = &self
+        let linked_name = self
             .device
             .read()
             .as_ref()
@@ -350,14 +352,14 @@ impl NoiseKVClient {
             .unwrap()
             .group_store
             .lock()
-            .get_all_subgroups(linked_name);
+            .get_all_subgroups(&linked_name);
 
         match self
             .send_message(
                 vec![idkey],
                 &Operation::to_string(&Operation::UpdateLinked(
                     self.idkey(),
-                    linked_name.to_string(),
+                    linked_name,
                     linked_members_to_add,
                 ))
                 .unwrap(),
@@ -414,6 +416,111 @@ impl NoiseKVClient {
         }
 
         // TODO notify contacts of new members
+
+        Ok(())
+    }
+
+    pub async fn init_add_contact(&self, contact_idkey: String) {
+        let linked_name = self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone();
+
+        // only add contact if contact_name is not a linked member
+        if self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .group_store
+            .lock()
+            .is_group_member(&contact_idkey, &linked_name)
+        {
+            println!(
+                "Contact is a member of this device's linked group. Exiting."
+            );
+            return;
+        }
+
+        let linked_device_groups = self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .group_store
+            .lock()
+            .get_all_subgroups(&linked_name);
+
+        match self
+            .send_message(
+                vec![contact_idkey],
+                &Operation::to_string(&Operation::AddContact(
+                    self.idkey(),
+                    linked_name,
+                    linked_device_groups,
+                ))
+                .unwrap(),
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => panic!("Error sending AddContact: {:?}", err),
+        }
+    }
+
+    pub fn get_contacts(&self) -> HashSet<String> {
+        self.device.read().as_ref().unwrap().get_contacts()
+    }
+
+    // TODO user needs to accept first via, e.g., pop-up
+    async fn add_contact(
+        &self,
+        sender: String,
+        contact_name: String,
+        contact_devices: HashMap<String, Group>,
+    ) -> Result<(), Error> {
+        self.device
+            .read()
+            .as_ref()
+            .unwrap()
+            .add_contact(contact_name.clone(), contact_devices)
+            .map_err(Error::from);
+
+        let linked_name = self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone();
+        let linked_device_groups = self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .group_store
+            .lock()
+            .get_all_subgroups(&linked_name);
+
+        match self
+            .send_message(
+                vec![sender],
+                &Operation::to_string(&Operation::ConfirmAddContact(
+                    linked_name,
+                    linked_device_groups,
+                ))
+                .unwrap(),
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => panic!("Error sending ConfirmAddContact: {:?}", err),
+        }
 
         Ok(())
     }
@@ -768,7 +875,7 @@ mod tests {
         client_0.send_message(recipients_1, &operation_1).await;
         client_0.send_message(recipients_2, &operation_2).await;
 
-        // unnecessary
+        // client_0 loop is unnecessary
         loop {
             let ctr = client_0.ctr.lock();
             println!("ctr_0 (test): {:?}", *ctr);
@@ -828,6 +935,163 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_add_contact() {
+        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+
+        client_0.create_standalone_device();
+        client_1.create_standalone_device();
+
+        client_0.init_add_contact(client_1.idkey()).await;
+
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_1.ctr.lock();
+            println!("ctr_1 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_1.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /* client_0 groups */
+
+        let client_device_guard_0 = client_0.device.read();
+        let linked_id_0: String = client_device_guard_0
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .to_string();
+        let mut group_store_guard_0 =
+            client_device_guard_0.as_ref().unwrap().group_store.lock();
+        let mut linked_group_0 = group_store_guard_0
+            .get_group_mut(&linked_id_0)
+            .unwrap()
+            .clone();
+        linked_group_0.is_top_level_name = true;
+
+        let mut device_id_0 = &String::new();
+        // have to iter b/c can't otherwise index into HashSet
+        // (should only have one element)
+        let children_0 = linked_group_0.children().as_ref().unwrap();
+        assert!(!children_0.is_empty());
+        for id in children_0.iter() {
+            device_id_0 = id;
+            break;
+        }
+        // drop mutable guard_0
+        core::mem::drop(group_store_guard_0);
+
+        let group_store_guard_0 =
+            client_device_guard_0.as_ref().unwrap().group_store.lock();
+        let device_group_0 =
+            group_store_guard_0.get_group(device_id_0).unwrap().clone();
+
+        /* client_1 groups */
+
+        let client_device_guard_1 = client_1.device.read();
+        let linked_id_1: String = client_device_guard_1
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .to_string();
+        let mut group_store_guard_1 =
+            client_device_guard_1.as_ref().unwrap().group_store.lock();
+        let mut linked_group_1 = group_store_guard_1
+            .get_group_mut(&linked_id_1)
+            .unwrap()
+            .clone();
+        linked_group_1.is_top_level_name = true;
+
+        let mut device_id_1 = &String::new();
+        // have to iter b/c can't otherwise index into HashSet
+        // (should only have one element)
+        let children_1 = linked_group_1.children().as_ref().unwrap();
+        assert!(!children_1.is_empty());
+        for id in children_1.iter() {
+            device_id_1 = id;
+            break;
+        }
+        // drop mutable guard_1
+        core::mem::drop(group_store_guard_1);
+
+        let group_store_guard_1 =
+            client_device_guard_1.as_ref().unwrap().group_store.lock();
+        let device_group_1 =
+            group_store_guard_1.get_group(device_id_1).unwrap().clone();
+
+        /* asserts */
+
+        // check that clients have each others linked groups
+        assert_eq!(
+            group_store_guard_0.get_group(&linked_id_1).unwrap(),
+            &linked_group_1
+        );
+        assert_eq!(
+            group_store_guard_1.get_group(&linked_id_0).unwrap(),
+            &linked_group_0
+        );
+
+        // check that clients have each others device groups
+        assert_eq!(
+            group_store_guard_0.get_group(&device_id_1).unwrap(),
+            &device_group_1
+        );
+        assert_eq!(
+            group_store_guard_1.get_group(&device_id_0).unwrap(),
+            &device_group_0
+        );
+    }
+
+    // TODO test adding multiple contacts
+
+    #[tokio::test]
+    async fn test_get_all_contacts() {
+        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+
+        client_0.create_standalone_device();
+        client_1.create_standalone_device();
+
+        client_0.init_add_contact(client_1.idkey()).await;
+
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_1.ctr.lock();
+            println!("ctr_1 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_1.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(client_0.get_contacts().len(), 1);
+        assert_eq!(client_1.get_contacts().len(), 1);
     }
 
     /*

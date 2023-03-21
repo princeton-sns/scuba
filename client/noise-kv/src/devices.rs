@@ -17,7 +17,7 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct Device {
     idkey: Arc<RwLock<String>>,
-    pub group_store: Arc<Mutex<GroupStore>>,
+    pub group_store: Arc<Mutex<GroupStore>>, // FIXME rwlock
     pub data_store: Arc<RwLock<DataStore>>,
     pub linked_name: Arc<RwLock<String>>,
     pending_link_idkey: Arc<RwLock<Option<String>>>,
@@ -105,7 +105,7 @@ impl Device {
         members_to_add.remove(&temp_linked_name);
 
         members_to_add.iter_mut().for_each(|(_, val)| {
-            GroupStore::group_replace(
+            self.group_store.lock().group_replace(
                 val,
                 temp_linked_name.clone(),
                 perm_linked_name.to_string(),
@@ -154,6 +154,47 @@ impl Device {
         Ok(())
     }
 
+    pub fn get_contacts(&self) -> HashSet<String> {
+        let mut contacts = HashSet::<String>::new();
+        for (id, val) in self.group_store.lock().get_all_groups().iter() {
+            if val.is_top_level_name {
+                contacts.insert(id.to_string());
+            }
+        }
+        contacts
+    }
+
+    // TODO get_pending_contacts
+
+    pub fn add_contact(
+        &self,
+        contact_name: String,
+        mut contact_devices: HashMap<String, Group>,
+    ) -> Result<(), Error> {
+        println!("IN ADD_CONTACT");
+        // TODO is_top_level_name will (maybe) be used to add the contact
+        // info of clients that we end up communicating with even though
+        // they are not directly contacts of ours (necessary for data
+        // consistency)
+
+        // for the group whose id == contact_name, set is_top_level_name
+        // to true
+        println!("contact_name: {:?}", contact_name);
+        contact_devices.iter_mut().for_each(|(id, val)| {
+            println!("--");
+            println!("val: {:?}", val);
+            if *id == contact_name {
+                val.is_top_level_name = true;
+                println!("NEW val: {:?}", val);
+            }
+            self.group_store.lock().set_group(id.clone(), val.clone());
+        });
+
+        Ok(())
+    }
+
+    // TODO remove_contact
+
     // FIXME Currently, this function is unnecessary since none
     // of this data is persistent and will be automatically
     // GC'd when the `device` field of the glue object is
@@ -196,7 +237,7 @@ mod tests {
         let group_store = device.group_store.lock();
         let linked_group = group_store.get_group(&linked_name).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name);
-        assert_eq!(linked_group.contact_level(), &false);
+        assert_eq!(linked_group.is_top_level_name, false);
         assert_eq!(linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             linked_group.children(),
@@ -205,7 +246,7 @@ mod tests {
 
         let idkey_group = group_store.get_group(&idkey).unwrap();
         assert_eq!(idkey_group.group_id(), &idkey);
-        assert_eq!(idkey_group.contact_level(), &false);
+        assert_eq!(idkey_group.is_top_level_name, false);
         assert_eq!(
             idkey_group.parents(),
             &HashSet::<String>::from([linked_name.clone()])

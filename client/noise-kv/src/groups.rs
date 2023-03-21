@@ -15,7 +15,7 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
-    contact_level: bool,
+    pub is_top_level_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
 }
@@ -23,7 +23,7 @@ pub struct Group {
 impl Group {
     pub fn new(
         group_id: Option<String>,
-        contact_level: bool,
+        is_top_level_name: bool,
         init_children: bool,
     ) -> Group {
         let init_group_id: String;
@@ -40,7 +40,7 @@ impl Group {
 
         Self {
             group_id: init_group_id,
-            contact_level,
+            is_top_level_name,
             parents: HashSet::<String>::new(),
             children,
         }
@@ -50,15 +50,15 @@ impl Group {
         &self.group_id
     }
 
-    pub fn contact_level(&self) -> &bool {
-        &self.contact_level
-    }
+    //pub fn is_top_level_name(&self) -> &bool {
+    //    &self.is_top_level_name
+    //}
 
-    pub fn update_contact_level(&mut self, contact_level: bool) -> bool {
-        let old_contact_level = self.contact_level;
-        self.contact_level = contact_level;
-        old_contact_level
-    }
+    //pub fn update_is_top_level_name(&mut self, is_top_level_name: bool) ->
+    // bool {    let old_is_top_level_name = self.is_top_level_name;
+    //    self.is_top_level_name = is_top_level_name;
+    //    old_is_top_level_name
+    //}
 
     pub fn parents(&self) -> &HashSet<String> {
         &self.parents
@@ -108,6 +108,10 @@ impl GroupStore {
 
     pub fn get_group(&self, group_id: &String) -> Option<&Group> {
         self.store.get(group_id)
+    }
+
+    pub fn get_group_mut(&mut self, group_id: &String) -> Option<&mut Group> {
+        self.store.get_mut(group_id)
     }
 
     pub fn set_group(
@@ -421,6 +425,7 @@ impl GroupStore {
 
     // TODO remove/re-add to store?
     pub fn group_replace(
+        &self, // FIXME use self?
         group: &mut Group,
         id_to_replace: String,
         replacement_id: String,
@@ -438,7 +443,8 @@ impl GroupStore {
         });
     }
 
-    pub fn group_contains(group: &Group, id_to_check: String) -> bool {
+    // FIXME use self?
+    pub fn group_contains(&self, group: &Group, id_to_check: String) -> bool {
         if group.group_id() == &id_to_check {
             return true;
         }

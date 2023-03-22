@@ -120,6 +120,16 @@ impl NoiseKVClient {
         self.core.as_ref().unwrap().idkey()
     }
 
+    pub fn linked_name(&self) -> String {
+        self.device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone()
+    }
+
     /* Sending-side functions */
 
     async fn send_message(
@@ -207,7 +217,7 @@ impl NoiseKVClient {
                 .confirm_update_linked_group(new_linked_name, new_groups)
                 .map_err(Error::from),
             Operation::AddContact(sender, contact_name, contact_devices) => {
-                self.add_contact(sender, contact_name, contact_devices)
+                self.add_contact_response(sender, contact_name, contact_devices)
                     .await
                     .map_err(Error::from)
             }
@@ -420,7 +430,7 @@ impl NoiseKVClient {
         Ok(())
     }
 
-    pub async fn init_add_contact(&self, contact_idkey: String) {
+    pub async fn add_contact(&self, contact_idkey: String) {
         let linked_name = self
             .device
             .read()
@@ -477,7 +487,7 @@ impl NoiseKVClient {
     }
 
     // TODO user needs to accept first via, e.g., pop-up
-    async fn add_contact(
+    async fn add_contact_response(
         &self,
         sender: String,
         contact_name: String,
@@ -945,7 +955,7 @@ mod tests {
         client_0.create_standalone_device();
         client_1.create_standalone_device();
 
-        client_0.init_add_contact(client_1.idkey()).await;
+        client_0.add_contact(client_1.idkey()).await;
 
         loop {
             let ctr = client_0.ctr.lock();
@@ -1068,7 +1078,7 @@ mod tests {
         client_0.create_standalone_device();
         client_1.create_standalone_device();
 
-        client_0.init_add_contact(client_1.idkey()).await;
+        client_0.add_contact(client_1.idkey()).await;
 
         loop {
             let ctr = client_0.ctr.lock();

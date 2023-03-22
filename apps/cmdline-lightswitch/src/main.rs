@@ -1,123 +1,136 @@
-use async_trait::async_trait;
-use noise_core::core::{Core, CoreClient};
-use parking_lot::RwLock;
-use reedline_repl_rs::clap::Command;
+use noise_kv::client::NoiseKVClient;
+use noise_kv::data::BasicData;
+use reedline_repl_rs::clap::{Arg, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use yansi::Paint;
-
-fn paint_red_bold(input: &str) -> String {
-    Box::new(Paint::red(input).bold()).to_string()
-}
-
-fn paint_cyan_bold(input: &str) -> String {
-    Box::new(Paint::cyan(input).bold()).to_string()
-}
-
-fn paint_white_bold(input: &str) -> String {
-    Box::new(Paint::white(input).bold()).to_string()
-}
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct LightswitchApp {
-    core: Option<Arc<Core<LightswitchApp>>>,
-    light: Arc<RwLock<bool>>,
+    client: NoiseKVClient,
 }
 
-#[derive(Serialize, Deserialize)]
-enum Operation {
-    On,
-    Off,
-}
-
-impl Operation {
-    fn to_string(op: Operation) -> String {
-        serde_json::to_string(&op).unwrap()
-    }
-
-    fn from_string(string: String) -> Operation {
-        serde_json::from_str(string.as_str()).unwrap()
-    }
-}
-
-// FIXME lightbulb doesn't actually need to be separate,
-// just needs to receive these messages (like any other
-// client of the app that should know what the current state
-// of the bulb is) - so the problem is how to add groups?
-#[async_trait]
-impl CoreClient for LightswitchApp {
-    async fn client_callback(&self, sender: String, message: String) {
-        println!("{}", paint_white_bold(format!("FROM: {}", sender).as_str()));
-        match Operation::from_string(message) {
-            Operation::On => {
-                if *self.light.read() {
-                    println!("{}", paint_red_bold("Light is already on"));
-                } else {
-                    println!("{}", paint_cyan_bold("Turning light on"));
-                    *self.light.write() = true;
-                }
-            }
-            Operation::Off => {
-                if !*self.light.read() {
-                    println!("{}", paint_red_bold("Light is already off"));
-                } else {
-                    println!("{}", paint_cyan_bold("Turning light off"));
-                    *self.light.write() = false;
-                }
-            }
-        }
-    }
-}
+//#[derive(Serialize, Deserialize)]
+//enum Operation {
+//    On,
+//    Off,
+//}
+//
+//impl Operation {
+//    fn to_string(op: Operation) -> String {
+//        serde_json::to_string(&op).unwrap()
+//    }
+//
+//    fn from_string(string: String) -> Operation {
+//        serde_json::from_str(string.as_str()).unwrap()
+//    }
+//}
 
 impl LightswitchApp {
     pub async fn new() -> LightswitchApp {
-        let mut lightswitch_app = LightswitchApp {
-            core: None,
-            light: Arc::new(RwLock::new(false)),
-        };
-        let core = Core::new(
-            Some("sns26.cs.princeton.edu"),
-            Some("8000"),
-            false,
-            Some(Arc::new(lightswitch_app.clone())),
-        )
-        .await;
-        lightswitch_app.core = Some(core);
-        lightswitch_app
+        let client = NoiseKVClient::new(None, None, false, None).await;
+        client.create_standalone_device();
+        Self { client }
     }
 
-    async fn send_message(
-        &self,
-        message: &String,
-    ) -> reqwest::Result<reqwest::Response> {
-        let idkey = self.core.as_ref().unwrap().idkey().to_string();
-        self.core
+    pub fn check_device(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        match context.client.device.read().as_ref() {
+            Some(_) => Ok(Some(String::from("Device exists."))),
+            None => Ok(Some(String::from(
+                "Device does NOT exist: please create one.",
+            ))),
+        }
+    }
+
+    pub fn create_device(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        context.client.create_standalone_device();
+        Ok(Some(String::from("Device created!")))
+    }
+
+    pub fn get_name(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        Ok(Some(String::from(format!(
+            "Name: {}",
+            context.client.linked_name()
+        ))))
+    }
+
+    pub fn get_idkey(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        Ok(Some(String::from(format!(
+            "Idkey: {}",
+            context.client.idkey()
+        ))))
+    }
+
+    pub fn get_contacts(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        Ok(Some(itertools::join(&context.client.get_contacts(), "\n")))
+    }
+
+    pub async fn add_contact(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        let idkey = args.get_one::<String>("idkey").unwrap().to_string();
+        context.client.add_contact(idkey.clone()).await;
+        Ok(Some(String::from(format!(
+            "Contact with idkey <{}> added",
+            idkey
+        ))))
+    }
+
+    pub fn get_data(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        let data = context
+            .client
+            .device
+            .read()
             .as_ref()
             .unwrap()
-            .send_message(vec![idkey], message)
-            .await
+            .data_store
+            .read()
+            .get_all_data();
+        // TODO iterate + print
+        Ok(Some(String::from("Not yet implemented")))
     }
 
-    pub async fn on(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
-        match context
-            .send_message(&Operation::to_string(Operation::On))
-            .await
-        {
-            Ok(_) => Ok(None),
-            Err(err) => panic!("Error sending message to server: {:?}", err),
-        }
+    pub async fn add_lightbulb(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        let id = Uuid::new_v4().to_string();
+        let json_val = r#"{ "is_on": false }"#;
+        let lightbulb = BasicData::new(id, json_val.to_string());
+        // TODO set for all linked devices
+
+        Ok(Some(String::from("Not yet implemented")))
     }
 
-    pub async fn off(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
-        match context
-            .send_message(&Operation::to_string(Operation::Off))
-            .await
-        {
-            Ok(_) => Ok(None),
-            Err(err) => panic!("Error sending message to server: {:?}", err),
-        }
+    pub async fn turn_on(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        Ok(Some(String::from("Not yet implemented")))
+    }
+
+    pub async fn turn_off(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        Ok(Some(String::from("Not yet implemented")))
     }
 }
 
@@ -129,18 +142,35 @@ async fn main() -> ReplResult<()> {
         .with_name("Lightswitch App")
         .with_version("v0.1.0")
         .with_description("Noise lightswitch app")
-        .with_banner(
-            paint_white_bold(
-                format!("IDKEY: {}", app.core.as_ref().unwrap().idkey())
-                    .as_str(),
-            )
-            .as_str(),
+        .with_command(
+            Command::new("create_device"),
+            LightswitchApp::create_device,
         )
-        .with_command_async(Command::new("on"), |_, context| {
-            Box::pin(LightswitchApp::on(context))
+        .with_command(
+            Command::new("check_device"),
+            LightswitchApp::check_device,
+        )
+        .with_command(Command::new("get_name"), LightswitchApp::get_name)
+        .with_command(Command::new("get_idkey"), LightswitchApp::get_idkey)
+        .with_command(
+            Command::new("get_contacts"),
+            LightswitchApp::get_contacts,
+        )
+        .with_command(Command::new("get_data"), LightswitchApp::get_data)
+        .with_command_async(Command::new("add_lightbulb"), |_, context| {
+            Box::pin(LightswitchApp::add_lightbulb(context))
         })
-        .with_command_async(Command::new("off"), |_, context| {
-            Box::pin(LightswitchApp::off(context))
+        .with_command_async(
+            Command::new("add_contact").arg(Arg::new("idkey").required(true)),
+            |args, context| {
+                Box::pin(LightswitchApp::add_contact(args, context))
+            },
+        )
+        .with_command_async(Command::new("turn_on"), |_, context| {
+            Box::pin(LightswitchApp::turn_on(context))
+        })
+        .with_command_async(Command::new("turn_off"), |_, context| {
+            Box::pin(LightswitchApp::turn_off(context))
         });
 
     repl.run_async().await

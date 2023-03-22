@@ -15,12 +15,12 @@ impl BasicData {
 
 // TODO struct GroupData
 
-//pub trait Data {
+//pub trait NoiseData {
 //  fn data_id(&self) -> &String;
 //  fn get_data_type
 //}
 //
-//impl Data for BasicData {
+//impl NoiseData for BasicData {
 //  fn data_id(&self) -> &String {
 //    &self.data_id
 //  }

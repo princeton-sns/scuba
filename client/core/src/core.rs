@@ -54,8 +54,8 @@ pub struct Core<C: CoreClient> {
     client: RwLock<Option<Arc<C>>>,
     init: parking_lot::Mutex<bool>,
     init_cv: Condvar,
-    outgoing_queue: Arc<parking_lot::Mutex<VecDeque<CommonPayload>>>,
-    incoming_queue: Arc<parking_lot::Mutex<VecDeque<CommonPayload>>>,
+    outgoing_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
+    incoming_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
     oq_cv: Condvar,
     iq_cv: Condvar,
 }
@@ -83,14 +83,12 @@ impl<C: CoreClient> Core<C> {
             client: RwLock::new(client),
             init: parking_lot::Mutex::new(false),
             init_cv: Condvar::new(),
-            outgoing_queue: Arc::new(parking_lot::Mutex::new(VecDeque::<
-                CommonPayload,
-            >::new(
-            ))),
-            incoming_queue: Arc::new(parking_lot::Mutex::new(VecDeque::<
-                CommonPayload,
-            >::new(
-            ))),
+            outgoing_queue: Arc::new(Mutex::new(
+                VecDeque::<CommonPayload>::new(),
+            )),
+            incoming_queue: Arc::new(Mutex::new(
+                VecDeque::<CommonPayload>::new(),
+            )),
             oq_cv: Condvar::new(),
             iq_cv: Condvar::new(),
         });
@@ -158,7 +156,10 @@ impl<C: CoreClient> Core<C> {
         // Unless the client is multithreaded, I don't think so
 
         // add to outgoing_queue before releasing lock
-        self.outgoing_queue.lock().push_back(common_payload.clone());
+        self.outgoing_queue
+            .lock()
+            .await
+            .push_back(common_payload.clone());
         println!("-----ADDING CP TO OQ: {:?}", common_payload.clone());
 
         core::mem::drop(hash_vectors_guard);
@@ -188,11 +189,11 @@ impl<C: CoreClient> Core<C> {
 
         // loop until front of queue is ready to send
         loop {
-            let mut oq_guard = self.outgoing_queue.lock();
+            let mut oq_guard = self.outgoing_queue.lock().await;
             println!("-----SEND LOOP");
             println!("oq_guard.front(): {:?}", oq_guard.front());
             if oq_guard.front() != Some(&common_payload) {
-                let _ = self.oq_cv.wait(oq_guard).await;
+                let _ = self.oq_cv.wait_no_relock(oq_guard).await;
             } else {
                 println!("~~POPPING~~");
                 oq_guard.pop_front();
@@ -316,6 +317,7 @@ impl<C: CoreClient> Core<C> {
                 // add to incoming_queue before releasing lock
                 self.incoming_queue
                     .lock()
+                    .await
                     .push_back(full_payload.common.clone());
                 println!(
                     "-----ADDING CP TO IQ: {:?}",
@@ -327,11 +329,11 @@ impl<C: CoreClient> Core<C> {
 
                 // loop until front of queue is ready to forward
                 loop {
-                    let mut iq_guard = self.incoming_queue.lock();
+                    let mut iq_guard = self.incoming_queue.lock().await;
                     println!("-----RECV LOOP");
                     println!("iq_guard.front(): {:?}", iq_guard.front());
                     if iq_guard.front() != Some(&full_payload.common) {
-                        let _ = self.iq_cv.wait(iq_guard).await;
+                        let _ = self.iq_cv.wait_no_relock(iq_guard).await;
                     } else {
                         println!("~~POPPING~~");
                         iq_guard.pop_front();

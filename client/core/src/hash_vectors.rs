@@ -398,13 +398,13 @@ impl HashVectors {
 
         // Referenced sequence number is valid, so check that hashes
         // match
-        println!(
-            "{:?}: Validating {}, {:?} vs {:?}",
-            self.own_device,
-            seq,
-            &pairwise_vector.vector[seq - pairwise_vector.offset],
-            hash
-        );
+        //println!(
+        //    "{:?}: Validating {}, {:?} vs {:?}",
+        //    self.own_device,
+        //    seq,
+        //    &pairwise_vector.vector[seq - pairwise_vector.offset],
+        //    hash
+        //);
 
         if pairwise_vector.vector[seq - pairwise_vector.offset].digest != hash {
             log::debug!(

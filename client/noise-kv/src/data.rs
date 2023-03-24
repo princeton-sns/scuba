@@ -1,15 +1,35 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BasicData {
     pub data_id: String,
     pub data_val: String,
+    pub group_id: String,
 }
 
 impl BasicData {
-    pub fn new(data_id: String, data_val: String) -> BasicData {
-        Self { data_id, data_val }
+    pub fn new(
+        data_id: String,
+        data_val: String,
+        group_id: String,
+    ) -> BasicData {
+        Self {
+            data_id,
+            data_val,
+            group_id,
+        }
+    }
+}
+
+impl fmt::Display for BasicData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "id: {}, group: {}, val: {}",
+            self.data_id, self.group_id, self.data_val
+        )
     }
 }
 

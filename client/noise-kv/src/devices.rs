@@ -5,7 +5,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::data::DataStore;
+use crate::data::{BasicData, DataStore};
 use crate::groups::{Group, GroupStore};
 
 #[derive(Debug, PartialEq, Error)]
@@ -136,17 +136,27 @@ impl Device {
         &self,
         new_linked_name: String,
         new_groups: HashMap<String, Group>,
+        new_data: HashMap<String, BasicData>,
     ) -> Result<(), Error> {
         println!("IN CONFIRM_UPDATE_LINKED_GROUP");
+        // delete old linked_name
         self.group_store
             .lock()
             .delete_group(&self.linked_name.read().clone());
-
         *self.linked_name.write() = new_linked_name;
+
+        // add groups
         for (group_id, group_val) in new_groups.iter() {
             self.group_store
                 .lock()
                 .set_group(group_id.to_string(), group_val.clone());
+        }
+
+        // add data
+        for (data_key, data_val) in new_data.iter() {
+            self.data_store
+                .write()
+                .set_data(data_key.to_string(), data_val.clone());
         }
 
         self.clear_pending_link_idkey();

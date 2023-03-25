@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use noise_core::core::{Core, CoreClient};
 
-use crate::data::BasicData;
+use crate::data::{BasicData, NoiseData};
 use crate::devices::Device;
 use crate::groups::Group;
 
@@ -477,7 +477,7 @@ impl NoiseKVClient {
             .lock()
             .get_group(name)
         {
-            Some(group_val) => group_val.is_top_level_name,
+            Some(group_val) => group_val.is_contact_name,
             None => false,
         }
     }
@@ -686,7 +686,7 @@ impl NoiseKVClient {
         let group_id;
         if group_opt.is_none() {
             match existing_val {
-                Some(old_val) => group_id = old_val.group_id.clone(),
+                Some(old_val) => group_id = old_val.group_id().to_string(),
                 None => group_id = self.linked_name(),
             }
         } else {
@@ -710,6 +710,8 @@ impl NoiseKVClient {
         )
         .await;
     }
+
+    // TODO remove_data
 
     pub async fn share_data(
         &self,
@@ -781,8 +783,8 @@ impl NoiseKVClient {
                 // update the group_id of the relevant data and send the
                 // updated data to all members of the newly formed group
                 self.set_data(
-                    data_val.data_id.clone(),
-                    data_val.data_val.clone(),
+                    data_val.data_id().clone(),
+                    data_val.data_val().clone(),
                     Some(new_group.group_id().to_string()),
                 )
                 .await;
@@ -791,6 +793,8 @@ impl NoiseKVClient {
             }
         }
     }
+
+    // TODO unshare_data
 }
 
 #[async_trait]
@@ -1164,7 +1168,7 @@ mod tests {
             .get_group_mut(&linked_id_0)
             .unwrap()
             .clone();
-        linked_group_0.is_top_level_name = true;
+        linked_group_0.is_contact_name = true;
 
         let mut device_id_0 = &String::new();
         // have to iter b/c can't otherwise index into HashSet
@@ -1198,7 +1202,7 @@ mod tests {
             .get_group_mut(&linked_id_1)
             .unwrap()
             .clone();
-        linked_group_1.is_top_level_name = true;
+        linked_group_1.is_contact_name = true;
 
         let mut device_id_1 = &String::new();
         // have to iter b/c can't otherwise index into HashSet

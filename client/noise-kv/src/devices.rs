@@ -166,7 +166,7 @@ impl Device {
     pub fn get_contacts(&self) -> HashSet<String> {
         let mut contacts = HashSet::<String>::new();
         for (id, val) in self.group_store.lock().get_all_groups().iter() {
-            if val.is_top_level_name {
+            if val.is_contact_name {
                 contacts.insert(id.to_string());
             }
         }
@@ -180,16 +180,16 @@ impl Device {
         contact_name: String,
         mut contact_devices: HashMap<String, Group>,
     ) -> Result<(), Error> {
-        // TODO is_top_level_name will (maybe) be used to add the contact
+        // TODO is_contact_name will (maybe) be used to add the contact
         // info of clients that we end up communicating with even though
         // they are not directly contacts of ours (necessary for data
         // consistency)
 
-        // for the group whose id == contact_name, set is_top_level_name
+        // for the group whose id == contact_name, set is_contact_name
         // to true
         contact_devices.iter_mut().for_each(|(id, val)| {
             if *id == contact_name {
-                val.is_top_level_name = true;
+                val.is_contact_name = true;
             }
             self.group_store.lock().set_group(id.clone(), val.clone());
         });
@@ -241,7 +241,7 @@ mod tests {
         let group_store = device.group_store.lock();
         let linked_group = group_store.get_group(&linked_name).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name);
-        assert_eq!(linked_group.is_top_level_name, false);
+        assert_eq!(linked_group.is_contact_name, false);
         assert_eq!(linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             linked_group.children(),
@@ -250,7 +250,7 @@ mod tests {
 
         let idkey_group = group_store.get_group(&idkey).unwrap();
         assert_eq!(idkey_group.group_id(), &idkey);
-        assert_eq!(idkey_group.is_top_level_name, false);
+        assert_eq!(idkey_group.is_contact_name, false);
         assert_eq!(
             idkey_group.parents(),
             &HashSet::<String>::from([linked_name.clone()])

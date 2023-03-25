@@ -2,11 +2,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+pub trait NoiseData {
+    fn data_id(&self) -> &String;
+    fn data_val(&self) -> &String;
+    fn group_id(&self) -> &String;
+}
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BasicData {
-    pub data_id: String,
-    pub data_val: String,
-    pub group_id: String,
+    data_id: String,
+    data_val: String,
+    group_id: String,
 }
 
 impl BasicData {
@@ -23,6 +29,20 @@ impl BasicData {
     }
 }
 
+impl NoiseData for BasicData {
+    fn data_id(&self) -> &String {
+        &self.data_id
+    }
+
+    fn data_val(&self) -> &String {
+        &self.data_val
+    }
+
+    fn group_id(&self) -> &String {
+        &self.group_id
+    }
+}
+
 impl fmt::Display for BasicData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -34,17 +54,6 @@ impl fmt::Display for BasicData {
 }
 
 // TODO struct GroupData
-
-//pub trait NoiseData {
-//  fn data_id(&self) -> &String;
-//  fn get_data_type
-//}
-//
-//impl NoiseData for BasicData {
-//  fn data_id(&self) -> &String {
-//    &self.data_id
-//  }
-//}
 
 /*
 pub struct Validator {

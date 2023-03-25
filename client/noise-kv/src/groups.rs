@@ -16,8 +16,7 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
-    // FIXME change -> is_contact_name
-    pub is_top_level_name: bool,
+    pub is_contact_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
 }
@@ -26,9 +25,9 @@ impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, is_top_level_name: {}, parents: {}, children: {}",
+            "group_id: {}, is_contact_name: {}, parents: {}, children: {}",
             self.group_id,
-            self.is_top_level_name,
+            self.is_contact_name,
             itertools::join(self.parents.clone(), ", "),
             self.children.as_ref().map_or_else(
                 || "None".to_string(),
@@ -41,7 +40,7 @@ impl fmt::Display for Group {
 impl Group {
     pub fn new(
         group_id: Option<String>,
-        is_top_level_name: bool,
+        is_contact_name: bool,
         init_children: bool,
     ) -> Group {
         let init_group_id: String;
@@ -58,7 +57,7 @@ impl Group {
 
         Self {
             group_id: init_group_id,
-            is_top_level_name,
+            is_contact_name,
             parents: HashSet::<String>::new(),
             children,
         }
@@ -66,7 +65,7 @@ impl Group {
 
     pub fn new_with_children(
         group_id: Option<String>,
-        is_top_level_name: bool,
+        is_contact_name: bool,
         children: Vec<String>,
     ) -> Group {
         let init_group_id: String;
@@ -80,7 +79,7 @@ impl Group {
 
         Self {
             group_id: init_group_id,
-            is_top_level_name,
+            is_contact_name,
             parents: HashSet::<String>::new(),
             children,
         }
@@ -90,14 +89,14 @@ impl Group {
         &self.group_id
     }
 
-    //pub fn is_top_level_name(&self) -> &bool {
-    //    &self.is_top_level_name
+    //pub fn is_contact_name(&self) -> &bool {
+    //    &self.is_contact_name
     //}
 
-    //pub fn update_is_top_level_name(&mut self, is_top_level_name: bool) ->
-    // bool {    let old_is_top_level_name = self.is_top_level_name;
-    //    self.is_top_level_name = is_top_level_name;
-    //    old_is_top_level_name
+    //pub fn update_is_contact_name(&mut self, is_contact_name: bool) ->
+    // bool {    let old_is_contact_name = self.is_contact_name;
+    //    self.is_contact_name = is_contact_name;
+    //    old_is_contact_name
     //}
 
     pub fn parents(&self) -> &HashSet<String> {
@@ -463,7 +462,6 @@ impl GroupStore {
         false
     }
 
-    // TODO remove/re-add to store?
     pub fn group_replace(
         &self, // FIXME use self?
         group: &mut Group,

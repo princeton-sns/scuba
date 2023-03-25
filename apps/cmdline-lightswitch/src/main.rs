@@ -1,35 +1,9 @@
 use noise_kv::client::NoiseKVClient;
-use reedline_repl_rs::clap::{Arg, ArgMatches, Command};
+use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-//use std::fmt;
 use std::sync::Arc;
 use uuid::Uuid;
-
-//#[derive(Debug)]
-//enum LightswitchError {
-//    ReplError(reedline_repl_rs::Error),
-//    DeviceDoesNotExist,
-//}
-//
-//impl From<reedline_repl_rs::Error> for LightswitchError {
-//    fn from(e: reedline_repl_rs::Error) -> Self {
-//        LightswitchError::ReplError(e)
-//    }
-//}
-//
-//impl fmt::Display for LightswitchError {
-//    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-//        match self {
-//            LightswitchError::ReplError(e) => write!(f, "REPL Error: {}",
-// e),            LightswitchError::DeviceDoesNotExist => {
-//                write!(f, "Device does not exist, cannot run command.")
-//            }
-//        }
-//    }
-//}
-//
-//impl std::error::Error for LightswitchError {}
 
 #[derive(Clone)]
 struct LightswitchApp {
@@ -44,6 +18,8 @@ impl LightswitchApp {
         Self { client }
     }
 
+    // FIXME this should go into the noise-kv library and top-level functions
+    // should return relevant Result
     fn exists_device(&self) -> bool {
         match self.client.device.read().as_ref() {
             Some(_) => true,
@@ -186,6 +162,24 @@ impl LightswitchApp {
         Ok(Some(itertools::join(data, "\n")))
     }
 
+    pub fn get_groups(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let device_guard = context.client.device.read();
+        let group_store_guard =
+            device_guard.as_ref().unwrap().group_store.lock();
+        let groups = group_store_guard.get_all_groups().values();
+
+        Ok(Some(itertools::join(groups, "\n")))
+    }
+
     pub fn get_lightbulb_state(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -202,7 +196,7 @@ impl LightswitchApp {
         let val_opt = data_store_guard.get_data(&id);
 
         match val_opt {
-            Some(val) => Ok(Some(String::from(format!("State: \n{}", val)))),
+            Some(val) => Ok(Some(String::from(format!("{}", val)))),
             None => Ok(Some(String::from(format!(
                 "Lightbulb with id {} does not exist.",
                 id,
@@ -229,6 +223,34 @@ impl LightswitchApp {
             "Created lightbulb with id {}",
             id
         ))))
+    }
+
+    pub async fn share_lightbulb(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
+        let names = args
+            .get_many::<String>("names")
+            .unwrap()
+            .collect::<Vec<&String>>();
+        match context.client.share_data(id.clone(), names.clone()).await {
+            Ok(_) => Ok(Some(String::from(format!(
+                "Sharing lightbulb (id {}) with: \n{}",
+                id,
+                itertools::join(names, "\n")
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not share lightbulb: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub async fn turn_on(
@@ -299,6 +321,7 @@ async fn main() -> ReplResult<()> {
             LightswitchApp::get_linked_devices,
         )
         .with_command(Command::new("get_data"), LightswitchApp::get_data)
+        .with_command(Command::new("get_groups"), LightswitchApp::get_groups)
         .with_command(
             Command::new("get_lightbulb_state")
                 .arg(Arg::new("lightbulb_id").required(true)),
@@ -307,6 +330,25 @@ async fn main() -> ReplResult<()> {
         .with_command_async(Command::new("add_lightbulb"), |_, context| {
             Box::pin(LightswitchApp::add_lightbulb(context))
         })
+        .with_command_async(
+            Command::new("share_lightbulb")
+                .arg(
+                    Arg::new("lightbulb_id")
+                        .required(true)
+                        .long("id")
+                        .short('i'),
+                )
+                .arg(
+                    Arg::new("names")
+                        .required(true)
+                        .long("name")
+                        .short('n')
+                        .action(ArgAction::Append),
+                ),
+            |args, context| {
+                Box::pin(LightswitchApp::share_lightbulb(args, context))
+            },
+        )
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| {

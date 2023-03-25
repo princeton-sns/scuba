@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -15,9 +16,26 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
+    // FIXME change -> is_contact_name
     pub is_top_level_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
+}
+
+impl fmt::Display for Group {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "group_id: {}, is_top_level_name: {}, parents: {}, children: {}",
+            self.group_id,
+            self.is_top_level_name,
+            itertools::join(self.parents.clone(), ", "),
+            self.children.as_ref().map_or_else(
+                || "None".to_string(),
+                |hs| itertools::join(hs, ", ")
+            )
+        )
+    }
 }
 
 impl Group {
@@ -37,6 +55,28 @@ impl Group {
         if init_children {
             children = Some(HashSet::<String>::new());
         }
+
+        Self {
+            group_id: init_group_id,
+            is_top_level_name,
+            parents: HashSet::<String>::new(),
+            children,
+        }
+    }
+
+    pub fn new_with_children(
+        group_id: Option<String>,
+        is_top_level_name: bool,
+        children: Vec<String>,
+    ) -> Group {
+        let init_group_id: String;
+        if group_id.is_none() {
+            init_group_id = Uuid::new_v4().to_string();
+        } else {
+            init_group_id = group_id.unwrap();
+        }
+
+        let children = Some(HashSet::from_iter(children.into_iter()));
 
         Self {
             group_id: init_group_id,

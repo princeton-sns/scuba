@@ -138,7 +138,6 @@ impl Device {
         new_groups: HashMap<String, Group>,
         new_data: HashMap<String, BasicData>,
     ) -> Result<(), Error> {
-        println!("IN CONFIRM_UPDATE_LINKED_GROUP");
         // delete old linked_name
         self.group_store
             .lock()
@@ -181,7 +180,6 @@ impl Device {
         contact_name: String,
         mut contact_devices: HashMap<String, Group>,
     ) -> Result<(), Error> {
-        println!("IN ADD_CONTACT");
         // TODO is_top_level_name will (maybe) be used to add the contact
         // info of clients that we end up communicating with even though
         // they are not directly contacts of ours (necessary for data
@@ -189,13 +187,9 @@ impl Device {
 
         // for the group whose id == contact_name, set is_top_level_name
         // to true
-        println!("contact_name: {:?}", contact_name);
         contact_devices.iter_mut().for_each(|(id, val)| {
-            println!("--");
-            println!("val: {:?}", val);
             if *id == contact_name {
                 val.is_top_level_name = true;
-                println!("NEW val: {:?}", val);
             }
             self.group_store.lock().set_group(id.clone(), val.clone());
         });

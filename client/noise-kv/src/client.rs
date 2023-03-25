@@ -12,6 +12,32 @@ use crate::data::BasicData;
 use crate::devices::Device;
 use crate::groups::Group;
 
+#[derive(Debug, PartialEq, Error)]
+pub enum Error {
+    #[error("Insufficient permissions for performing operation.")]
+    InsufficientPermissions,
+    #[error("Operation violates data invariant.")]
+    DataInvariantViolated,
+    #[error("Name is not a valid contact.")]
+    InvalidContactName(String),
+    #[error("Cannot add own device as contact.")]
+    SelfIsInvalidContact,
+    #[error("Data with the specified id does not exist.")]
+    NonexistentData(String),
+    #[error("Cannot convert to string.")]
+    StringConversionErr(String),
+    #[error(transparent)]
+    GroupErr {
+        #[from]
+        source: crate::groups::Error,
+    },
+    #[error(transparent)]
+    DeviceErr {
+        #[from]
+        source: crate::devices::Error,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum Operation {
     UpdateLinked(String, String, HashMap<String, Group>),
@@ -46,28 +72,6 @@ impl Operation {
     fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
         serde_json::from_str(msg.as_str())
     }
-}
-
-#[derive(Debug, PartialEq, Error)]
-pub enum Error {
-    #[error("")]
-    InsufficientPermissions,
-    #[error("")]
-    DataInvariantViolated,
-    #[error("")]
-    SelfIsInvalidContact,
-    #[error("")]
-    StringConversionErr(String),
-    #[error(transparent)]
-    GroupErr {
-        #[from]
-        source: crate::groups::Error,
-    },
-    #[error(transparent)]
-    DeviceErr {
-        #[from]
-        source: crate::devices::Error,
-    },
 }
 
 #[derive(Clone)]
@@ -353,6 +357,8 @@ impl NoiseKVClient {
      * Creating/linking devices
      */
 
+    // TODO if no linked devices, linked_name can just == idkey
+    // only create linked_group if link devices
     pub fn create_standalone_device(&self) {
         *self.device.write() = Some(Device::new(self.idkey(), None, None));
     }
@@ -417,7 +423,7 @@ impl NoiseKVClient {
             .read()
             .to_string();
 
-        // send all groups (TODO and data) to new members
+        // send all groups and to new members
         match self
             .send_message(
                 vec![sender],
@@ -456,6 +462,25 @@ impl NoiseKVClient {
     /*
      * Contacts
      */
+
+    pub fn get_contacts(&self) -> HashSet<String> {
+        self.device.read().as_ref().unwrap().get_contacts()
+    }
+
+    fn is_contact(&self, name: &String) -> bool {
+        match self
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .group_store
+            .lock()
+            .get_group(name)
+        {
+            Some(group_val) => group_val.is_top_level_name,
+            None => false,
+        }
+    }
 
     pub async fn add_contact(&self, contact_idkey: String) {
         let linked_name = self
@@ -507,10 +532,6 @@ impl NoiseKVClient {
             Ok(_) => {}
             Err(err) => panic!("Error sending AddContact: {:?}", err),
         }
-    }
-
-    pub fn get_contacts(&self) -> HashSet<String> {
-        self.device.read().as_ref().unwrap().get_contacts()
     }
 
     // TODO user needs to accept first via, e.g., pop-up
@@ -689,15 +710,92 @@ impl NoiseKVClient {
         )
         .await;
     }
+
+    pub async fn share_data(
+        &self,
+        id: String,
+        mut names: Vec<&String>,
+    ) -> Result<(), Error> {
+        // check that all names are contacts
+        for name in names.iter() {
+            if !self.is_contact(name) {
+                return Err(Error::InvalidContactName(name.to_string()));
+            }
+        }
+
+        // add own linked_name to names
+        let linked_name = self.linked_name();
+        names.push(&linked_name);
+
+        // will add children to groups via top_level_names if they exist,
+        // otherwise idkeys (currently a linked group is created for every
+        // device, so names should always be top_level_names unless this
+        // changes). this makes it easier to maintain correct group membership
+        // when the subset of devices for various top_level_names changes. so
+        // names can be used to search for any existing groups that we can add
+        // this piece of data to.
+        let device_guard = self.device.read();
+
+        // check that data exists
+        let mut data_store_guard =
+            device_guard.as_ref().unwrap().data_store.read();
+        match data_store_guard.get_data(&id) {
+            None => return Err(Error::NonexistentData(id)),
+            Some(data_val) => {
+                let mut group_store_guard =
+                    device_guard.as_ref().unwrap().group_store.lock();
+                let names_strings = names
+                    .iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<String>>();
+
+                // FIXME just creating new group whenever for now
+                //let existing_groups = group_store_guard.get_all_groups();
+                //for (group_id, group_val) in existing_groups {
+                //}
+
+                let idkeys = group_store_guard
+                    .resolve_ids(names.clone())
+                    .into_iter()
+                    .collect::<Vec<String>>();
+                let new_group =
+                    Group::new_with_children(None, false, names_strings);
+                let _ = group_store_guard.set_group(
+                    new_group.group_id().to_string(),
+                    new_group.clone(),
+                );
+
+                core::mem::drop(group_store_guard);
+
+                // add the new group to all devices to share with
+                self.send_message(
+                    idkeys.clone(),
+                    &Operation::to_string(&Operation::SetGroup(
+                        new_group.group_id().to_string(),
+                        new_group.clone(),
+                    ))
+                    .unwrap(),
+                )
+                .await;
+
+                // update the group_id of the relevant data and send the
+                // updated data to all members of the newly formed group
+                self.set_data(
+                    data_val.data_id.clone(),
+                    data_val.data_val.clone(),
+                    Some(new_group.group_id().to_string()),
+                )
+                .await;
+
+                Ok(())
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl CoreClient for NoiseKVClient {
     async fn client_callback(&self, sender: String, message: String) {
-        //println!("IN NOISEKV CLIENT CALLBACK");
-        //println!("---idkey: {:?}", self.idkey());
-        //println!("---message: {:?}", message);
-
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
                 match self.check_permissions(&sender, &operation) {
@@ -724,7 +822,6 @@ impl CoreClient for NoiseKVClient {
         };
 
         let mut ctr = self.ctr.lock();
-        //println!("ctr (cb): {:?}", *ctr);
         if *ctr != 0 {
             *ctr -= 1;
             self.ctr_cv.notify_all();

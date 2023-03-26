@@ -14,7 +14,15 @@ struct LightswitchApp {
 
 impl LightswitchApp {
     pub async fn new() -> LightswitchApp {
-        let client = NoiseKVClient::new(None, None, false, None).await;
+        let client = NoiseKVClient::new(
+            None, None,
+            //Some("sns26.cs.princeton.edu"),
+            //Some("8080"),
+            // FIXME something isn't working anymore w the sns server
+            // specifically
+            false, None,
+        )
+        .await;
         Self { client }
     }
 
@@ -51,13 +59,19 @@ impl LightswitchApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context
+        match context
             .client
             .create_linked_device(
                 args.get_one::<String>("idkey").unwrap().to_string(),
             )
-            .await;
-        Ok(Some(String::from("Linked device created!")))
+            .await
+        {
+            Ok(_) => Ok(Some(String::from("Linked device created!"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not create linked device: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub fn get_name(
@@ -138,11 +152,16 @@ impl LightswitchApp {
         }
 
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
-        context.client.add_contact(idkey.clone()).await;
-        Ok(Some(String::from(format!(
-            "Contact with idkey <{}> added",
-            idkey
-        ))))
+        match context.client.add_contact(idkey.clone()).await {
+            Ok(_) => Ok(Some(String::from(format!(
+                "Contact with idkey <{}> added",
+                idkey
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not add contact: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub fn get_data(
@@ -217,12 +236,16 @@ impl LightswitchApp {
         id.push_str("/");
         id.push_str(&Uuid::new_v4().to_string());
         let json_val = r#"{ "is_on": false }"#.to_string();
-        context.client.set_data(id.clone(), json_val, None).await;
-
-        Ok(Some(String::from(format!(
-            "Created lightbulb with id {}",
-            id
-        ))))
+        match context.client.set_data(id.clone(), json_val, None).await {
+            Ok(_) => Ok(Some(String::from(format!(
+                "Created lightbulb with id {}",
+                id
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not add lightbulb: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub async fn share_lightbulb(
@@ -265,9 +288,13 @@ impl LightswitchApp {
 
         let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
         let json_val = r#"{ "is_on": true }"#.to_string();
-        context.client.set_data(id, json_val, None).await;
-
-        Ok(Some(String::from("Turned light on")))
+        match context.client.set_data(id, json_val, None).await {
+            Ok(_) => Ok(Some(String::from("Turned light on"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not turn on lightbulb: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub async fn turn_off(
@@ -282,9 +309,13 @@ impl LightswitchApp {
 
         let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
         let json_val = r#"{ "is_on": false }"#.to_string();
-        context.client.set_data(id, json_val, None).await;
-
-        Ok(Some(String::from("Turned light off")))
+        match context.client.set_data(id, json_val, None).await {
+            Ok(_) => Ok(Some(String::from("Turned light off"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not turn on lightbulb: {}",
+                err.to_string()
+            )))),
+        }
     }
 }
 

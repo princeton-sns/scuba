@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
-    #[error("group {0} has no children")]
+    #[error("Group {0} has no children")]
     GroupHasNoChildren(String),
-    #[error("group {0} does not exist")]
+    #[error("Group {0} does not exist")]
     GroupDoesNotExist(String),
 }
 

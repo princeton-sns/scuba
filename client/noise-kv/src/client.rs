@@ -14,17 +14,19 @@ use crate::groups::Group;
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
+    #[error("Device does not exist.")]
+    UninitializedDevice,
     #[error("Insufficient permissions for performing operation.")]
     InsufficientPermissions,
     #[error("Operation violates data invariant.")]
     DataInvariantViolated,
-    #[error("Name is not a valid contact.")]
+    #[error("{0} is not a valid contact.")]
     InvalidContactName(String),
     #[error("Cannot add own device as contact.")]
     SelfIsInvalidContact,
-    #[error("Data with the specified id does not exist.")]
+    #[error("Data with id {0} does not exist.")]
     NonexistentData(String),
-    #[error("Cannot convert to string.")]
+    #[error("Cannot convert {0} to string.")]
     StringConversionErr(String),
     #[error(transparent)]
     GroupErr {
@@ -36,6 +38,8 @@ pub enum Error {
         #[from]
         source: crate::devices::Error,
     },
+    #[error("Received error while sending message: {0}.")]
+    SendFailed(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,6 +126,13 @@ impl NoiseKVClient {
         core.set_client(Arc::new(client.clone())).await;
         client
     }
+
+    //fn exists_device(&self) -> bool {
+    //    match self.device.read().as_ref() {
+    //        Some(_) => true,
+    //        None => false,
+    //    }
+    //}
 
     pub fn idkey(&self) -> String {
         self.core.as_ref().unwrap().idkey()
@@ -360,12 +371,19 @@ impl NoiseKVClient {
     // TODO if no linked devices, linked_name can just == idkey
     // only create linked_group if link devices
     pub fn create_standalone_device(&self) {
-        *self.device.write() = Some(Device::new(self.idkey(), None, None));
+        *self.device.write() =
+            Some(Device::new(self.core.as_ref().unwrap().idkey(), None, None));
     }
 
-    pub async fn create_linked_device(&self, idkey: String) {
-        *self.device.write() =
-            Some(Device::new(self.idkey(), None, Some(idkey.clone())));
+    pub async fn create_linked_device(
+        &self,
+        idkey: String,
+    ) -> Result<(), Error> {
+        *self.device.write() = Some(Device::new(
+            self.core.as_ref().unwrap().idkey(),
+            None,
+            Some(idkey.clone()),
+        ));
 
         let linked_name = self
             .device
@@ -389,7 +407,7 @@ impl NoiseKVClient {
             .send_message(
                 vec![idkey],
                 &Operation::to_string(&Operation::UpdateLinked(
-                    self.idkey(),
+                    self.core.as_ref().unwrap().idkey(),
                     linked_name,
                     linked_members_to_add,
                 ))
@@ -397,8 +415,8 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => {}
-            Err(err) => panic!("Error sending UpdateLinked: {:?}", err),
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::SendFailed(err.to_string())),
         }
     }
 
@@ -450,13 +468,12 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => {}
-            Err(err) => panic!("Error sending ConfirmUpdateLinked: {:?}", err),
+            Ok(_) => {
+                // TODO notify contacts of new members
+                Ok(())
+            }
+            Err(err) => Err(Error::SendFailed(err.to_string())),
         }
-
-        // TODO notify contacts of new members
-
-        Ok(())
     }
 
     /*
@@ -482,7 +499,10 @@ impl NoiseKVClient {
         }
     }
 
-    pub async fn add_contact(&self, contact_idkey: String) {
+    pub async fn add_contact(
+        &self,
+        contact_idkey: String,
+    ) -> Result<(), Error> {
         let linked_name = self
             .device
             .read()
@@ -502,10 +522,7 @@ impl NoiseKVClient {
             .lock()
             .is_group_member(&contact_idkey, &linked_name)
         {
-            //println!(
-            //    "Contact is a member of this device's linked group. Exiting."
-            //);
-            return;
+            return Err(Error::SelfIsInvalidContact);
         }
 
         let linked_device_groups = self
@@ -521,7 +538,7 @@ impl NoiseKVClient {
             .send_message(
                 vec![contact_idkey],
                 &Operation::to_string(&Operation::AddContact(
-                    self.idkey(),
+                    self.core.as_ref().unwrap().idkey(),
                     linked_name,
                     linked_device_groups,
                 ))
@@ -529,8 +546,8 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => {}
-            Err(err) => panic!("Error sending AddContact: {:?}", err),
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::SendFailed(err.to_string())),
         }
     }
 
@@ -576,11 +593,9 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => {}
-            Err(err) => panic!("Error sending ConfirmAddContact: {:?}", err),
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::SendFailed(err.to_string())),
         }
-
-        Ok(())
     }
 
     /*
@@ -589,27 +604,34 @@ impl NoiseKVClient {
 
     pub async fn delete_self_device(&self) -> Result<(), Error> {
         // TODO send to contact devices too
-        self.send_message(
-            self.device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices_excluding_self(),
-            &Operation::to_string(&Operation::DeleteOtherDevice(self.idkey()))
+        match self
+            .send_message(
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .linked_devices_excluding_self(),
+                &Operation::to_string(&Operation::DeleteOtherDevice(
+                    self.core.as_ref().unwrap().idkey(),
+                ))
                 .unwrap(),
-        )
-        .await;
-
-        // TODO wait for ACK that other devices have indeed received
-        // above operations before deleting current device
-        let idkey = self.idkey().clone();
-        self.device
-            .read()
-            .as_ref()
-            .unwrap()
-            .delete_device(idkey)
-            .map(|_| *self.device.write() = None)
-            .map_err(Error::from)
+            )
+            .await
+        {
+            Ok(_) => {
+                // TODO wait for ACK that other devices have indeed received
+                // above operations before deleting current device
+                let idkey = self.core.as_ref().unwrap().idkey().clone();
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .delete_device(idkey)
+                    .map(|_| *self.device.write() = None)
+                    .map_err(Error::from)
+            }
+            Err(err) => Err(Error::SendFailed(err.to_string())),
+        }
     }
 
     pub async fn delete_other_device(
@@ -617,54 +639,68 @@ impl NoiseKVClient {
         to_delete: String,
     ) -> Result<(), Error> {
         // TODO send to contact devices too
-        self.send_message(
-            self.device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices_excluding_self_and_other(&to_delete),
-            &Operation::to_string(&Operation::DeleteOtherDevice(
-                to_delete.clone(),
-            ))
-            .unwrap(),
-        )
-        .await;
+        match self
+            .send_message(
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .linked_devices_excluding_self_and_other(&to_delete),
+                &Operation::to_string(&Operation::DeleteOtherDevice(
+                    to_delete.clone(),
+                ))
+                .unwrap(),
+            )
+            .await
+        {
+            Ok(_) => {
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .delete_device(to_delete.clone())
+                    .map_err(Error::from);
 
-        self.device
-            .read()
-            .as_ref()
-            .unwrap()
-            .delete_device(to_delete.clone())
-            .map_err(Error::from);
-
-        // TODO wait for ACK that other devices have indeed received
-        // above operations before deleting specified device
-        self.send_message(
-            vec![to_delete.clone()],
-            &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
-        )
-        .await;
-
-        Ok(())
+                // TODO wait for ACK that other devices have indeed received
+                // above operations before deleting specified device
+                match self
+                    .send_message(
+                        vec![to_delete.clone()],
+                        &Operation::to_string(&Operation::DeleteSelfDevice)
+                            .unwrap(),
+                    )
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(err) => Err(Error::SendFailed(err.to_string())),
+                }
+            }
+            Err(err) => Err(Error::SendFailed(err.to_string())),
+        }
     }
 
-    pub async fn delete_all_devices(&self) {
+    pub async fn delete_all_devices(&self) -> Result<(), Error> {
         // TODO notify contacts
 
         // TODO wait for ACK that contacts have indeed received
         // above operations before deleting all devices
-        self.send_message(
-            self.device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices()
-                .iter()
-                .map(|x| x.clone())
-                .collect::<Vec<String>>(),
-            &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
-        )
-        .await;
+        match self
+            .send_message(
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .linked_devices()
+                    .iter()
+                    .map(|x| x.clone())
+                    .collect::<Vec<String>>(),
+                &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::SendFailed(err.to_string())),
+        }
     }
 
     /*
@@ -676,7 +712,7 @@ impl NoiseKVClient {
         id: String,
         val: String,
         group_opt: Option<String>,
-    ) {
+    ) -> Result<(), Error> {
         let device_guard = self.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let existing_val = data_store_guard.get_data(&id);
@@ -703,12 +739,17 @@ impl NoiseKVClient {
             .into_iter()
             .collect::<Vec<String>>();
 
-        self.send_message(
-            device_ids,
-            &Operation::to_string(&Operation::UpdateData(id, basic_data))
-                .unwrap(),
-        )
-        .await;
+        match self
+            .send_message(
+                device_ids,
+                &Operation::to_string(&Operation::UpdateData(id, basic_data))
+                    .unwrap(),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::SendFailed(err.to_string())),
+        }
     }
 
     // TODO remove_data
@@ -770,26 +811,29 @@ impl NoiseKVClient {
                 core::mem::drop(group_store_guard);
 
                 // add the new group to all devices to share with
-                self.send_message(
-                    idkeys.clone(),
-                    &Operation::to_string(&Operation::SetGroup(
-                        new_group.group_id().to_string(),
-                        new_group.clone(),
-                    ))
-                    .unwrap(),
-                )
-                .await;
-
-                // update the group_id of the relevant data and send the
-                // updated data to all members of the newly formed group
-                self.set_data(
-                    data_val.data_id().clone(),
-                    data_val.data_val().clone(),
-                    Some(new_group.group_id().to_string()),
-                )
-                .await;
-
-                Ok(())
+                match self
+                    .send_message(
+                        idkeys.clone(),
+                        &Operation::to_string(&Operation::SetGroup(
+                            new_group.group_id().to_string(),
+                            new_group.clone(),
+                        ))
+                        .unwrap(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // update the group_id of the relevant data and send the
+                        // updated data to all members of the newly formed group
+                        self.set_data(
+                            data_val.data_id().clone(),
+                            data_val.data_val().clone(),
+                            Some(new_group.group_id().to_string()),
+                        )
+                        .await
+                    }
+                    Err(err) => Err(Error::SendFailed(err.to_string())),
+                }
             }
         }
     }

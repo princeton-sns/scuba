@@ -10,7 +10,7 @@ use crate::groups::{Group, GroupStore};
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
-    #[error("attempted to delete group instead of device")]
+    #[error("Attempted to delete group instead of device.")]
     DeviceHasChildren,
 }
 

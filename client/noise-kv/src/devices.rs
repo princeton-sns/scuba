@@ -5,7 +5,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::data::{BasicData, DataStore};
+use crate::data::{DataStore, NoiseData};
 use crate::groups::{Group, GroupStore};
 
 #[derive(Debug, PartialEq, Error)]
@@ -14,21 +14,21 @@ pub enum Error {
     DeviceHasChildren,
 }
 
-#[derive(Debug, Clone)]
-pub struct Device {
+#[derive(Clone)]
+pub struct Device<T: NoiseData> {
     idkey: Arc<RwLock<String>>,
     pub group_store: Arc<Mutex<GroupStore>>, // FIXME rwlock
-    pub data_store: Arc<RwLock<DataStore>>,
+    pub data_store: Arc<RwLock<DataStore<T>>>,
     pub linked_name: Arc<RwLock<String>>,
     pending_link_idkey: Arc<RwLock<Option<String>>>,
 }
 
-impl Device {
+impl<T: NoiseData> Device<T> {
     pub fn new(
         idkey: String,
         linked_name_arg: Option<String>,
         pending_link_idkey: Option<String>,
-    ) -> Device {
+    ) -> Device<T> {
         let linked_name = linked_name_arg.unwrap_or(Uuid::new_v4().to_string());
         let mut group_store = GroupStore::new();
 
@@ -136,7 +136,7 @@ impl Device {
         &self,
         new_linked_name: String,
         new_groups: HashMap<String, Group>,
-        new_data: HashMap<String, BasicData>,
+        new_data: HashMap<String, T>,
     ) -> Result<(), Error> {
         // delete old linked_name
         self.group_store
@@ -152,10 +152,13 @@ impl Device {
         }
 
         // add data
-        for (data_key, data_val) in new_data.iter() {
+        // into_iter() needed b/c NoiseData can't implement Clone(), so
+        // if we want this to stay generic then we need to move data_val
+        // from new_data via into_iter() (as opposed to just iter())
+        for (data_key, data_val) in new_data.into_iter() {
             self.data_store
                 .write()
-                .set_data(data_key.to_string(), data_val.clone());
+                .set_data(data_key.to_string(), data_val);
         }
 
         self.clear_pending_link_idkey();

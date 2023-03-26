@@ -16,10 +16,10 @@ use crate::groups::Group;
 pub enum Error {
     #[error("Device does not exist.")]
     UninitializedDevice,
-    #[error("Insufficient permissions for performing operation.")]
-    InsufficientPermissions,
     #[error("Operation violates data invariant.")]
     DataInvariantViolated,
+    #[error("Insufficient permissions for performing operation.")]
+    InsufficientPermissions,
     #[error("{0} is not a valid contact.")]
     InvalidContactName(String),
     #[error("Cannot add own device as contact.")]
@@ -81,9 +81,45 @@ impl Operation {
 #[derive(Clone)]
 pub struct NoiseKVClient {
     core: Option<Arc<Core<NoiseKVClient>>>,
-    pub device: Arc<RwLock<Option<Device>>>,
+    pub device: Arc<RwLock<Option<Device<BasicData>>>>,
     ctr: Arc<Mutex<u32>>,
     ctr_cv: Arc<Condvar>,
+}
+
+#[async_trait]
+impl CoreClient for NoiseKVClient {
+    async fn client_callback(&self, sender: String, message: String) {
+        match Operation::from_string(message.clone()) {
+            Ok(operation) => {
+                match self.check_permissions(&sender, &operation) {
+                    Ok(_) => {
+                        if self.validate_data_invariants(&operation) {
+                            match self.demux(operation).await {
+                                Ok(_) => {}
+                                Err(err) => panic!("Error in demux: {:?}", err),
+                            }
+                        } else {
+                            panic!(
+                                "Error in validation: {:?}",
+                                Error::DataInvariantViolated
+                            );
+                        }
+                    }
+                    Err(err) => panic!("Error in permissions: {:?}", err),
+                }
+            }
+            Err(_) => panic!(
+                "Error getting operation: {:?}",
+                Error::StringConversionErr(message)
+            ),
+        };
+
+        let mut ctr = self.ctr.lock();
+        if *ctr != 0 {
+            *ctr -= 1;
+            self.ctr_cv.notify_all();
+        }
+    }
 }
 
 impl NoiseKVClient {
@@ -198,23 +234,20 @@ impl NoiseKVClient {
         Ok(())
     }
 
-    // FIXME also call validate() on DeleteData operations
-    fn validate_data_invariants(&self, _operation: &Operation) -> bool {
-        true
-        //match operation {
-        //  Operation::UpdateData(data_id, data_val) => {
-        //  //| Operation::DeleteData =>
-        //    self.device
-        //        .read()
-        //        .as_ref()
-        //        .unwrap()
-        //        .data_store
-        //        .read()
-        //        .validator()
-        //        .validate(&data_id, &data_val)
-        //  },
-        //  _ => true,
-        //}
+    fn validate_data_invariants(&self, operation: &Operation) -> bool {
+        match operation {
+            // FIXME also validate when removing data?
+            //| Operation::DeleteData(data_id) =>
+            Operation::UpdateData(data_id, data_val) => self
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .data_store
+                .read()
+                .validate(&data_id, &data_val),
+            _ => true,
+        }
     }
 
     async fn demux(&self, operation: Operation) -> Result<(), Error> {
@@ -358,7 +391,7 @@ impl NoiseKVClient {
                 .unwrap()
                 .delete_device(idkey_to_delete)
                 .map_err(Error::from),
-            Operation::Test(msg) => Ok(()),
+            Operation::Test(_) => Ok(()),
         }
     }
 
@@ -729,6 +762,8 @@ impl NoiseKVClient {
             group_id = group_opt.unwrap();
         }
 
+        // TODO call validate before sending? or only upon receipt?
+
         let basic_data = BasicData::new(id.clone(), val, group_id.clone());
         let device_ids = device_guard
             .as_ref()
@@ -839,42 +874,6 @@ impl NoiseKVClient {
     }
 
     // TODO unshare_data
-}
-
-#[async_trait]
-impl CoreClient for NoiseKVClient {
-    async fn client_callback(&self, sender: String, message: String) {
-        match Operation::from_string(message.clone()) {
-            Ok(operation) => {
-                match self.check_permissions(&sender, &operation) {
-                    Ok(_) => {
-                        if self.validate_data_invariants(&operation) {
-                            match self.demux(operation).await {
-                                Ok(_) => {}
-                                Err(err) => panic!("Error in demux: {:?}", err),
-                            }
-                        } else {
-                            panic!(
-                                "Error in validation: {:?}",
-                                Error::DataInvariantViolated
-                            );
-                        }
-                    }
-                    Err(err) => panic!("Error in permissions: {:?}", err),
-                }
-            }
-            Err(_) => panic!(
-                "Error getting operation: {:?}",
-                Error::StringConversionErr(message)
-            ),
-        };
-
-        let mut ctr = self.ctr.lock();
-        if *ctr != 0 {
-            *ctr -= 1;
-            self.ctr_cv.notify_all();
-        }
-    }
 }
 
 mod tests {

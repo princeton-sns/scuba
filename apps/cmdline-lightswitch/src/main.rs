@@ -5,6 +5,8 @@ use reedline_repl_rs::Result as ReplResult;
 use std::sync::Arc;
 use uuid::Uuid;
 
+const LB_TYPE: &str = "lightbulb";
+
 #[derive(Clone)]
 struct LightswitchApp {
     client: NoiseKVClient,
@@ -232,11 +234,15 @@ impl LightswitchApp {
             )));
         }
 
-        let mut id: String = "lightbulb".to_owned();
+        let mut id: String = LB_TYPE.to_owned();
         id.push_str("/");
         id.push_str(&Uuid::new_v4().to_string());
         let json_val = r#"{ "is_on": false }"#.to_string();
-        match context.client.set_data(id.clone(), json_val, None).await {
+        match context
+            .client
+            .set_data(id.clone(), LB_TYPE.to_string(), json_val, None)
+            .await
+        {
             Ok(_) => Ok(Some(String::from(format!(
                 "Created lightbulb with id {}",
                 id
@@ -288,7 +294,11 @@ impl LightswitchApp {
 
         let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
         let json_val = r#"{ "is_on": true }"#.to_string();
-        match context.client.set_data(id, json_val, None).await {
+        match context
+            .client
+            .set_data(id, LB_TYPE.to_string(), json_val, None)
+            .await
+        {
             Ok(_) => Ok(Some(String::from("Turned light on"))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not turn on lightbulb: {}",
@@ -309,7 +319,11 @@ impl LightswitchApp {
 
         let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
         let json_val = r#"{ "is_on": false }"#.to_string();
-        match context.client.set_data(id, json_val, None).await {
+        match context
+            .client
+            .set_data(id, LB_TYPE.to_string(), json_val, None)
+            .await
+        {
             Ok(_) => Ok(Some(String::from("Turned light off"))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not turn on lightbulb: {}",

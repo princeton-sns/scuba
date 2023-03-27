@@ -4,6 +4,7 @@ use std::fmt;
 
 pub trait NoiseData {
     fn data_id(&self) -> &String;
+    fn data_type(&self) -> &String;
     fn data_val(&self) -> &String;
     fn group_id(&self) -> &String;
 }
@@ -11,6 +12,7 @@ pub trait NoiseData {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BasicData {
     data_id: String,
+    data_type: String,
     data_val: String,
     group_id: String,
 }
@@ -18,11 +20,13 @@ pub struct BasicData {
 impl BasicData {
     pub fn new(
         data_id: String,
+        data_type: String,
         data_val: String,
         group_id: String,
     ) -> BasicData {
         Self {
             data_id,
+            data_type,
             data_val,
             group_id,
         }
@@ -31,6 +35,10 @@ impl BasicData {
 
 impl NoiseData for BasicData {
     fn data_id(&self) -> &String {
+        &self.data_id
+    }
+
+    fn data_type(&self) -> &String {
         &self.data_id
     }
 
@@ -47,8 +55,8 @@ impl fmt::Display for BasicData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "id: {}, group: {}, val: {}",
-            self.data_id, self.group_id, self.data_val
+            "id: {}, type: {}, group: {}, val: {}",
+            self.data_id, self.data_type, self.group_id, self.data_val
         )
     }
 }
@@ -56,7 +64,7 @@ impl fmt::Display for BasicData {
 #[derive(Clone)]
 pub struct Validator<T: NoiseData> {
     general_callback: fn(&String, &T) -> bool,
-    per_prefix_callbacks: HashMap<String, fn(&String, &T) -> bool>,
+    per_type_callbacks: HashMap<String, fn(&String, &T) -> bool>,
 }
 
 fn default_general_callback<T: NoiseData>(
@@ -79,18 +87,22 @@ impl<T: NoiseData> Validator<T> {
         Self {
             general_callback: general_callback
                 .unwrap_or(default_general_callback),
-            per_prefix_callbacks:
-                HashMap::<String, fn(&String, &T) -> bool>::new(),
+            per_type_callbacks: HashMap::<String, fn(&String, &T) -> bool>::new(
+            ),
         }
     }
 
     pub fn validate(&self, data_id: &String, data_val: &T) -> bool {
         // call general callback
-        (self.general_callback)(data_id, data_val)
+        if !(self.general_callback)(data_id, data_val) {
+            return false;
+        }
 
-        // call prefix-specific callback, if one exists
-        // TODO need prefix string from data_id OR separate param
-        //match self.per_prefix_callbacks.get() {}
+        // call type-specific callback, if one exists
+        match self.per_type_callbacks.get(data_val.data_type()) {
+            Some(type_callback) => (type_callback)(data_id, data_val),
+            None => true,
+        }
     }
 
     pub fn set_general_validate_callback(
@@ -100,12 +112,12 @@ impl<T: NoiseData> Validator<T> {
         self.general_callback = callback;
     }
 
-    pub fn set_validate_callback_for_prefix(
+    pub fn set_validate_callback_for_type(
         &mut self,
-        prefix: String,
+        data_type: String,
         callback: fn(&String, &T) -> bool,
     ) -> Option<fn(&String, &T) -> bool> {
-        self.per_prefix_callbacks.insert(prefix, callback)
+        self.per_type_callbacks.insert(data_type, callback)
     }
 }
 
@@ -115,7 +127,7 @@ pub struct DataStore<T: NoiseData> {
     validator: Validator<T>,
 }
 
-//fn get_all_data_with_prefix
+//fn get_all_data_with_type
 impl<T: NoiseData> DataStore<T> {
     pub fn new() -> DataStore<T> {
         Self {
@@ -170,4 +182,6 @@ mod tests {
         data_store.delete_data(&data.data_id);
         assert_eq!(data_store.get_data(&data.data_id), None);
     }
+
+    // TODO test validation
 }

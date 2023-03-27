@@ -742,13 +742,14 @@ impl NoiseKVClient {
 
     pub async fn set_data(
         &self,
-        id: String,
-        val: String,
+        data_id: String,
+        data_type: String,
+        data_val: String,
         group_opt: Option<String>,
     ) -> Result<(), Error> {
         let device_guard = self.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let existing_val = data_store_guard.get_data(&id);
+        let existing_val = data_store_guard.get_data(&data_id);
 
         // if group_opt = None, keep old group_id (if no old group_id, use
         // linked_name) if group_opt = Some, use new group_id
@@ -764,7 +765,12 @@ impl NoiseKVClient {
 
         // TODO call validate before sending? or only upon receipt?
 
-        let basic_data = BasicData::new(id.clone(), val, group_id.clone());
+        let basic_data = BasicData::new(
+            data_id.clone(),
+            data_type.clone(),
+            data_val,
+            group_id.clone(),
+        );
         let device_ids = device_guard
             .as_ref()
             .unwrap()
@@ -777,8 +783,10 @@ impl NoiseKVClient {
         match self
             .send_message(
                 device_ids,
-                &Operation::to_string(&Operation::UpdateData(id, basic_data))
-                    .unwrap(),
+                &Operation::to_string(&Operation::UpdateData(
+                    data_id, basic_data,
+                ))
+                .unwrap(),
             )
             .await
         {
@@ -791,7 +799,7 @@ impl NoiseKVClient {
 
     pub async fn share_data(
         &self,
-        id: String,
+        data_id: String,
         mut names: Vec<&String>,
     ) -> Result<(), Error> {
         // check that all names are contacts
@@ -817,8 +825,8 @@ impl NoiseKVClient {
         // check that data exists
         let mut data_store_guard =
             device_guard.as_ref().unwrap().data_store.read();
-        match data_store_guard.get_data(&id) {
-            None => return Err(Error::NonexistentData(id)),
+        match data_store_guard.get_data(&data_id) {
+            None => return Err(Error::NonexistentData(data_id)),
             Some(data_val) => {
                 let mut group_store_guard =
                     device_guard.as_ref().unwrap().group_store.lock();
@@ -862,6 +870,7 @@ impl NoiseKVClient {
                         // updated data to all members of the newly formed group
                         self.set_data(
                             data_val.data_id().clone(),
+                            data_val.data_type().clone(),
                             data_val.data_val().clone(),
                             Some(new_group.group_id().to_string()),
                         )

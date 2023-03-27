@@ -7,6 +7,7 @@ use async_condvar_fair::Condvar;
 use olm_rs::account::{IdentityKeys, OlmAccount, OneTimeKeys};
 use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use parking_lot::Mutex;
+use rand::RngCore;
 use std::collections::HashMap;
 use std::mem;
 
@@ -51,9 +52,9 @@ impl Crypto {
         &self,
         plaintext: crate::hash_vectors::CommonPayload,
     ) -> (Vec<u8>, [u8; 16], [u8; 16]) {
-        // TODO randomize every call
         let key = [0x42; 16];
-        let iv = [0x24; 16];
+        let mut iv = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut iv);
 
         let pt_bytes = serde_json::to_string(&plaintext).unwrap().into_bytes();
         let ct = Aes128CbcEnc::new(&key.into(), &iv.into())

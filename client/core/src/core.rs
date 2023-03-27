@@ -510,8 +510,15 @@ mod tests {
             Core::new(None, None, false, Some(arc_client_b)).await;
         let idkey_b = arc_core_b.crypto.get_idkey();
 
+        let (client_c, mut receiver_c) = StreamClient::new();
+        let arc_client_c = Arc::new(client_c);
+        let arc_core_c: Arc<Core<StreamClient>> =
+            Core::new(None, None, false, Some(arc_client_c)).await;
+        let idkey_c = arc_core_c.crypto.get_idkey();
+
         let payload = String::from("hello from me");
-        let recipients = vec![idkey_a.clone(), idkey_b.clone()];
+        let recipients =
+            vec![idkey_a.clone(), idkey_b.clone(), idkey_c.clone()];
 
         if let Err(err) = arc_core_a.send_message(recipients, &payload).await {
             panic!("Error sending message: {:?}", err);
@@ -531,6 +538,14 @@ mod tests {
                 assert_eq!(msg, payload);
             }
             None => panic!("b got NONE from core"),
+        }
+
+        match receiver_c.next().await {
+            Some((sender, msg)) => {
+                assert_eq!(sender, idkey_a);
+                assert_eq!(msg, payload);
+            }
+            None => panic!("c got NONE from core"),
         }
     }
 

@@ -280,7 +280,7 @@ mod tests {
     };
     use crate::core::stream_client::StreamClient;
     use crate::core::Core;
-    use crate::olm_wrapper::OlmWrapper;
+    use crate::crypto::Crypto;
     use std::sync::Arc;
     //use tokio::sync::RwLock;
 
@@ -310,10 +310,10 @@ mod tests {
         let arc_core: Arc<Core<StreamClient>> =
             Core::new(None, None, false, None).await;
 
-        //let olm_wrapper = OlmWrapper::new(false);
-        //let idkey = olm_wrapper.get_idkey();
+        //let crypto = Crypto::new(false);
+        //let idkey = crypto.get_idkey();
         //let arc_core: Arc<Core<StreamClient>> =
-        // Arc::new(Core {    olm_wrapper,
+        // Arc::new(Core {    crypto,
         //    server_comm: RwLock::new(None),
         //    hash_vectors:
         // Mutex::new(HashVectors::new(idkey.clone())),
@@ -400,12 +400,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_otkeys_to_server() {
-        let olm_wrapper = OlmWrapper::new(false);
-        let idkey = olm_wrapper.get_idkey();
+        let crypto = Crypto::new(false);
+        let idkey = crypto.get_idkey();
         let mut server_comm = ServerComm::new(None, None, idkey);
         match server_comm.try_next().await {
             Ok(Some(Event::Otkey)) => {
-                let otkeys = olm_wrapper.generate_otkeys(None);
+                let otkeys = crypto.generate_otkeys(None);
                 println!("otkeys: {:?}", otkeys);
                 match server_comm.add_otkeys_to_server(&otkeys.curve25519()).await {
                     Ok(_) => println!("Sent otkeys successfully"),
@@ -418,9 +418,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_otkey_from_server() {
-        let olm_wrapper = OlmWrapper::new(false);
-        let idkey = olm_wrapper.get_idkey();
-        let otkeys = olm_wrapper.generate_otkeys(None);
+        let crypto = Crypto::new(false);
+        let idkey = crypto.get_idkey();
+        let otkeys = crypto.generate_otkeys(None);
         let mut values = otkeys.curve25519().values().cloned();
         let mut server_comm = ServerComm::new(None, None, idkey.clone());
         match server_comm.try_next().await {

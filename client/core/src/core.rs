@@ -5,8 +5,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
-use crate::olm_wrapper::OlmWrapper;
 use crate::server_comm::{
     Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm,
     ToDelete,
@@ -48,7 +48,7 @@ pub trait CoreClient: Sync + Send + 'static {
 }
 
 pub struct Core<C: CoreClient> {
-    olm_wrapper: OlmWrapper,
+    crypto: Crypto,
     server_comm: RwLock<Option<ServerComm<C>>>,
     hash_vectors: Mutex<HashVectors>,
     client: RwLock<Option<Arc<C>>>,
@@ -67,8 +67,8 @@ impl<C: CoreClient> Core<C> {
         turn_encryption_off: bool,
         client: Option<Arc<C>>,
     ) -> Arc<Core<C>> {
-        let olm_wrapper = OlmWrapper::new(turn_encryption_off);
-        let idkey = olm_wrapper.get_idkey();
+        let crypto = Crypto::new(turn_encryption_off);
+        let idkey = crypto.get_idkey();
         let hash_vectors = Mutex::new(HashVectors::new(idkey.clone()));
 
         // Core needs to effectively register itself as a client of
@@ -77,7 +77,7 @@ impl<C: CoreClient> Core<C> {
         // Core::new() should return Arc<Core<C>>
 
         let arc_core = Arc::new(Core {
-            olm_wrapper,
+            crypto,
             server_comm: RwLock::new(None),
             hash_vectors,
             client: RwLock::new(client),
@@ -117,7 +117,7 @@ impl<C: CoreClient> Core<C> {
     }
 
     pub fn idkey(&self) -> String {
-        self.olm_wrapper.get_idkey()
+        self.crypto.get_idkey()
     }
 
     pub async fn send_message(
@@ -165,6 +165,10 @@ impl<C: CoreClient> Core<C> {
         core::mem::drop(hash_vectors_guard);
         //println!("...UNLOCKED SEND...");
 
+        // TODO symmetrically encrypt once
+        //let (ciphertext, key) = crypto.symmetric_encrypt();
+
+        // TODO loop to encrypt the symmetric key per client
         let mut batch = Batch::new();
         for (idkey, recipient_payload) in recipient_payloads {
             let full_payload = FullPayload::to_string(
@@ -173,7 +177,7 @@ impl<C: CoreClient> Core<C> {
             );
 
             let (c_type, ciphertext) = self
-                .olm_wrapper
+                .crypto
                 .encrypt(
                     &self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
@@ -220,7 +224,7 @@ impl<C: CoreClient> Core<C> {
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
-                let otkeys = self.olm_wrapper.generate_otkeys(None);
+                let otkeys = self.crypto.generate_otkeys(None);
                 match self
                     .server_comm
                     .read()
@@ -244,7 +248,7 @@ impl<C: CoreClient> Core<C> {
                 let msg: IncomingMessage =
                     IncomingMessage::from_string(msg_string);
 
-                let decrypted = self.olm_wrapper.decrypt(
+                let decrypted = self.crypto.decrypt(
                     &msg.sender(),
                     msg.payload().c_type(),
                     &msg.payload().ciphertext(),
@@ -455,7 +459,7 @@ mod tests {
             Core::new(None, None, false, Some(arc_client)).await;
 
         let payload = String::from("hello from me");
-        let idkey = arc_core.olm_wrapper.get_idkey();
+        let idkey = arc_core.crypto.get_idkey();
         let recipients = vec![idkey.clone()];
 
         if let Err(err) = arc_core.send_message(recipients, &payload).await {
@@ -477,13 +481,13 @@ mod tests {
         let arc_client_a = Arc::new(client_a);
         let arc_core_a: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client_a)).await;
-        let idkey_a = arc_core_a.olm_wrapper.get_idkey();
+        let idkey_a = arc_core_a.crypto.get_idkey();
 
         let (client_b, mut receiver_b) = StreamClient::new();
         let arc_client_b = Arc::new(client_b);
         let arc_core_b: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client_b)).await;
-        let idkey_b = arc_core_b.olm_wrapper.get_idkey();
+        let idkey_b = arc_core_b.crypto.get_idkey();
 
         let payload = String::from("hello from me");
         let recipients = vec![idkey_a.clone(), idkey_b.clone()];
@@ -515,13 +519,13 @@ mod tests {
         let arc_client_a = Arc::new(client_a);
         let arc_core_a: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client_a)).await;
-        let idkey_a = arc_core_a.olm_wrapper.get_idkey();
+        let idkey_a = arc_core_a.crypto.get_idkey();
 
         let (client_b, mut receiver_b) = StreamClient::new();
         let arc_client_b = Arc::new(client_b);
         let arc_core_b: Arc<Core<StreamClient>> =
             Core::new(None, None, false, Some(arc_client_b)).await;
-        let idkey_b = arc_core_b.olm_wrapper.get_idkey();
+        let idkey_b = arc_core_b.crypto.get_idkey();
 
         let payload = String::from("hello from me");
         let recipients = vec![idkey_b.clone()];

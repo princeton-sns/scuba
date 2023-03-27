@@ -12,7 +12,7 @@ use std::mem;
 const NUM_OTKEYS: usize = 20;
 
 // TODO persist natively
-pub struct OlmWrapper {
+pub struct Crypto {
     turn_encryption_off: bool,
     idkeys: IdentityKeys,
     // Wrap OlmAccount and MessageQueue in Mutex for Send/Sync
@@ -27,7 +27,7 @@ pub struct OlmWrapper {
 
 // TODO impl Error enum
 
-impl OlmWrapper {
+impl Crypto {
     pub fn new(turn_encryption_off: bool) -> Self {
         let account = Mutex::new(OlmAccount::new());
         let idkeys = account.lock().parsed_identity_keys();
@@ -271,25 +271,25 @@ impl OlmWrapper {
 /*
 #[cfg(test)]
 mod tests {
-    use super::{OlmWrapper, NUM_OTKEYS};
+    use super::{Crypto, NUM_OTKEYS};
     use crate::server_comm::ServerComm;
 
     #[test]
     fn test_new() {
-        let olm_wrapper = OlmWrapper::new(false);
-        assert_eq!(olm_wrapper.turn_encryption_off, false);
+        let crypto = Crypto::new(false);
+        assert_eq!(crypto.turn_encryption_off, false);
     }
 
     #[test]
     fn test_idkey() {
-        let olm_wrapper = OlmWrapper::new(false);
-        println!("idkey: {:?}", olm_wrapper.get_idkey());
+        let crypto = Crypto::new(false);
+        println!("idkey: {:?}", crypto.get_idkey());
     }
 
     #[test]
     fn test_gen_otkeys() {
-        let olm_wrapper = OlmWrapper::new(false);
-        let otkeys = olm_wrapper.generate_otkeys(None);
+        let crypto = Crypto::new(false);
+        let otkeys = crypto.generate_otkeys(None);
         assert_eq!(NUM_OTKEYS, otkeys.curve25519().len());
         println!("otkeys: {:?}", otkeys.curve25519());
     }
@@ -297,62 +297,62 @@ mod tests {
     #[test]
     fn test_gen_otkeys_custom_num() {
         let num = 7;
-        let olm_wrapper = OlmWrapper::new(false);
-        let otkeys = olm_wrapper.generate_otkeys(Some(num));
+        let crypto = Crypto::new(false);
+        let otkeys = crypto.generate_otkeys(Some(num));
         assert_eq!(num, otkeys.curve25519().len());
         println!("otkeys: {:?}", otkeys.curve25519());
     }
 
     #[tokio::test]
     async fn test_dummy_encrypt() {
-        let olm_wrapper = OlmWrapper::new(true);
-        let idkey = olm_wrapper.get_idkey();
+        let crypto = Crypto::new(true);
+        let idkey = crypto.get_idkey();
         let server_comm = ServerComm::new(None, None, idkey.clone(), None);
         let plaintext = String::from("hello");
-        let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext).await;
+        let (_, ciphertext) = crypto.encrypt(&server_comm, &idkey, &plaintext).await;
         assert_eq!(plaintext, ciphertext);
     }
 
     #[tokio::test]
     async fn test_self_encrypt() {
-        let olm_wrapper = OlmWrapper::new(false);
-        let idkey = olm_wrapper.get_idkey();
+        let crypto = Crypto::new(false);
+        let idkey = crypto.get_idkey();
         let server_comm = ServerComm::new(None, None, idkey.clone(), None);
         let plaintext = String::from("hello");
         let empty = String::from("");
-        let (_, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext).await;
+        let (_, ciphertext) = crypto.encrypt(&server_comm, &idkey, &plaintext).await;
         assert_eq!(empty, ciphertext);
-        assert_eq!(plaintext, olm_wrapper.message_queue.lock().pop().unwrap());
+        assert_eq!(plaintext, crypto.message_queue.lock().pop().unwrap());
     }
 
     #[test]
     fn test_dummy_decrypt() {
-        let olm_wrapper = OlmWrapper::new(true);
-        let idkey = olm_wrapper.get_idkey();
+        let crypto = Crypto::new(true);
+        let idkey = crypto.get_idkey();
         let plaintext: &str = "hello";
-        let decrypted = olm_wrapper.decrypt(&idkey, 1, &plaintext.to_string());
+        let decrypted = crypto.decrypt(&idkey, 1, &plaintext.to_string());
         assert_eq!(plaintext, decrypted);
     }
 
     #[tokio::test]
     async fn test_self_decrypt() {
-        let olm_wrapper = OlmWrapper::new(false);
-        let idkey = olm_wrapper.get_idkey();
+        let crypto = Crypto::new(false);
+        let idkey = crypto.get_idkey();
         let server_comm = ServerComm::new(None, None, idkey.clone(), None);
         let plaintext = String::from("hello");
         let empty = String::from("");
-        let (c_type, ciphertext) = olm_wrapper.encrypt(&server_comm, &idkey, &plaintext).await;
-        let decrypted = olm_wrapper.decrypt(&idkey, c_type, &ciphertext);
+        let (c_type, ciphertext) = crypto.encrypt(&server_comm, &idkey, &plaintext).await;
+        let decrypted = crypto.decrypt(&idkey, c_type, &ciphertext);
         assert_eq!(empty, ciphertext);
         assert_eq!(plaintext, decrypted);
     }
 
     #[tokio::test]
     async fn test_self_outbound_session() {
-        let olm_wrapper = OlmWrapper::new(false);
-        let idkey = olm_wrapper.get_idkey();
-        let server_comm = ServerComm::init(None, None, &olm_wrapper).await;
-        let session = olm_wrapper.new_outbound_session(&server_comm, &idkey).await;
+        let crypto = Crypto::new(false);
+        let idkey = crypto.get_idkey();
+        let server_comm = ServerComm::init(None, None, &crypto).await;
+        let session = crypto.new_outbound_session(&server_comm, &idkey).await;
         println!("New session: {:?}", session);
         println!("New session ID: {:?}", session.session_id());
         assert!(!session.has_received_message());
@@ -360,12 +360,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_encrypt_and_decrypt_once() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let _ = ServerComm::init(None, None, &ow2).await;
@@ -380,12 +380,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_init() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let _ = ServerComm::init(None, None, &ow2).await;
@@ -428,12 +428,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_without_received_msg() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let _ = ServerComm::init(None, None, &ow2).await;
@@ -481,12 +481,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_with_received_msg() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -533,12 +533,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_encrypt_and_decrypt_without_received_msg() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let _ = ServerComm::init(None, None, &ow2).await;
@@ -558,12 +558,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_encrypt_and_decrypt_with_received_msg() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -583,12 +583,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_delayed_message() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let sc2 = ServerComm::init(None, None, &ow2).await;
@@ -617,12 +617,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_very_delayed_message() {
-        let ow1 = OlmWrapper::new(false);
+        let ow1 = Crypto::new(false);
         let idkey1 = ow1.get_idkey();
         println!("idkey1: {:?}", idkey1);
         let sc1 = ServerComm::init(None, None, &ow1).await;
 
-        let ow2 = OlmWrapper::new(false);
+        let ow2 = Crypto::new(false);
         let idkey2 = ow2.get_idkey();
         println!("idkey2: {:?}", idkey2);
         let sc2 = ServerComm::init(None, None, &ow2).await;

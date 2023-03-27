@@ -6,39 +6,51 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
-use crate::hash_vectors::{CommonPayload, HashVectors, RecipientPayload};
+use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
-    Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm,
-    ToDelete,
+    Batch, EncryptedCommonPayload, EncryptedPerRecipientPayload, Event,
+    IncomingMessage, OutgoingMessage, ServerComm, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FullPayload {
-    common: CommonPayload,
-    per_recipient: RecipientPayload,
+pub struct PerRecipientPayload {
+    val_payload: ValidationPayload,
+    key: [u8; 16],
+    iv: [u8; 16],
 }
 
-impl FullPayload {
+impl PerRecipientPayload {
     fn new(
-        common: CommonPayload,
-        per_recipient: RecipientPayload,
-    ) -> FullPayload {
+        val_payload: ValidationPayload,
+        key: [u8; 16],
+        iv: [u8; 16],
+    ) -> PerRecipientPayload {
         Self {
-            common,
-            per_recipient,
+            val_payload,
+            key,
+            iv,
         }
     }
 
+    fn key(&self) -> [u8; 16] {
+        self.key
+    }
+
+    fn iv(&self) -> [u8; 16] {
+        self.iv
+    }
+
     fn to_string(
-        common: CommonPayload,
-        per_recipient: RecipientPayload,
+        val_payload: ValidationPayload,
+        key: [u8; 16],
+        iv: [u8; 16],
     ) -> String {
-        serde_json::to_string(&FullPayload::new(common.clone(), per_recipient))
+        serde_json::to_string(&PerRecipientPayload::new(val_payload, key, iv))
             .unwrap()
     }
 
-    fn from_string(msg: String) -> FullPayload {
-        serde_json::from_str(msg.as_str()).unwrap()
+    fn from_string(per_recipient_payload: String) -> PerRecipientPayload {
+        serde_json::from_str(per_recipient_payload.as_str()).unwrap()
     }
 }
 
@@ -140,7 +152,7 @@ impl<C: CoreClient> Core<C> {
         //println!("...TRYING SEND LOCK...");
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         //println!("...GOT SEND LOCK...");
-        let (common_payload, recipient_payloads) = hash_vectors_guard
+        let (common_payload, val_payloads) = hash_vectors_guard
             .prepare_message(dst_idkeys.clone(), payload.to_string());
 
         // FIXME What if common_payloads are identical?
@@ -165,29 +177,30 @@ impl<C: CoreClient> Core<C> {
         core::mem::drop(hash_vectors_guard);
         //println!("...UNLOCKED SEND...");
 
-        // TODO symmetrically encrypt once
-        //let (ciphertext, key) = crypto.symmetric_encrypt();
+        // symmetrically encrypt common_payload once
+        let (common_ct, key, iv) =
+            self.crypto.symmetric_encrypt(common_payload.clone());
 
-        // TODO loop to encrypt the symmetric key per client
         let mut batch = Batch::new();
-        for (idkey, recipient_payload) in recipient_payloads {
-            let full_payload = FullPayload::to_string(
-                common_payload.clone(),
-                recipient_payload,
-            );
 
-            let (c_type, ciphertext) = self
+        // TODO loop to encrypt key + iv + val_payload per client
+        for (idkey, val_payload) in val_payloads {
+            let per_recipient_payload =
+                PerRecipientPayload::to_string(val_payload, key, iv);
+
+            let (c_type, per_recipient_ct) = self
                 .crypto
                 .encrypt(
                     &self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
-                    &full_payload,
+                    &per_recipient_payload,
                 )
                 .await;
 
             batch.push(OutgoingMessage::new(
                 idkey,
-                Payload::new(c_type, ciphertext),
+                EncryptedCommonPayload::new(common_ct.clone()),
+                EncryptedPerRecipientPayload::new(c_type, per_recipient_ct),
             ));
         }
 
@@ -248,13 +261,21 @@ impl<C: CoreClient> Core<C> {
                 let msg: IncomingMessage =
                     IncomingMessage::from_string(msg_string);
 
-                let decrypted = self.crypto.decrypt(
+                let decrypted_per_recipient = self.crypto.decrypt(
                     &msg.sender(),
-                    msg.payload().c_type(),
-                    &msg.payload().ciphertext(),
+                    msg.enc_per_recipient().c_type(),
+                    &msg.enc_per_recipient().ciphertext(),
                 );
 
-                let full_payload = FullPayload::from_string(decrypted);
+                let per_recipient_payload =
+                    PerRecipientPayload::from_string(decrypted_per_recipient);
+                let decrypted_common = self.crypto.symmetric_decrypt(
+                    msg.enc_common().byte_vec().clone(),
+                    per_recipient_payload.key(),
+                    per_recipient_payload.iv(),
+                );
+                let common_payload =
+                    CommonPayload::from_string(decrypted_common);
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released
@@ -314,18 +335,18 @@ impl<C: CoreClient> Core<C> {
                 //println!("...GOT RECV LOCK...");
                 let parsed_res = hash_vectors_guard.parse_message(
                     &msg.sender(),
-                    full_payload.common.clone(),
-                    &full_payload.per_recipient,
+                    common_payload.clone(),
+                    &per_recipient_payload.val_payload,
                 );
 
                 // add to incoming_queue before releasing lock
                 self.incoming_queue
                     .lock()
                     .await
-                    .push_back(full_payload.common.clone());
+                    .push_back(common_payload.clone());
                 //println!(
                 //    "-----ADDING CP TO IQ: {:?}",
-                //    full_payload.common.clone()
+                //    common_payload.clone()
                 //);
 
                 core::mem::drop(hash_vectors_guard);
@@ -336,7 +357,7 @@ impl<C: CoreClient> Core<C> {
                     let mut iq_guard = self.incoming_queue.lock().await;
                     //println!("-----RECV LOOP");
                     //println!("iq_guard.front(): {:?}", iq_guard.front());
-                    if iq_guard.front() != Some(&full_payload.common) {
+                    if iq_guard.front() != Some(&common_payload) {
                         let _ = self.iq_cv.wait_no_relock(iq_guard).await;
                     } else {
                         //println!("~~POPPING~~");

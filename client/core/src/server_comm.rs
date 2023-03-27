@@ -20,15 +20,33 @@ pub enum Event {
     Msg(String),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EncryptedCommonPayload {
+    byte_vec: Vec<u8>,
+}
+
+impl EncryptedCommonPayload {
+    pub fn new(byte_vec: Vec<u8>) -> EncryptedCommonPayload {
+        Self { byte_vec }
+    }
+
+    pub fn byte_vec(&self) -> &Vec<u8> {
+        &self.byte_vec
+    }
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct Payload {
+pub struct EncryptedPerRecipientPayload {
     c_type: usize,
     ciphertext: String,
 }
 
-impl Payload {
-    pub fn new(c_type: usize, ciphertext: String) -> Payload {
+impl EncryptedPerRecipientPayload {
+    pub fn new(
+        c_type: usize,
+        ciphertext: String,
+    ) -> EncryptedPerRecipientPayload {
         Self { c_type, ciphertext }
     }
 
@@ -45,12 +63,21 @@ impl Payload {
 #[serde(rename_all = "camelCase")]
 pub struct OutgoingMessage {
     device_id: String,
-    payload: Payload,
+    enc_common: EncryptedCommonPayload,
+    enc_per_recipient: EncryptedPerRecipientPayload,
 }
 
 impl OutgoingMessage {
-    pub fn new(device_id: String, payload: Payload) -> OutgoingMessage {
-        Self { device_id, payload }
+    pub fn new(
+        device_id: String,
+        enc_common: EncryptedCommonPayload,
+        enc_per_recipient: EncryptedPerRecipientPayload,
+    ) -> OutgoingMessage {
+        Self {
+            device_id,
+            enc_common,
+            enc_per_recipient,
+        }
     }
 }
 
@@ -83,7 +110,8 @@ impl Batch {
 #[serde(rename_all = "camelCase")]
 pub struct IncomingMessage {
     sender: String,
-    payload: Payload,
+    enc_common: EncryptedCommonPayload,
+    enc_per_recipient: EncryptedPerRecipientPayload,
     seq_id: u64,
 }
 
@@ -96,8 +124,12 @@ impl IncomingMessage {
         &self.sender
     }
 
-    pub fn payload(&self) -> &Payload {
-        &self.payload
+    pub fn enc_common(&self) -> &EncryptedCommonPayload {
+        &self.enc_common
+    }
+
+    pub fn enc_per_recipient(&self) -> &EncryptedPerRecipientPayload {
+        &self.enc_per_recipient
     }
 
     pub fn seq_id(&self) -> u64 {
@@ -274,13 +306,13 @@ impl<C: CoreClient> ServerComm<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Batch, Event, IncomingMessage, OutgoingMessage, Payload, ServerComm,
-        ToDelete,
-    };
+    //use super::{
+    //    Batch, Event, IncomingMessage, OutgoingMessage,
+    // EncryptedPerRecipientPayload, ServerComm,    ToDelete,
+    //};
     use crate::core::stream_client::StreamClient;
     use crate::core::Core;
-    use crate::crypto::Crypto;
+    //use crate::crypto::Crypto;
     use std::sync::Arc;
     //use tokio::sync::RwLock;
 
@@ -337,10 +369,10 @@ mod tests {
     #[tokio::test]
     async fn test_send_message() {
         let idkey = String::from("efgh");
-        let payload = String::from("hello");
+        let enc_per_recipient = String::from("hello");
         let batch = Batch::from_vec(vec![OutgoingMessage::new(
             idkey.clone(),
-            Payload::new(0, payload.clone()),
+            EncryptedPerRecipientPayload::new(0, enc_per_recipient.clone()),
         )]);
 
         let mut server_comm = ServerComm::new(None, None, idkey.clone());
@@ -351,7 +383,7 @@ mod tests {
                 Ok(Some(Event::Msg(msg_string))) => {
                     let msg: IncomingMessage = serde_json::from_str(msg_string.as_str()).unwrap();
                     assert_eq!(msg.sender, idkey);
-                    assert_eq!(msg.payload.ciphertext, payload);
+                    assert_eq!(msg.enc_per_recipient.ciphertext, enc_per_recipient);
                 }
                 Ok(Some(Event::Otkey)) => panic!("Got otkey event"),
                 Ok(None) => panic!("Got none"),
@@ -364,10 +396,10 @@ mod tests {
     #[tokio::test]
     async fn test_delete_messages() {
         let idkey = String::from("ijkl");
-        let payload = String::from("hello");
+        let enc_per_recipient = String::from("hello");
         let batch = Batch::from_vec(vec![OutgoingMessage::new(
             idkey.clone(),
-            Payload::new(0, payload.clone()),
+            EncryptedPerRecipientPayload::new(0, enc_per_recipient.clone()),
         )]);
 
         let mut server_comm = ServerComm::new(None, None, idkey.clone());
@@ -378,7 +410,7 @@ mod tests {
                 Ok(Some(Event::Msg(msg_string))) => {
                     let msg: IncomingMessage = serde_json::from_str(msg_string.as_str()).unwrap();
                     assert_eq!(msg.sender, idkey);
-                    assert_eq!(msg.payload.ciphertext, payload);
+                    assert_eq!(msg.enc_per_recipient.ciphertext, enc_per_recipient);
                     assert!(msg.seq_id > 0);
                     println!("msg.seq_id: {:?}", msg.seq_id);
 

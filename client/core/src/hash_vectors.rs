@@ -83,7 +83,7 @@ pub struct CommonPayload {
 }
 
 impl CommonPayload {
-    fn new(recipients: Vec<DeviceId>, message: Message) -> Self {
+    pub fn new(recipients: Vec<DeviceId>, message: Message) -> Self {
         CommonPayload {
             recipients,
             message,
@@ -93,18 +93,22 @@ impl CommonPayload {
     pub fn message(&self) -> &Message {
         &self.message
     }
+
+    pub fn from_string(common_payload: String) -> Self {
+        serde_json::from_str(common_payload.as_str()).unwrap()
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct RecipientPayload {
+pub struct ValidationPayload {
     consistency_loopback: bool,
     validation_seq: Option<usize>,
     validation_digest: Option<Hash>,
 }
 
-impl RecipientPayload {
-    fn new() -> RecipientPayload {
-        RecipientPayload {
+impl ValidationPayload {
+    fn new() -> ValidationPayload {
+        ValidationPayload {
             consistency_loopback: false,
             validation_seq: None,
             validation_digest: None,
@@ -159,7 +163,7 @@ impl HashVectors {
         &mut self,
         mut recipients: Vec<DeviceId>,
         message: Message,
-    ) -> (CommonPayload, HashMap<DeviceId, RecipientPayload>) {
+    ) -> (CommonPayload, HashMap<DeviceId, ValidationPayload>) {
         let mut consistency_loopback = true;
         for recipient in recipients.iter() {
             if self.own_device == *recipient {
@@ -176,7 +180,7 @@ impl HashVectors {
         self.register_message(recipients.clone(), message.clone());
 
         let mut recipient_payloads =
-            HashMap::<DeviceId, RecipientPayload>::new();
+            HashMap::<DeviceId, ValidationPayload>::new();
         for recipient in recipients.iter() {
             recipient_payloads.insert(
                 recipient.to_string(),
@@ -191,8 +195,8 @@ impl HashVectors {
         &self,
         recipient: &DeviceId,
         consistency_loopback: bool,
-    ) -> RecipientPayload {
-        let mut recipient_payload = RecipientPayload::new();
+    ) -> ValidationPayload {
+        let mut recipient_payload = ValidationPayload::new();
 
         if self.own_device == *recipient {
             recipient_payload.set_consistency_loopback(consistency_loopback);
@@ -227,7 +231,7 @@ impl HashVectors {
         &mut self,
         sender: &DeviceId,
         common_payload: CommonPayload,
-        recipient_payload: &RecipientPayload,
+        recipient_payload: &ValidationPayload,
     ) -> Result<Option<(usize, Message)>, Error> {
         // Recipients list is sorted sending-side
         if !common_payload.recipients.iter().is_sorted() {
@@ -461,7 +465,7 @@ impl HashVectors {
 mod test {
     use super::{
         hash_message, CommonPayload, DeviceId, DeviceState, Hash, HashVectors,
-        RecipientPayload,
+        ValidationPayload,
     };
     use std::collections::HashMap;
     use std::collections::VecDeque;
@@ -543,10 +547,10 @@ mod test {
         assert_eq!(common_payload, CommonPayload::new(recipients, message));
 
         let mut expected_recipient_payloads =
-            HashMap::<DeviceId, RecipientPayload>::new();
+            HashMap::<DeviceId, ValidationPayload>::new();
         expected_recipient_payloads.insert(
             idkey,
-            RecipientPayload {
+            ValidationPayload {
                 consistency_loopback: false,
                 validation_seq: None,
                 validation_digest: None,
@@ -568,10 +572,10 @@ mod test {
         assert_eq!(common_payload, CommonPayload::new(recipients, message));
 
         let mut expected_recipient_payloads =
-            HashMap::<DeviceId, RecipientPayload>::new();
+            HashMap::<DeviceId, ValidationPayload>::new();
         expected_recipient_payloads.insert(
             idkey_0,
-            RecipientPayload {
+            ValidationPayload {
                 consistency_loopback: false,
                 validation_seq: None,
                 validation_digest: None,
@@ -579,7 +583,7 @@ mod test {
         );
         expected_recipient_payloads.insert(
             idkey_1,
-            RecipientPayload {
+            ValidationPayload {
                 consistency_loopback: false,
                 validation_seq: None,
                 validation_digest: None,
@@ -605,10 +609,10 @@ mod test {
         );
 
         let mut expected_recipient_payloads =
-            HashMap::<DeviceId, RecipientPayload>::new();
+            HashMap::<DeviceId, ValidationPayload>::new();
         expected_recipient_payloads.insert(
             idkey_0,
-            RecipientPayload {
+            ValidationPayload {
                 consistency_loopback: true,
                 validation_seq: None,
                 validation_digest: None,
@@ -616,7 +620,7 @@ mod test {
         );
         expected_recipient_payloads.insert(
             idkey_1,
-            RecipientPayload {
+            ValidationPayload {
                 consistency_loopback: false,
                 validation_seq: None,
                 validation_digest: None,

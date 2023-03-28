@@ -169,7 +169,12 @@ mod tests {
     #[test]
     fn test_set_get_data() {
         let mut data_store = DataStore::new();
-        let data = BasicData::new(String::from("0"), String::from("val"));
+        let data = BasicData::new(
+            String::from("0"),
+            String::from("type"),
+            String::from("val"),
+            String::from("group"),
+        );
         data_store.set_data(data.data_id.to_string(), data.clone());
         assert_eq!(*data_store.get_data(&data.data_id).unwrap(), data);
     }
@@ -177,7 +182,12 @@ mod tests {
     #[test]
     fn test_delete_data() {
         let mut data_store = DataStore::new();
-        let data = BasicData::new(String::from("0"), String::from("val"));
+        let data = BasicData::new(
+            String::from("0"),
+            String::from("type"),
+            String::from("val"),
+            String::from("group"),
+        );
         data_store.set_data(data.data_id.to_string(), data.clone());
         data_store.delete_data(&data.data_id);
         assert_eq!(data_store.get_data(&data.data_id), None);

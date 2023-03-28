@@ -1,17 +1,21 @@
 use noise_kv::client::NoiseKVClient;
+use noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
 use std::sync::Arc;
 use uuid::Uuid;
 
-const LB_TYPE: &str = "lightbulb";
+const LB_PREFIX: &str = "lightbulb";
+const DEVICE_PREFIX: &str = "device";
+const LB_DEVICE_VAL: &str = r#"{ "is_bulb": true }"#;
+const LS_DEVICE_VAL: &str = r#"{ "is_bulb": false }"#;
+const LB_OFF_VAL: &str = r#"{ "is_on": false }"#;
+const LB_ON_VAL: &str = r#"{ "is_on": true }"#;
 
 #[derive(Clone)]
 struct LightswitchApp {
     client: NoiseKVClient,
-    // TODO is_lightbulb flag for differentiating between a lightswitch
-    // and a lightbulb (where both need to know the state of the lightbulb)
 }
 
 impl LightswitchApp {
@@ -22,7 +26,7 @@ impl LightswitchApp {
             //Some("8080"),
             // FIXME something isn't working anymore w the sns server
             // specifically
-            false, None,
+            false, None, false,
         )
         .await;
         Self { client }
@@ -42,19 +46,78 @@ impl LightswitchApp {
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         match context.client.device.read().as_ref() {
-            Some(_) => Ok(Some(String::from("Device exists."))),
+            Some(_) => {
+                let device_guard = context.client.device.read();
+                let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+                let val_opt = data_store_guard.get_data(&DEVICE_PREFIX.to_string());
+
+                match val_opt {
+                    Some(val) => {
+                        if val.data_val() == LB_DEVICE_VAL {
+                            return Ok(Some(String::from(
+                                "Lightbulb device exists."
+                            )));
+                        } else if val.data_val() == LS_DEVICE_VAL {
+                            return Ok(Some(String::from(
+                                "Lightswitch device exists."
+                            )));
+                        } else {
+                            panic!(
+                                "A device exists that is neither lightbulb /
+                                nor lightswitch."
+                            );
+                        }
+                    },
+                    None => panic!(
+                        "Something went wrong with device initialization; /
+                        this should never happen."
+                    ),
+                }
+            },
             None => Ok(Some(String::from(
-                "Device does not exist: please create one.",
+                "Device does not exist: please create either a lightbulb or a lightswitch to continue.",
             ))),
         }
     }
 
-    pub fn create_device(
-        _args: ArgMatches,
+    pub async fn create_lightbulb_device(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
-        Ok(Some(String::from("Standalone device created!")))
+
+        let id: String = DEVICE_PREFIX.to_owned();
+        let json_val = LB_DEVICE_VAL.to_string();
+        match context
+            .client
+            .set_data(id.clone(), DEVICE_PREFIX.to_string(), json_val, None)
+            .await
+        {
+            Ok(_) => Ok(Some(String::from("Lightbulb device created!"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not create lightbulb device: {}",
+                err.to_string()
+            )))),
+        }
+    }
+
+    pub async fn create_lightswitch_device(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        context.client.create_standalone_device();
+
+        let id: String = DEVICE_PREFIX.to_owned();
+        let json_val = LS_DEVICE_VAL.to_string();
+        match context
+            .client
+            .set_data(id.clone(), DEVICE_PREFIX.to_string(), json_val, None)
+            .await
+        {
+            Ok(_) => Ok(Some(String::from("Lightswitch device created!"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not create lightswitch device: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub async fn link_device(
@@ -234,13 +297,13 @@ impl LightswitchApp {
             )));
         }
 
-        let mut id: String = LB_TYPE.to_owned();
+        let mut id: String = LB_PREFIX.to_owned();
         id.push_str("/");
         id.push_str(&Uuid::new_v4().to_string());
-        let json_val = r#"{ "is_on": false }"#.to_string();
+        let json_val = LB_OFF_VAL.to_string();
         match context
             .client
-            .set_data(id.clone(), LB_TYPE.to_string(), json_val, None)
+            .set_data(id.clone(), LB_PREFIX.to_string(), json_val, None)
             .await
         {
             Ok(_) => Ok(Some(String::from(format!(
@@ -293,10 +356,10 @@ impl LightswitchApp {
         }
 
         let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        let json_val = r#"{ "is_on": true }"#.to_string();
+        let json_val = LB_ON_VAL.to_string();
         match context
             .client
-            .set_data(id, LB_TYPE.to_string(), json_val, None)
+            .set_data(id, LB_PREFIX.to_string(), json_val, None)
             .await
         {
             Ok(_) => Ok(Some(String::from("Turned light on"))),
@@ -318,10 +381,10 @@ impl LightswitchApp {
         }
 
         let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        let json_val = r#"{ "is_on": false }"#.to_string();
+        let json_val = LB_OFF_VAL.to_string();
         match context
             .client
-            .set_data(id, LB_TYPE.to_string(), json_val, None)
+            .set_data(id, LB_PREFIX.to_string(), json_val, None)
             .await
         {
             Ok(_) => Ok(Some(String::from("Turned light off"))),
@@ -341,9 +404,17 @@ async fn main() -> ReplResult<()> {
         .with_name("Lightswitch App")
         .with_version("v0.1.0")
         .with_description("Noise lightswitch app")
-        .with_command(
-            Command::new("create_device"),
-            LightswitchApp::create_device,
+        .with_command_async(
+            Command::new("create_lightbulb_device"),
+            |_, context| {
+                Box::pin(LightswitchApp::create_lightbulb_device(context))
+            },
+        )
+        .with_command_async(
+            Command::new("create_lightswitch_device"),
+            |_, context| {
+                Box::pin(LightswitchApp::create_lightswitch_device(context))
+            },
         )
         .with_command_async(
             Command::new("link_device").arg(Arg::new("idkey").required(true)),

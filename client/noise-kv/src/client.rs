@@ -4,6 +4,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::{thread, time};
 use thiserror::Error;
 
 use noise_core::core::{Core, CoreClient};
@@ -84,11 +85,16 @@ pub struct NoiseKVClient {
     pub device: Arc<RwLock<Option<Device<BasicData>>>>,
     ctr: Arc<Mutex<u32>>,
     ctr_cv: Arc<Condvar>,
+    wait_to_apply: bool,
 }
 
 #[async_trait]
 impl CoreClient for NoiseKVClient {
     async fn client_callback(&self, sender: String, message: String) {
+        if self.wait_to_apply {
+            thread::sleep(time::Duration::from_secs(5));
+        }
+
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
                 match self.check_permissions(&sender, &operation) {
@@ -127,14 +133,16 @@ impl NoiseKVClient {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
-        test_client_callback: Option<u32>,
+        test_wait_num_callbacks: Option<u32>,
+        wait_to_apply: bool,
     ) -> NoiseKVClient {
-        let ctr_val = test_client_callback.unwrap_or(0);
+        let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let mut client = NoiseKVClient {
             core: None,
             device: Arc::new(RwLock::new(None)),
             ctr: Arc::new(Mutex::new(ctr_val)),
             ctr_cv: Arc::new(Condvar::new()),
+            wait_to_apply,
         };
 
         let core = Core::new(
@@ -236,8 +244,6 @@ impl NoiseKVClient {
 
     fn validate_data_invariants(&self, operation: &Operation) -> bool {
         match operation {
-            // FIXME also validate when removing data?
-            //| Operation::DeleteData(data_id) =>
             Operation::UpdateData(data_id, data_val) => self
                 .device
                 .read()
@@ -503,6 +509,8 @@ impl NoiseKVClient {
         {
             Ok(_) => {
                 // TODO notify contacts of new members
+                // get contacts
+
                 Ok(())
             }
             Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -694,8 +702,6 @@ impl NoiseKVClient {
                     .delete_device(to_delete.clone())
                     .map_err(Error::from);
 
-                // TODO wait for ACK that other devices have indeed received
-                // above operations before deleting specified device
                 match self
                     .send_message(
                         vec![to_delete.clone()],
@@ -715,8 +721,6 @@ impl NoiseKVClient {
     pub async fn delete_all_devices(&self) -> Result<(), Error> {
         // TODO notify contacts
 
-        // TODO wait for ACK that contacts have indeed received
-        // above operations before deleting all devices
         match self
             .send_message(
                 self.device

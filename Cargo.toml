@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "client/core",
+    "client/noise-kv",
+    "apps/cmdline-lightswitch",
+]

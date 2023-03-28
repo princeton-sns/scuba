@@ -176,7 +176,7 @@ impl<C: CoreClient> ServerComm<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         idkey: String,
-        core_option: Option<Arc<Core<C>>>,
+        core: Arc<Core<C>>,
     ) -> Self {
         let ip_addr = ip_arg.unwrap_or(IP_ADDR);
         let port_num = port_arg.unwrap_or(PORT_NUM);
@@ -209,9 +209,7 @@ impl<C: CoreClient> ServerComm<C> {
                 match listener.as_mut().try_next().await {
                     Err(err) => {
                         //println!("got ERR from server: {:?}", err);
-                        if let Some(ref core) = core_option {
-                            core.server_comm_callback(Err(err)).await;
-                        }
+                        core.server_comm_callback(Err(err)).await;
                     }
                     Ok(None) => {
                         //println!("got NONE from server")
@@ -224,21 +222,17 @@ impl<C: CoreClient> ServerComm<C> {
                                 //    "got OTKEY event from server - {:?}",
                                 //    task_idkey
                                 //);
-                                if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Otkey))
-                                        .await;
-                                }
+                                core.server_comm_callback(Ok(Event::Otkey))
+                                    .await;
                             }
                             "msg" => {
                                 //println!("got MSG event from server");
                                 let msg = String::from(event.data);
                                 //println!("msg: {:?}", msg);
-                                if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Msg(
-                                        msg,
-                                    )))
-                                    .await;
-                                }
+                                core.server_comm_callback(Ok(Event::Msg(
+                                    msg,
+                                )))
+                                .await;
                             }
                             _ => {}
                         },

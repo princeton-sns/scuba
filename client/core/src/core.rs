@@ -111,7 +111,7 @@ impl<C: CoreClient> Core<C> {
                 ip_arg,
                 port_arg,
                 idkey.clone(),
-                Some(arc_core.clone()),
+                arc_core.clone(),
             )
             .await;
             *server_comm_guard = Some(server_comm);

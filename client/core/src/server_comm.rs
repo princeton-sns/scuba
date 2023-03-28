@@ -1,11 +1,7 @@
-use crate::core::{Core, CoreClient};
-use eventsource_client::{Client, ClientBuilder, SSE};
-use futures::TryStreamExt;
-use reqwest::{Response, Result};
+use eventsource::reqwest::Client;
+use reqwest::{blocking::Response, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
 
@@ -160,23 +156,22 @@ impl From<OtkeyResponse> for String {
     }
 }
 
-pub struct ServerComm<C: CoreClient> {
+pub struct ServerComm {
     base_url: Url,
     idkey: String,
-    client: reqwest::Client,
-    _listener_task_handle: tokio::task::JoinHandle<()>,
-    _pd: PhantomData<C>,
+    client: reqwest::blocking::Client,
+    //_listener_task_handle: tokio::task::JoinHandle<()>,
 }
 // wasm FIXME s reqwest and SEE
 // TODO make (some of) server comm a trait + would help make
 // mockable
 
-impl<C: CoreClient> ServerComm<C> {
-    pub async fn new<'a>(
+impl ServerComm {
+    pub fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         idkey: String,
-        core: Arc<Core<C>>,
+        sse_callback: Box<dyn Fn(Event) + Send>,
     ) -> Self {
         let ip_addr = ip_arg.unwrap_or(IP_ADDR);
         let port_num = port_arg.unwrap_or(PORT_NUM);
@@ -186,57 +181,32 @@ impl<C: CoreClient> ServerComm<C> {
 
         let task_base_url = base_url.clone();
         let task_idkey = idkey.clone();
-        let _listener_task_handle = tokio::spawn(async move {
-            let mut listener = Box::new(
-                ClientBuilder::for_url(
-                    task_base_url
-                        .join("/events")
-                        .expect("Failed join of /events")
-                        .as_str(),
-                )
-                .expect("Failed in ClientBuilder::for_url")
-                .header(
-                    "Authorization",
-                    &vec!["Bearer", &task_idkey.to_string()].join(" "),
-                )
-                .expect("Failed header construction")
-                .build(),
-            )
-            .stream();
 
-            loop {
-                //println!("IN LOOP");
-                match listener.as_mut().try_next().await {
-                    Err(err) => {
-                        //println!("got ERR from server: {:?}", err);
-                        core.server_comm_callback(Err(err)).await;
+        std::thread::spawn(move || {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(format!("Bearer {}", task_idkey).as_str()).unwrap()
+            );
+            let rc = reqwest::blocking::Client::builder()
+                .default_headers(headers).build().expect("client");
+            let client = Client::new_with_client(task_base_url.join("/events").expect("Failed join of /events"), rc);
+            for event in client.filter_map(|e| e.ok()) {
+                match event.event_type.as_ref().map(String::as_str) {
+                    Some("otkey") => {
+                        //println!(
+                        //    "got OTKEY event from server - {:?}",
+                        //    task_idkey
+                        //);
+                        sse_callback(Event::Otkey);
                     }
-                    Ok(None) => {
-                        //println!("got NONE from server")
-                    }
-                    Ok(Some(event)) => match event {
-                        SSE::Comment(_) => {}
-                        SSE::Event(event) => match event.event_type.as_str() {
-                            "otkey" => {
-                                //println!(
-                                //    "got OTKEY event from server - {:?}",
-                                //    task_idkey
-                                //);
-                                core.server_comm_callback(Ok(Event::Otkey))
-                                    .await;
-                            }
-                            "msg" => {
-                                //println!("got MSG event from server");
-                                let msg = String::from(event.data);
-                                //println!("msg: {:?}", msg);
-                                core.server_comm_callback(Ok(Event::Msg(
-                                    msg,
-                                )))
-                                .await;
-                            }
-                            _ => {}
-                        },
+                    Some("msg") => {
+                        //println!("got MSG event from server");
+                        let msg = String::from(event.data);
+                        //println!("msg: {:?}", msg);
+                        sse_callback(Event::Msg(msg));
                     },
+                    _ => {}
                 }
             }
         });
@@ -244,23 +214,20 @@ impl<C: CoreClient> ServerComm<C> {
         Self {
             base_url,
             idkey,
-            client: reqwest::Client::new(),
-            _listener_task_handle,
-            _pd: PhantomData,
+            client: reqwest::blocking::Client::new(),
         }
     }
 
-    pub async fn send_message(&self, batch: &Batch) -> Result<Response> {
+    pub fn send_message(&self, batch: &Batch) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message").expect("").as_str())
             .header("Content-Type", "application/json")
             .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
             .json(&batch)
             .send()
-            .await
     }
 
-    pub async fn get_otkey_from_server(
+    pub fn get_otkey_from_server(
         &self,
         dst_idkey: &String,
     ) -> Result<OtkeyResponse> {
@@ -268,10 +235,10 @@ impl<C: CoreClient> ServerComm<C> {
         url.set_query(Some(
             &vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
         ));
-        self.client.get(url).send().await?.json().await
+        self.client.get(url).send()?.json()
     }
 
-    pub async fn delete_messages_from_server(
+    pub fn delete_messages_from_server(
         &self,
         to_delete: &ToDelete,
     ) -> Result<Response> {
@@ -281,10 +248,9 @@ impl<C: CoreClient> ServerComm<C> {
             .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
             .json(&to_delete)
             .send()
-            .await
     }
 
-    pub async fn add_otkeys_to_server<'a>(
+    pub fn add_otkeys_to_server<'a>(
         &self,
         to_add: &HashMap<String, String>,
     ) -> Result<Response> {
@@ -294,7 +260,6 @@ impl<C: CoreClient> ServerComm<C> {
             .header("Authorization", vec!["Bearer", &self.idkey].join(" "))
             .json(&to_add)
             .send()
-            .await
     }
 }
 
@@ -334,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn test_new() {
         let arc_core: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, None).await;
+            Core::new(None, None, false, None);
 
         //let crypto = Crypto::new(false);
         //let idkey = crypto.get_idkey();

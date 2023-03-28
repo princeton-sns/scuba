@@ -1,9 +1,7 @@
-use async_condvar_fair::Condvar;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use std::sync::{Condvar, Mutex, RwLock};
 
 use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
@@ -54,17 +52,16 @@ impl PerRecipientPayload {
     }
 }
 
-#[async_trait]
 pub trait CoreClient: Sync + Send + 'static {
-    async fn client_callback(&self, sender: String, message: String);
+    fn client_callback(&self, sender: String, message: String);
 }
 
 pub struct Core<C: CoreClient> {
     crypto: Crypto,
-    server_comm: RwLock<Option<ServerComm<C>>>,
+    server_comm: RwLock<Option<ServerComm>>,
     hash_vectors: Mutex<HashVectors>,
     client: RwLock<Option<Arc<C>>>,
-    init: parking_lot::Mutex<bool>,
+    init: Mutex<bool>,
     init_cv: Condvar,
     outgoing_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
     incoming_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
@@ -73,7 +70,7 @@ pub struct Core<C: CoreClient> {
 }
 
 impl<C: CoreClient> Core<C> {
-    pub async fn new<'a>(
+    pub fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
@@ -93,7 +90,7 @@ impl<C: CoreClient> Core<C> {
             server_comm: RwLock::new(None),
             hash_vectors,
             client: RwLock::new(client),
-            init: parking_lot::Mutex::new(false),
+            init: Mutex::new(false),
             init_cv: Condvar::new(),
             outgoing_queue: Arc::new(Mutex::new(
                 VecDeque::<CommonPayload>::new(),
@@ -106,51 +103,56 @@ impl<C: CoreClient> Core<C> {
         });
 
         {
-            let mut server_comm_guard = arc_core.server_comm.write().await;
+            let mut server_comm_guard = arc_core.server_comm.write().unwrap();
+            let arc_core_copy = arc_core.clone();
+            let callback =
+                Box::new(move |event| {
+                    arc_core_copy.server_comm_callback(event)
+                });
             let server_comm = ServerComm::new(
                 ip_arg,
                 port_arg,
                 idkey.clone(),
-                arc_core.clone(),
-            )
-            .await;
+                callback,
+            );
             *server_comm_guard = Some(server_comm);
         }
 
         arc_core
     }
 
-    pub async fn set_client(&self, client: Arc<C>) {
-        *self.client.write().await = Some(client);
+    pub fn set_client(&self, client: Arc<C>) {
+        *self.client.write().unwrap() = Some(client);
     }
 
-    pub async fn unset_client(&self) {
-        *self.client.write().await = None;
+    pub fn unset_client(&self) {
+        *self.client.write().unwrap() = None;
     }
 
     pub fn idkey(&self) -> String {
         self.crypto.get_idkey()
     }
 
-    pub async fn send_message(
+    pub fn send_message(
         &self,
         dst_idkeys: Vec<String>,
         payload: &String,
-    ) -> reqwest::Result<reqwest::Response> {
-        loop {
+    ) -> reqwest::Result<reqwest::blocking::Response> {
+        /* TODO: remove
+         * loop {
             let init = self.init.lock();
             if !*init {
-                let _ = self.init_cv.wait(init).await;
+                let _ = self.init_cv.wait(init).unwrap();
             } else {
                 break;
             }
-        }
+        }*/
 
         //println!("");
         //println!("---sending message ({:?})", self.idkey());
         //println!("");
         //println!("...TRYING SEND LOCK...");
-        let mut hash_vectors_guard = self.hash_vectors.lock().await;
+        let mut hash_vectors_guard = self.hash_vectors.lock().unwrap();
         //println!("...GOT SEND LOCK...");
         let (common_payload, val_payloads) = hash_vectors_guard
             .prepare_message(dst_idkeys.clone(), payload.to_string());
@@ -170,7 +172,7 @@ impl<C: CoreClient> Core<C> {
         // add to outgoing_queue before releasing lock
         self.outgoing_queue
             .lock()
-            .await
+            .unwrap()
             .push_back(common_payload.clone());
         //println!("-----ADDING CP TO OQ: {:?}", common_payload.clone());
 
@@ -191,11 +193,10 @@ impl<C: CoreClient> Core<C> {
             let (c_type, per_recipient_ct) = self
                 .crypto
                 .encrypt(
-                    &self.server_comm.read().await.as_ref().unwrap(),
+                    &self.server_comm.read().unwrap().as_ref().unwrap(),
                     &idkey,
                     &per_recipient_payload,
-                )
-                .await;
+                );
 
             batch.push(OutgoingMessage::new(
                 idkey,
@@ -206,11 +207,11 @@ impl<C: CoreClient> Core<C> {
 
         // loop until front of queue is ready to send
         loop {
-            let mut oq_guard = self.outgoing_queue.lock().await;
+            let mut oq_guard = self.outgoing_queue.lock().unwrap();
             //println!("-----SEND LOOP");
             //println!("oq_guard.front(): {:?}", oq_guard.front());
             if oq_guard.front() != Some(&common_payload) {
-                let _ = self.oq_cv.wait_no_relock(oq_guard).await;
+                let _ = self.oq_cv.wait(oq_guard);
             } else {
                 //println!("~~POPPING~~");
                 oq_guard.pop_front();
@@ -220,44 +221,42 @@ impl<C: CoreClient> Core<C> {
 
         self.server_comm
             .read()
-            .await
+            .unwrap()
             .as_ref()
             .unwrap()
             .send_message(&batch)
-            .await
     }
 
-    pub async fn server_comm_callback(
+    pub fn server_comm_callback(
         &self,
-        event: eventsource_client::Result<Event>,
+        event: Event,
     ) {
         //println!("");
         //println!("---receiving message ({:?})", self.idkey());
         //println!("");
         match event {
-            Err(err) => panic!("err: {:?}", err),
-            Ok(Event::Otkey) => {
+            Event::Otkey => {
                 let otkeys = self.crypto.generate_otkeys(None);
                 match self
                     .server_comm
                     .read()
-                    .await
+                    .unwrap()
                     .as_ref()
                     .unwrap()
                     .add_otkeys_to_server(&otkeys.curve25519())
-                    .await
                 {
                     Ok(_) => {}
                     Err(err) => panic!("Error sending otkeys: {:?}", err),
                 }
+                /* TODO: remove
                 // set init = true and notify init_cv waiters
                 let mut init = self.init.lock();
                 if !*init {
                     *init = true;
                     self.init_cv.notify_all();
-                }
+                }*/
             }
-            Ok(Event::Msg(msg_string)) => {
+            Event::Msg(msg_string) => {
                 let msg: IncomingMessage =
                     IncomingMessage::from_string(msg_string);
 
@@ -331,7 +330,7 @@ impl<C: CoreClient> Core<C> {
                 // changes made by Y, which were intended to come after X.
 
                 //println!("...TRYING RECV LOCK...");
-                let mut hash_vectors_guard = self.hash_vectors.lock().await;
+                let mut hash_vectors_guard = self.hash_vectors.lock().unwrap();
                 //println!("...GOT RECV LOCK...");
                 let parsed_res = hash_vectors_guard.parse_message(
                     &msg.sender(),
@@ -342,7 +341,7 @@ impl<C: CoreClient> Core<C> {
                 // add to incoming_queue before releasing lock
                 self.incoming_queue
                     .lock()
-                    .await
+                    .unwrap()
                     .push_back(common_payload.clone());
                 //println!(
                 //    "-----ADDING CP TO IQ: {:?}",
@@ -353,18 +352,20 @@ impl<C: CoreClient> Core<C> {
                 //println!("...UNLOCKED RECV...");
 
                 // loop until front of queue is ready to forward
+                /* TODO: channel?
                 loop {
-                    let mut iq_guard = self.incoming_queue.lock().await;
+                    let mut iq_guard = self.incoming_queue.lock().unwrap();
                     //println!("-----RECV LOOP");
                     //println!("iq_guard.front(): {:?}", iq_guard.front());
                     if iq_guard.front() != Some(&common_payload) {
-                        let _ = self.iq_cv.wait_no_relock(iq_guard).await;
+                        let _ = self.iq_cv.wait(iq_guard).unwrap();
                     } else {
                         //println!("~~POPPING~~");
                         iq_guard.pop_front();
                         break;
                     }
                 }
+                */
 
                 match parsed_res {
                     // No message to forward
@@ -376,23 +377,21 @@ impl<C: CoreClient> Core<C> {
                         //println!("forwarding");
                         self.client
                             .read()
-                            .await
+                            .unwrap()
                             .as_ref()
                             .unwrap()
-                            .client_callback(msg.sender().clone(), message)
-                            .await;
+                            .client_callback(msg.sender().clone(), message);
 
                         // TODO allow client to determine when to send these
                         match self
                             .server_comm
                             .read()
-                            .await
+                            .unwrap()
                             .as_ref()
                             .unwrap()
                             .delete_messages_from_server(
                                 &ToDelete::from_seq_id(seq.try_into().unwrap()),
                             )
-                            .await
                         {
                             Ok(_) => {}
                             Err(err) => panic!(
@@ -410,6 +409,7 @@ impl<C: CoreClient> Core<C> {
     }
 }
 
+#[cfg(test)]
 pub mod stream_client {
     use crate::core::CoreClient;
     use async_trait::async_trait;
@@ -436,9 +436,8 @@ pub mod stream_client {
         }
     }
 
-    #[async_trait]
     impl CoreClient for StreamClient {
-        async fn client_callback(&self, sender: String, message: String) {
+        fn client_callback(&self, sender: String, message: String) {
             use futures::SinkExt;
             self.sender
                 .lock()
@@ -477,13 +476,13 @@ mod tests {
         let (client, mut receiver) = StreamClient::new();
         let arc_client = Arc::new(client);
         let arc_core: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client)).await;
+            Core::new(None, None, false, Some(arc_client));
 
         let payload = String::from("hello from me");
         let idkey = arc_core.crypto.get_idkey();
         let recipients = vec![idkey.clone()];
 
-        if let Err(err) = arc_core.send_message(recipients, &payload).await {
+        if let Err(err) = arc_core.send_message(recipients, &payload) {
             panic!("Error sending message: {:?}", err);
         }
 
@@ -501,19 +500,19 @@ mod tests {
         let (client_a, mut receiver_a) = StreamClient::new();
         let arc_client_a = Arc::new(client_a);
         let arc_core_a: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_a)).await;
+            Core::new(None, None, false, Some(arc_client_a));
         let idkey_a = arc_core_a.crypto.get_idkey();
 
         let (client_b, mut receiver_b) = StreamClient::new();
         let arc_client_b = Arc::new(client_b);
         let arc_core_b: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_b)).await;
+            Core::new(None, None, false, Some(arc_client_b));
         let idkey_b = arc_core_b.crypto.get_idkey();
 
         let (client_c, mut receiver_c) = StreamClient::new();
         let arc_client_c = Arc::new(client_c);
         let arc_core_c: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_c)).await;
+            Core::new(None, None, false, Some(arc_client_c));
         let idkey_c = arc_core_c.crypto.get_idkey();
 
         let payload = String::from("hello from me");
@@ -554,13 +553,13 @@ mod tests {
         let (client_a, _receiver_a) = StreamClient::new();
         let arc_client_a = Arc::new(client_a);
         let arc_core_a: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_a)).await;
+            Core::new(None, None, false, Some(arc_client_a));
         let idkey_a = arc_core_a.crypto.get_idkey();
 
         let (client_b, mut receiver_b) = StreamClient::new();
         let arc_client_b = Arc::new(client_b);
         let arc_core_b: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_b)).await;
+            Core::new(None, None, false, Some(arc_client_b));
         let idkey_b = arc_core_b.crypto.get_idkey();
 
         let payload = String::from("hello from me");

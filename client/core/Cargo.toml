@@ -7,11 +7,10 @@ edition = "2021"
 
 [dependencies]
 url = "2.3.1"
+eventsource = "*"
 eventsource-client = "0.11.0"
-reqwest = { version = "0.11.13", features = ["json"] }
+reqwest = { version = "0.10", features = ["blocking", "json"] }
 urlencoding = "2.1.2"
-futures = "0.3.25"
-tokio = { version = "1.23.0", features = ["macros"] }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = { version = "1.0.91", features = ["std"] }
 olm-rs = "2.2.0"
@@ -19,7 +18,6 @@ log = "0.4.17"
 sha2 = "0.10.6"
 parking_lot = "0.12.1"
 async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }
-async-trait = "0.1.64"
 cbc = { version = "0.1.2", features = ["alloc"] }
 aes = "0.8.2"
 rand = "0.8.5"

@@ -1,5 +1,4 @@
 use async_condvar_fair::Condvar;
-use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -86,15 +85,14 @@ pub struct NoiseKVClient {
     ctr_cv: Arc<Condvar>,
 }
 
-#[async_trait]
 impl CoreClient for NoiseKVClient {
-    async fn client_callback(&self, sender: String, message: String) {
+    fn client_callback(&self, sender: String, message: String) {
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
-                            match self.demux(operation).await {
+                            match self.demux(operation) {
                                 Ok(_) => {}
                                 Err(err) => panic!("Error in demux: {:?}", err),
                             }
@@ -123,7 +121,7 @@ impl CoreClient for NoiseKVClient {
 }
 
 impl NoiseKVClient {
-    pub async fn new<'a>(
+    pub fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
@@ -142,8 +140,7 @@ impl NoiseKVClient {
             port_arg,
             turn_encryption_off,
             Some(Arc::new(client.clone())),
-        )
-        .await;
+        );
 
         // At this point, if core was initialized with Some(Arc::new(client)),
         // then core points to a client _without an initialized core_. This
@@ -159,7 +156,7 @@ impl NoiseKVClient {
         // even the back pointer), so use Some(...) unless you add
         // another cv for this or something.
         client.core = Some(core.clone());
-        core.set_client(Arc::new(client.clone())).await;
+        core.set_client(Arc::new(client.clone()));
         client
     }
 
@@ -186,16 +183,15 @@ impl NoiseKVClient {
 
     /* Sending-side functions */
 
-    async fn send_message(
+    fn send_message(
         &self,
         dst_idkeys: Vec<String>,
         payload: &String,
-    ) -> reqwest::Result<reqwest::Response> {
+    ) -> reqwest::Result<reqwest::blocking::Response> {
         self.core
             .as_ref()
             .unwrap()
             .send_message(dst_idkeys, payload)
-            .await
     }
 
     /* Receiving-side functions */
@@ -250,7 +246,7 @@ impl NoiseKVClient {
         }
     }
 
-    async fn demux(&self, operation: Operation) -> Result<(), Error> {
+    fn demux(&self, operation: Operation) -> Result<(), Error> {
         match operation {
             Operation::UpdateLinked(
                 sender,
@@ -258,7 +254,6 @@ impl NoiseKVClient {
                 members_to_add,
             ) => self
                 .update_linked_group(sender, temp_linked_name, members_to_add)
-                .await
                 .map_err(Error::from),
             Operation::ConfirmUpdateLinked(
                 new_linked_name,
@@ -277,7 +272,6 @@ impl NoiseKVClient {
                 .map_err(Error::from),
             Operation::AddContact(sender, contact_name, contact_devices) => {
                 self.add_contact_response(sender, contact_name, contact_devices)
-                    .await
                     .map_err(Error::from)
             }
             Operation::ConfirmAddContact(contact_name, contact_devices) => self
@@ -408,7 +402,7 @@ impl NoiseKVClient {
             Some(Device::new(self.core.as_ref().unwrap().idkey(), None, None));
     }
 
-    pub async fn create_linked_device(
+    pub fn create_linked_device(
         &self,
         idkey: String,
     ) -> Result<(), Error> {
@@ -446,14 +440,13 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
         }
     }
 
-    async fn update_linked_group(
+    fn update_linked_group(
         &self,
         sender: String,
         temp_linked_name: String,
@@ -499,7 +492,6 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => {
                 // TODO notify contacts of new members
@@ -532,7 +524,7 @@ impl NoiseKVClient {
         }
     }
 
-    pub async fn add_contact(
+    pub fn add_contact(
         &self,
         contact_idkey: String,
     ) -> Result<(), Error> {
@@ -577,7 +569,6 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -585,7 +576,7 @@ impl NoiseKVClient {
     }
 
     // TODO user needs to accept first via, e.g., pop-up
-    async fn add_contact_response(
+    fn add_contact_response(
         &self,
         sender: String,
         contact_name: String,
@@ -624,7 +615,6 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -635,7 +625,7 @@ impl NoiseKVClient {
      * Deleting devices
      */
 
-    pub async fn delete_self_device(&self) -> Result<(), Error> {
+    pub fn delete_self_device(&self) -> Result<(), Error> {
         // TODO send to contact devices too
         match self
             .send_message(
@@ -649,7 +639,6 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => {
                 // TODO wait for ACK that other devices have indeed received
@@ -667,7 +656,7 @@ impl NoiseKVClient {
         }
     }
 
-    pub async fn delete_other_device(
+    pub fn delete_other_device(
         &self,
         to_delete: String,
     ) -> Result<(), Error> {
@@ -684,7 +673,6 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => {
                 self.device
@@ -702,7 +690,6 @@ impl NoiseKVClient {
                         &Operation::to_string(&Operation::DeleteSelfDevice)
                             .unwrap(),
                     )
-                    .await
                 {
                     Ok(_) => Ok(()),
                     Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -712,7 +699,7 @@ impl NoiseKVClient {
         }
     }
 
-    pub async fn delete_all_devices(&self) -> Result<(), Error> {
+    pub fn delete_all_devices(&self) -> Result<(), Error> {
         // TODO notify contacts
 
         // TODO wait for ACK that contacts have indeed received
@@ -729,7 +716,6 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
                 &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
             )
-            .await
         {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -740,7 +726,7 @@ impl NoiseKVClient {
      * Data
      */
 
-    pub async fn set_data(
+    pub fn set_data(
         &self,
         data_id: String,
         data_type: String,
@@ -776,7 +762,7 @@ impl NoiseKVClient {
             .unwrap()
             .group_store
             .lock()
-            .resolve_ids(vec![&group_id])
+            .resolve_ids(vec![group_id])
             .into_iter()
             .collect::<Vec<String>>();
 
@@ -788,7 +774,6 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
         {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -797,10 +782,10 @@ impl NoiseKVClient {
 
     // TODO remove_data
 
-    pub async fn share_data(
+    pub fn share_data(
         &self,
         data_id: String,
-        mut names: Vec<&String>,
+        mut names: Vec<String>,
     ) -> Result<(), Error> {
         // check that all names are contacts
         for name in names.iter() {
@@ -811,7 +796,7 @@ impl NoiseKVClient {
 
         // add own linked_name to names
         let linked_name = self.linked_name();
-        names.push(&linked_name);
+        names.push(linked_name);
 
         // will add children to groups via top_level_names if they exist,
         // otherwise idkeys (currently a linked group is created for every
@@ -863,7 +848,6 @@ impl NoiseKVClient {
                         ))
                         .unwrap(),
                     )
-                    .await
                 {
                     Ok(_) => {
                         // update the group_id of the relevant data and send the
@@ -874,7 +858,6 @@ impl NoiseKVClient {
                             data_val.data_val().clone(),
                             Some(new_group.group_id().to_string()),
                         )
-                        .await
                     }
                     Err(err) => Err(Error::SendFailed(err.to_string())),
                 }
@@ -885,6 +868,7 @@ impl NoiseKVClient {
     // TODO unshare_data
 }
 
+#[cfg(test)]
 mod tests {
     use crate::client::{NoiseKVClient, Operation};
 

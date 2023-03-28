@@ -56,7 +56,7 @@ impl<T: NoiseData> Device<T> {
     pub fn linked_devices_excluding_self(&self) -> Vec<String> {
         self.group_store
             .lock()
-            .resolve_ids(vec![&self.linked_name.read()])
+            .resolve_ids(vec![self.linked_name.read().clone()])
             .iter()
             .filter(|&x| *x != *self.idkey.read())
             .map(|x| x.clone())
@@ -69,7 +69,7 @@ impl<T: NoiseData> Device<T> {
     ) -> Vec<String> {
         self.group_store
             .lock()
-            .resolve_ids(vec![&self.linked_name.read()])
+            .resolve_ids(vec![self.linked_name.read().clone()])
             .iter()
             .filter(|&x| *x != *self.idkey.read() && *x != *other)
             .map(|x| x.clone())
@@ -79,7 +79,7 @@ impl<T: NoiseData> Device<T> {
     pub fn linked_devices(&self) -> HashSet<String> {
         self.group_store
             .lock()
-            .resolve_ids(vec![&self.linked_name.read()])
+            .resolve_ids(vec![self.linked_name.read().clone()])
     }
 
     // TODO use when linking a pre-existing device to another set of

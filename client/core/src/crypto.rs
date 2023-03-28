@@ -1,4 +1,3 @@
-use crate::core::CoreClient;
 use crate::server_comm::ServerComm;
 use aes::cipher::{
     block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit,
@@ -88,12 +87,12 @@ impl Crypto {
         self.idkeys.curve25519().to_string()
     }
 
-    async fn new_outbound_session<C: CoreClient>(
+    fn new_outbound_session(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &ServerComm,
         dst_idkey: &String,
     ) -> OlmSession {
-        match server_comm.get_otkey_from_server(dst_idkey).await {
+        match server_comm.get_otkey_from_server(dst_idkey) {
             Ok(dst_otkey) => {
                 match self.account.lock().create_outbound_session(
                     dst_idkey,
@@ -124,9 +123,9 @@ impl Crypto {
     // exist at one time? (for decrypting delayed messages)
     // -> currently infinite
 
-    async fn get_outbound_session<R, C: CoreClient>(
+    fn get_outbound_session<R>(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &ServerComm,
         dst_idkey: &String,
         f: impl FnOnce(&OlmSession) -> R,
     ) -> R {
@@ -147,14 +146,14 @@ impl Crypto {
             // otkeys and creating a new session, and then
             // re-execute the loop
             if *is_fetching {
-                let _ = self.sessions_cv.wait(sessions).await;
+                let _ = self.sessions_cv.wait(sessions);
             // fetch otkeys from the server and create a new
             // session
             } else {
                 *is_fetching = true;
                 mem::drop(sessions);
                 let new_session =
-                    self.new_outbound_session(server_comm, dst_idkey).await;
+                    self.new_outbound_session(server_comm, dst_idkey);
                 let mut sessions = self.sessions.lock();
                 let (is_fetching, sessions_list) =
                     sessions.get_mut(dst_idkey).unwrap();
@@ -219,21 +218,21 @@ impl Crypto {
         panic!("No matching sessions were found");
     }
 
-    pub async fn encrypt<C: CoreClient>(
+    pub fn encrypt(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &ServerComm,
         dst_idkey: &String,
         plaintext: &String,
     ) -> (usize, String) {
         if self.turn_encryption_off {
             return (1, plaintext.to_string());
         }
-        self.encrypt_helper(server_comm, dst_idkey, plaintext).await
+        self.encrypt_helper(server_comm, dst_idkey, plaintext)
     }
 
-    async fn encrypt_helper<C: CoreClient>(
+    fn encrypt_helper(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &ServerComm,
         dst_idkey: &String,
         plaintext: &String,
     ) -> (usize, String) {
@@ -244,8 +243,7 @@ impl Crypto {
         let (c_type, ciphertext) = self
             .get_outbound_session(server_comm, dst_idkey, |session| {
                 session.encrypt(plaintext).to_tuple()
-            })
-            .await;
+            });
         (c_type.into(), ciphertext)
     }
 

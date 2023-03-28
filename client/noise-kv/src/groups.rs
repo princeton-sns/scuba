@@ -359,9 +359,9 @@ impl GroupStore {
         }
     }
 
-    pub fn resolve_ids<'a>(&'a self, ids: Vec<&'a String>) -> HashSet<String> {
+    pub fn resolve_ids(&self, ids: Vec<String>) -> HashSet<String> {
         let mut resolved_ids = HashSet::<String>::new();
-        let mut visited = HashSet::<&String>::new();
+        let mut visited = HashSet::<String>::new();
 
         for id in ids {
             self.resolve_ids_helper(&mut resolved_ids, &mut visited, id);
@@ -370,26 +370,26 @@ impl GroupStore {
         resolved_ids
     }
 
-    fn resolve_ids_helper<'a>(
-        &'a self,
+    fn resolve_ids_helper(
+        &self,
         resolved_ids: &mut HashSet<String>,
-        visited: &mut HashSet<&'a String>,
-        id: &'a String,
+        visited: &mut HashSet<String>,
+        id: String,
     ) {
-        let mut to_visit = Vec::<&String>::new();
+        let mut to_visit = Vec::<String>::new();
         to_visit.push(id);
 
         while !to_visit.is_empty() {
             let cur_id = to_visit.pop().unwrap();
 
-            if visited.get(cur_id).is_some() {
+            if visited.get(&cur_id).is_some() {
                 continue;
             }
 
-            visited.insert(cur_id);
-            if let Some(children) = &self.get_group(cur_id).unwrap().children {
+            visited.insert(cur_id.clone());
+            if let Some(children) = &self.get_group(&cur_id).unwrap().children {
                 for child in children {
-                    to_visit.push(&child);
+                    to_visit.push(child.clone());
                 }
             } else {
                 resolved_ids.insert(cur_id.clone());

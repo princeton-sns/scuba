@@ -231,6 +231,7 @@ impl<T: NoiseData> Device<T> {
 }
 
 mod tests {
+    use crate::data::BasicData;
     use crate::devices::Device;
     use std::collections::HashSet;
 
@@ -238,8 +239,11 @@ mod tests {
     fn test_new_standalone() {
         let idkey = String::from("0");
         let linked_name = String::from("linked");
-        let device =
-            Device::new(idkey.clone(), Some(linked_name.clone()), None);
+        let device = Device::<BasicData>::new(
+            idkey.clone(),
+            Some(linked_name.clone()),
+            None,
+        );
 
         let group_store = device.group_store.lock();
         let linked_group = group_store.get_group(&linked_name).unwrap();
@@ -269,18 +273,22 @@ mod tests {
     fn test_get_linked_name() {
         let idkey = String::from("0");
         let linked_name = String::from("linked");
-        let device_0 =
-            Device::new(idkey.clone(), Some(linked_name.clone()), None);
+        let device_0 = Device::<BasicData>::new(
+            idkey.clone(),
+            Some(linked_name.clone()),
+            None,
+        );
         assert_eq!(&*device_0.linked_name.read(), &linked_name);
 
-        let device_1 = Device::new(idkey, None, None);
+        let device_1 = Device::<BasicData>::new(idkey, None, None);
         assert_ne!(&*device_1.linked_name.read(), &linked_name);
     }
 
     #[test]
     fn test_update_linked_group() {
         let idkey_0 = String::from("0");
-        let mut device_0 = Device::new(idkey_0.clone(), None, None);
+        let mut device_0 =
+            Device::<BasicData>::new(idkey_0.clone(), None, None);
         let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 = device_0
             .group_store
@@ -288,7 +296,7 @@ mod tests {
             .get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
-        let device_1 = Device::new(
+        let device_1 = Device::<BasicData>::new(
             idkey_1.clone(),
             None,
             Some(device_0.linked_name.read().clone()),
@@ -348,7 +356,8 @@ mod tests {
     #[test]
     fn test_confirm_update_linked() {
         let idkey_0 = String::from("0");
-        let mut device_0 = Device::new(idkey_0.clone(), None, None);
+        let mut device_0 =
+            Device::<BasicData>::new(idkey_0.clone(), None, None);
         let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 = device_0
             .group_store
@@ -356,7 +365,7 @@ mod tests {
             .get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
-        let mut device_1 = Device::new(
+        let mut device_1 = Device::<BasicData>::new(
             idkey_1.clone(),
             None,
             Some(device_0.linked_name.read().clone()),
@@ -380,6 +389,7 @@ mod tests {
         match device_1.confirm_update_linked_group(
             linked_name_0.clone(),
             device_0.group_store.lock().get_all_groups().clone(),
+            device_0.data_store.read().get_all_data().clone(),
         ) {
             Ok(_) => println!("Update succeeded"),
             Err(err) => {
@@ -424,7 +434,8 @@ mod tests {
     #[test]
     fn test_delete_self_device() {
         let idkey_0 = String::from("0");
-        let mut device_0 = Device::new(idkey_0.clone(), None, None);
+        let mut device_0 =
+            Device::<BasicData>::new(idkey_0.clone(), None, None);
         let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 = device_0
             .group_store
@@ -432,7 +443,7 @@ mod tests {
             .get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
-        let mut device_1 = Device::new(
+        let mut device_1 = Device::<BasicData>::new(
             idkey_1.clone(),
             None,
             Some(device_0.linked_name.read().clone()),
@@ -456,6 +467,7 @@ mod tests {
         match device_1.confirm_update_linked_group(
             linked_name_0.clone(),
             device_0.group_store.lock().get_all_groups().clone(),
+            device_0.data_store.read().get_all_data().clone(),
         ) {
             Ok(_) => println!("Update succeeded"),
             Err(err) => {
@@ -496,7 +508,8 @@ mod tests {
     #[test]
     fn test_delete_other_device() {
         let idkey_0 = String::from("0");
-        let mut device_0 = Device::new(idkey_0.clone(), None, None);
+        let mut device_0 =
+            Device::<BasicData>::new(idkey_0.clone(), None, None);
         let linked_name_0 = device_0.linked_name.read().clone();
         let linked_members_0 = device_0
             .group_store
@@ -504,7 +517,7 @@ mod tests {
             .get_all_subgroups(&linked_name_0);
 
         let idkey_1 = String::from("1");
-        let mut device_1 = Device::new(
+        let mut device_1 = Device::<BasicData>::new(
             idkey_1.clone(),
             None,
             Some(device_0.linked_name.read().clone()),
@@ -528,6 +541,7 @@ mod tests {
         match device_1.confirm_update_linked_group(
             linked_name_0.clone(),
             device_0.group_store.lock().get_all_groups().clone(),
+            device_0.data_store.read().get_all_data().clone(),
         ) {
             Ok(_) => println!("Update succeeded"),
             Err(err) => {

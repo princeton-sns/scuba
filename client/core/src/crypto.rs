@@ -30,6 +30,7 @@ pub struct Crypto {
     // risk b/c only one &mut self can be helf at a time, anyway
     sessions: Mutex<HashMap<String, (bool, Vec<OlmSession>)>>,
     sessions_cv: Condvar,
+    key: [u8; 16],
 }
 
 // TODO impl Error enum
@@ -38,6 +39,8 @@ impl Crypto {
     pub fn new(turn_encryption_off: bool) -> Self {
         let account = Mutex::new(OlmAccount::new());
         let idkeys = account.lock().parsed_identity_keys();
+        let mut key = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut key);
         Self {
             turn_encryption_off,
             idkeys,
@@ -45,6 +48,7 @@ impl Crypto {
             message_queue: Mutex::new(Vec::new()),
             sessions: Mutex::new(HashMap::new()),
             sessions_cv: Condvar::new(),
+            key,
         }
     }
 
@@ -52,15 +56,14 @@ impl Crypto {
         &self,
         plaintext: crate::hash_vectors::CommonPayload,
     ) -> (Vec<u8>, [u8; 16], [u8; 16]) {
-        let key = [0x42; 16];
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
 
         let pt_bytes = serde_json::to_string(&plaintext).unwrap().into_bytes();
-        let ct = Aes128CbcEnc::new(&key.into(), &iv.into())
+        let ct = Aes128CbcEnc::new(&self.key.into(), &iv.into())
             .encrypt_padded_vec_mut::<Pkcs7>(&pt_bytes);
 
-        (ct, key, iv)
+        (ct, self.key, iv)
     }
 
     pub fn symmetric_decrypt(

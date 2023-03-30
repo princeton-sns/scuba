@@ -4,6 +4,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::{thread, time};
 use thiserror::Error;
 
 use noise_core::core::{Core, CoreClient};
@@ -84,11 +85,18 @@ pub struct NoiseKVClient {
     pub device: Arc<RwLock<Option<Device<BasicData>>>>,
     ctr: Arc<Mutex<u32>>,
     ctr_cv: Arc<Condvar>,
+    sec_wait_to_apply: Arc<Option<u64>>,
 }
 
 #[async_trait]
 impl CoreClient for NoiseKVClient {
     async fn client_callback(&self, sender: String, message: String) {
+        if self.sec_wait_to_apply.is_some() {
+            thread::sleep(time::Duration::from_secs(
+                self.sec_wait_to_apply.unwrap(),
+            ));
+        }
+
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
                 match self.check_permissions(&sender, &operation) {
@@ -127,14 +135,16 @@ impl NoiseKVClient {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
-        test_client_callback: Option<u32>,
+        test_wait_num_callbacks: Option<u32>,
+        sec_wait_to_apply: Option<u64>,
     ) -> NoiseKVClient {
-        let ctr_val = test_client_callback.unwrap_or(0);
+        let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let mut client = NoiseKVClient {
             core: None,
             device: Arc::new(RwLock::new(None)),
             ctr: Arc::new(Mutex::new(ctr_val)),
             ctr_cv: Arc::new(Condvar::new()),
+            sec_wait_to_apply: Arc::new(sec_wait_to_apply),
         };
 
         let core = Core::new(
@@ -236,8 +246,6 @@ impl NoiseKVClient {
 
     fn validate_data_invariants(&self, operation: &Operation) -> bool {
         match operation {
-            // FIXME also validate when removing data?
-            //| Operation::DeleteData(data_id) =>
             Operation::UpdateData(data_id, data_val) => self
                 .device
                 .read()
@@ -503,6 +511,8 @@ impl NoiseKVClient {
         {
             Ok(_) => {
                 // TODO notify contacts of new members
+                // get contacts
+
                 Ok(())
             }
             Err(err) => Err(Error::SendFailed(err.to_string())),
@@ -694,8 +704,6 @@ impl NoiseKVClient {
                     .delete_device(to_delete.clone())
                     .map_err(Error::from);
 
-                // TODO wait for ACK that other devices have indeed received
-                // above operations before deleting specified device
                 match self
                     .send_message(
                         vec![to_delete.clone()],
@@ -715,8 +723,6 @@ impl NoiseKVClient {
     pub async fn delete_all_devices(&self) -> Result<(), Error> {
         // TODO notify contacts
 
-        // TODO wait for ACK that contacts have indeed received
-        // above operations before deleting all devices
         match self
             .send_message(
                 self.device
@@ -890,8 +896,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_one_message() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, None).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, None, None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -921,8 +929,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_two_sequential_messages() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -968,8 +978,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_two_concurrent_messages() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -1015,8 +1027,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_linked_device() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         // sends operation to device 0 to link devices
@@ -1066,12 +1080,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_serialization() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(0)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_2 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_3 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_4 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_5 = NoiseKVClient::new(None, None, false, Some(2)).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(0), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_2 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_3 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_4 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_5 =
+            NoiseKVClient::new(None, None, false, Some(2), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -1177,8 +1197,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_contact() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -1300,8 +1322,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_all_contacts() {
-        let mut client_0 = NoiseKVClient::new(None, None, false, Some(1)).await;
-        let mut client_1 = NoiseKVClient::new(None, None, false, Some(1)).await;
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();

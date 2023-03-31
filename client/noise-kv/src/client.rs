@@ -1022,7 +1022,7 @@ impl NoiseKVClient {
                     Ok(_) => {
                         match self
                             .send_message(
-                                // TODO would exclude non-group 
+                                // TODO would exclude non-group
                                 // (e.g. data-only) readers
                                 idkeys.clone(),
                                 &Operation::to_string(&Operation::SetPerm(

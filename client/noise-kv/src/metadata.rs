@@ -17,6 +17,8 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
+    // FIXME not sure this is used anymore, any kind of defeats the purpose of
+    // our "flexible" group structure -> should remove
     pub is_contact_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,

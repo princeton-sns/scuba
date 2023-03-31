@@ -902,6 +902,8 @@ impl NoiseKVClient {
 
         match self
             .send_message(
+                // includes idkeys of _all_ permissions
+                // (including data-only readers)
                 device_ids,
                 &Operation::to_string(&Operation::UpdateData(
                     data_id, basic_data,
@@ -923,29 +925,34 @@ impl NoiseKVClient {
     // when things are removed/changed. But for right now, we can leverage
     // this naive 1-to-1 mapping to simply delete a permissions set/any groups
     // when a sharing change removes them. Tradeoff space here
+
+    // --nevermind--
+    // will add children to groups via top_level_names if they exist,
+    // otherwise idkeys (currently a linked group is created for every
+    // device, so names should always be top_level_names unless this
+    // changes). this makes it easier to maintain correct group membership
+    // when the subset of devices for various top_level_names changes. so
+    // names can be used to search for any existing groups that we can add
+    // this piece of data to.
+    // --nevermind--
+    // FIXME but what about shared devices? If want to only share w a subset
+    // of a user's devices, this precludes that
+
+    // TODO also probably want a function that consolidates group names
+    // before creating a new sharing group to remove duplicate names/members
+
+    //pub async fn add_readers(
+    //    &self,
+    //    data_id: String,
+    //    mut names: Vec<&String>,
+    //) -> Result<(), Error> {
+    //}
+
     pub async fn add_writers(
         &self,
         data_id: String,
-        mut names: Vec<&String>,
+        writers: Vec<&String>,
     ) -> Result<(), Error> {
-        // check that all names are contacts
-        for name in names.iter() {
-            if !self.is_contact(name) {
-                return Err(Error::InvalidContactName(name.to_string()));
-            }
-        }
-
-        // add own linked_name to names
-        let linked_name = self.linked_name();
-        names.push(&linked_name);
-
-        // will add children to groups via top_level_names if they exist,
-        // otherwise idkeys (currently a linked group is created for every
-        // device, so names should always be top_level_names unless this
-        // changes). this makes it easier to maintain correct group membership
-        // when the subset of devices for various top_level_names changes. so
-        // names can be used to search for any existing groups that we can add
-        // this piece of data to.
         let device_guard = self.device.read();
 
         // check that data exists
@@ -956,19 +963,30 @@ impl NoiseKVClient {
             Some(data_val) => {
                 let mut meta_store_guard =
                     device_guard.as_ref().unwrap().meta_store.lock();
-                let names_strings = names
+                let writers_strings = writers
                     .iter()
                     .map(|name| name.to_string())
                     .collect::<Vec<String>>();
 
-                // FIXME names should also have permissions...
+                // FIXME writers should also have permissions...
+                // contact-level flag could help with this, but also
+                // could group->perm backpointers (go up the group tree
+                // until find a perm_id OR propagate perm_ids to all group
+                // children? - latter seems worse)
+
+                let linked_name = self.linked_name();
+                let mut metadata_readers = vec![&linked_name];
+                metadata_readers.append(&mut writers.clone());
                 let idkeys = meta_store_guard
-                    .resolve_ids(names.clone())
+                    .resolve_ids(metadata_readers)
                     .into_iter()
                     .collect::<Vec<String>>();
 
                 let new_group =
-                    Group::new_with_children(None, false, names_strings);
+                    Group::new_with_children(None, false, writers_strings);
+                // FIXME populate with any existing perm fields
+                // and _append_ writers to existing write group, only
+                // creating a new one if one doesn't already exist
                 let new_perm = PermissionSet::new(
                     None,
                     self.linked_name(),
@@ -990,6 +1008,8 @@ impl NoiseKVClient {
                 // add the new group to all devices to share with
                 match self
                     .send_message(
+                        // TODO would exclude non-group
+                        // (e.g. data-only) readers
                         idkeys.clone(),
                         &Operation::to_string(&Operation::SetGroup(
                             new_group.group_id().to_string(),
@@ -1002,6 +1022,8 @@ impl NoiseKVClient {
                     Ok(_) => {
                         match self
                             .send_message(
+                                // TODO would exclude non-group 
+                                // (e.g. data-only) readers
                                 idkeys.clone(),
                                 &Operation::to_string(&Operation::SetPerm(
                                     new_perm.perm_id().to_string(),

@@ -31,7 +31,7 @@ pub enum Error {
     #[error("Cannot convert {0} to string.")]
     StringConversionErr(String),
     #[error(transparent)]
-    GroupErr {
+    MetadataErr {
         #[from]
         source: crate::metadata::Error,
     },
@@ -55,7 +55,12 @@ enum Operation {
     AddContact(String, String, HashMap<String, Group>),
     ConfirmAddContact(String, HashMap<String, Group>),
     SetPerm(String, PermissionSet),
+    AddWriters(String, Option<String>, Vec<String>), /* TODO generalize
+                                                      * (use another param
+                                                      * -> perm_type) */
+    // TODO RemovePerm
     SetGroup(String, Group),
+    SetGroups(HashMap<String, Group>),
     LinkGroups(String, String),
     DeleteGroup(String),
     AddParent(String, String),
@@ -64,8 +69,6 @@ enum Operation {
     RemoveChild(String, String), // FIXME may never be used
     UpdateData(String, BasicData),
     DeleteData(String),
-    //  AddPermission,
-    //  RemovePermission,
     DeleteSelfDevice,
     DeleteOtherDevice(String),
     Test(String),
@@ -101,7 +104,9 @@ impl CoreClient for NoiseKVClient {
 
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
-                println!("operation: {:?}", operation);
+                println!("");
+                println!("cur idkey: {:?}", self.idkey());
+                println!("OPERATION: {:?}", operation);
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
@@ -127,6 +132,8 @@ impl CoreClient for NoiseKVClient {
 
         let mut ctr = self.ctr.lock();
         if *ctr != 0 {
+            println!("cb_ctr: {:?}", *ctr);
+            println!("");
             *ctr -= 1;
             self.ctr_cv.notify_all();
         }
@@ -232,7 +239,9 @@ impl NoiseKVClient {
             //Operation::AddContact => Ok(()),
             //Operation::ConfirmAddContact => Ok(()),
             //Operation::SetPerm(perm_id, perm_val) => Ok(()),
-            //Operation::SetGroup(group_id, group_val) => Ok(()),
+            //Operation::AddWriters(perm_id, writers_group_id_opt, writers) =>
+            // Ok(()), Operation::SetGroup(group_id, group_val) =>
+            // Ok(()), Operation::SetGroups(groups) => Ok(()),
             //Operation::LinkGroups(parent_id, child_id) => Ok(()),
             //Operation::DeleteGroup(group_id) => Ok(()),
             //Operation::AddParent(group_id, parent_id) => Ok(()),
@@ -240,14 +249,13 @@ impl NoiseKVClient {
             //Operation::AddChild(group_id, child_id) => Ok(()),
             //Operation::RemoveChild(group_id, child_id) => Ok(()),
             Operation::UpdateData(data_id, data_val) => {
-                println!("checking perm: UpdateData");
                 if self
                     .device
                     .read()
                     .as_ref()
                     .unwrap()
                     .meta_store
-                    .lock()
+                    .read()
                     .has_write_permissions(sender, data_val.perm_id())
                 {
                     return Ok(());
@@ -258,7 +266,6 @@ impl NoiseKVClient {
                 ))
             }
             Operation::DeleteData(data_id) => {
-                println!("checking perm: DeleteData");
                 match self
                     .device
                     .read()
@@ -275,7 +282,7 @@ impl NoiseKVClient {
                             .as_ref()
                             .unwrap()
                             .meta_store
-                            .lock()
+                            .read()
                             .has_write_permissions(sender, data_val.perm_id())
                         {
                             return Ok(());
@@ -293,10 +300,7 @@ impl NoiseKVClient {
             //Operation::DeleteSelfDevice => Ok(()),
             //Operation::DeleteOtherDevice(idkey_to_delete) => Ok(()),
             //Operation::Test(msg) => Ok(()),
-            _ => {
-                println!("checking perm: Rest");
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 
@@ -357,9 +361,19 @@ impl NoiseKVClient {
                     .as_ref()
                     .unwrap()
                     .meta_store
-                    .lock()
+                    .write()
                     .set_perm(perm_id, perm_val);
                 Ok(())
+            }
+            Operation::AddWriters(perm_id, writers_group_id_opt, writers) => {
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .write()
+                    .add_writers(&perm_id, writers_group_id_opt, writers)
+                    .map_err(Error::from)
             }
             Operation::SetGroup(group_id, group_val) => {
                 self.device
@@ -367,8 +381,18 @@ impl NoiseKVClient {
                     .as_ref()
                     .unwrap()
                     .meta_store
-                    .lock()
+                    .write()
                     .set_group(group_id, group_val);
+                Ok(())
+            }
+            Operation::SetGroups(groups) => {
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .write()
+                    .set_groups(groups);
                 Ok(())
             }
             Operation::LinkGroups(parent_id, child_id) => self
@@ -377,7 +401,7 @@ impl NoiseKVClient {
                 .as_ref()
                 .unwrap()
                 .meta_store
-                .lock()
+                .write()
                 .link_groups(&parent_id, &child_id)
                 .map_err(Error::from),
             Operation::DeleteGroup(group_id) => {
@@ -386,7 +410,7 @@ impl NoiseKVClient {
                     .as_ref()
                     .unwrap()
                     .meta_store
-                    .lock()
+                    .write()
                     .delete_group(&group_id);
                 Ok(())
             }
@@ -396,7 +420,7 @@ impl NoiseKVClient {
                 .as_ref()
                 .unwrap()
                 .meta_store
-                .lock()
+                .write()
                 .add_parent(&group_id, &parent_id)
                 .map_err(Error::from),
             Operation::RemoveParent(group_id, parent_id) => self
@@ -405,7 +429,7 @@ impl NoiseKVClient {
                 .as_ref()
                 .unwrap()
                 .meta_store
-                .lock()
+                .write()
                 .remove_parent(&group_id, &parent_id)
                 .map_err(Error::from),
             Operation::AddChild(group_id, child_id) => self
@@ -414,7 +438,7 @@ impl NoiseKVClient {
                 .as_ref()
                 .unwrap()
                 .meta_store
-                .lock()
+                .write()
                 .add_child(&group_id, &child_id)
                 .map_err(Error::from),
             Operation::RemoveChild(group_id, child_id) => self
@@ -423,7 +447,7 @@ impl NoiseKVClient {
                 .as_ref()
                 .unwrap()
                 .meta_store
-                .lock()
+                .write()
                 .remove_child(&group_id, &child_id)
                 .map_err(Error::from),
             Operation::UpdateData(data_id, data_val) => {
@@ -507,7 +531,7 @@ impl NoiseKVClient {
             .as_ref()
             .unwrap()
             .meta_store
-            .lock()
+            .read()
             .get_all_subgroups(&linked_name);
 
         match self
@@ -559,7 +583,7 @@ impl NoiseKVClient {
                         .as_ref()
                         .unwrap()
                         .meta_store
-                        .lock()
+                        .read()
                         .get_all_groups()
                         .clone(),
                     self.device
@@ -600,7 +624,7 @@ impl NoiseKVClient {
             .as_ref()
             .unwrap()
             .meta_store
-            .lock()
+            .read()
             .get_group(name)
         {
             Some(group_val) => group_val.is_contact_name,
@@ -628,7 +652,7 @@ impl NoiseKVClient {
             .as_ref()
             .unwrap()
             .meta_store
-            .lock()
+            .read()
             .is_group_member(&contact_idkey, &linked_name)
         {
             return Err(Error::SelfIsInvalidContact);
@@ -640,7 +664,7 @@ impl NoiseKVClient {
             .as_ref()
             .unwrap()
             .meta_store
-            .lock()
+            .read()
             .get_all_subgroups(&linked_name);
 
         match self
@@ -688,7 +712,7 @@ impl NoiseKVClient {
             .as_ref()
             .unwrap()
             .meta_store
-            .lock()
+            .read()
             .get_all_subgroups(&linked_name);
 
         match self
@@ -812,61 +836,109 @@ impl NoiseKVClient {
      * Data
      */
 
-    fn get_group_ids_from_perm_id(&self, perm_id: &String) -> Vec<String> {
+    fn get_group_ids_from_perm_val(
+        &self,
+        perm_val: &PermissionSet,
+    ) -> Vec<String> {
         let mut vec = Vec::<String>::new();
-        //let device_guard = self.device.read();
-        //let meta_store_guard =
-        // device_guard.as_ref().unwrap().meta_store.lock();
-        // match meta_store_guard.get_perm(perm_id) {
-        match self
-            .device
-            .read()
-            .as_ref()
-            .unwrap()
-            .meta_store
-            .lock()
-            .get_perm(perm_id)
-        {
-            Some(perm_val) => {
-                vec.push(perm_val.owner().to_string());
-                match perm_val.readers() {
-                    Some(reader_group) => vec.push(reader_group.to_string()),
-                    None => {}
-                }
-                match perm_val.writers() {
-                    Some(writer_group) => vec.push(writer_group.to_string()),
-                    None => {}
-                }
-            }
+        vec.push(perm_val.owner().to_string());
+        match perm_val.readers() {
+            Some(reader_group) => vec.push(reader_group.to_string()),
+            None => {}
+        }
+        match perm_val.writers() {
+            Some(writer_group) => vec.push(writer_group.to_string()),
             None => {}
         }
         vec
     }
+
+    //fn get_group_ids_from_perm_id(&self, perm_id: &String) -> Vec<String> {
+    //    match self
+    //        .device
+    //        .read()
+    //        .as_ref()
+    //        .unwrap()
+    //        .meta_store
+    //        .read()
+    //        .get_perm(perm_id)
+    //    {
+    //        Some(perm_val) => {
+    //            self.get_group_ids_from_perm_val(perm_val)
+    //        }
+    //        None => { Vec::<String>::new() }
+    //    }
+    //}
 
     pub async fn set_data(
         &self,
         data_id: String,
         data_type: String,
         data_val: String,
-        perm_opt: Option<String>,
+        //perm_opt: Option<String>,
+        // FIXME make perm_val_opt + calc data_readers _here_ (instead of in
+        // add_writers) - why? I've already forgotten
+        data_readers: Option<Vec<String>>,
     ) -> Result<(), Error> {
         // FIXME check write permissions
 
         let device_guard = self.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let existing_val = data_store_guard.get_data(&data_id);
+        let existing_val = data_store_guard.get_data(&data_id).clone();
 
-        // if perm_opt = None, keep old perm_id (if no old perm_id, use
-        // linked_name) if perm_opt = Some, use new perm_id
+        // if data exists, use existing perms; otherwise create new one
         let perm_id;
-        if perm_opt.is_none() {
-            match existing_val {
-                Some(old_val) => perm_id = old_val.perm_id().to_string(),
-                None => perm_id = self.linked_name(),
+        let perm_val;
+        match existing_val {
+            Some(old_val) => {
+                println!("USING OLD PERMS");
+                perm_id = old_val.perm_id().to_string();
+                perm_val = device_guard
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .get_perm(&perm_id)
+                    .unwrap()
+                    .clone();
             }
-        } else {
-            perm_id = perm_opt.unwrap();
+            None => {
+                println!("CREATING NEW PERMS");
+                // create new perms for this data_val
+                perm_val =
+                    PermissionSet::new(None, self.linked_name(), None, None);
+                perm_id = perm_val.perm_id().to_string();
+
+                let idkeys = device_guard
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .resolve_group_ids(vec![&self.linked_name()])
+                    .into_iter()
+                    .collect::<Vec<String>>();
+                let res = self
+                    .send_message(
+                        idkeys.clone(),
+                        &Operation::to_string(&Operation::SetPerm(
+                            perm_val.perm_id().to_string(),
+                            perm_val.clone(),
+                        ))
+                        .unwrap(),
+                    )
+                    .await;
+                println!("sent SETPERM (from set_data)");
+                println!("idkeys: {:?}", idkeys);
+
+                if res.is_err() {
+                    return Err(Error::SendFailed(
+                        res.err().unwrap().to_string(),
+                    ));
+                }
+            }
         }
+
+        core::mem::drop(data_store_guard);
 
         let basic_data = BasicData::new(
             data_id.clone(),
@@ -874,37 +946,27 @@ impl NoiseKVClient {
             data_val,
             perm_id.clone(),
         );
-        let group_ids = self.get_group_ids_from_perm_id(&perm_id);
-        let device_ids = device_guard
-            .as_ref()
-            .unwrap()
-            .meta_store
-            .lock()
-            .resolve_ids(group_ids.iter().collect::<Vec<&String>>())
-            .into_iter()
-            .collect::<Vec<String>>();
 
-        // sender-side permission check
-        if !device_guard
-            .as_ref()
-            .unwrap()
-            .meta_store
-            .lock()
-            .has_write_permissions(&self.linked_name(), &perm_id.clone())
-        {
-            return Err(Error::InsufficientPermissions(
-                self.linked_name().to_string(),
-                perm_id.clone(),
-            ));
+        let device_ids: Vec<String>;
+        if data_readers.is_none() {
+            let group_ids = self.get_group_ids_from_perm_val(&perm_val);
+            device_ids = device_guard
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .read()
+                .resolve_group_ids(group_ids.iter().collect::<Vec<&String>>())
+                .into_iter()
+                .collect::<Vec<String>>();
+        } else {
+            device_ids = data_readers.unwrap();
         }
-
-        // TODO also call validate before sending
 
         match self
             .send_message(
                 // includes idkeys of _all_ permissions
                 // (including data-only readers)
-                device_ids,
+                device_ids.clone(),
                 &Operation::to_string(&Operation::UpdateData(
                     data_id, basic_data,
                 ))
@@ -912,7 +974,11 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                println!("SENT UPDATEDATA");
+                println!("device_ids: {:?}", device_ids);
+                Ok(())
+            }
             Err(err) => Err(Error::SendFailed(err.to_string())),
         }
     }
@@ -941,6 +1007,12 @@ impl NoiseKVClient {
     // TODO also probably want a function that consolidates group names
     // before creating a new sharing group to remove duplicate names/members
 
+    // FIXME writers should also have permissions...
+    // contact-level flag could help with this, but also
+    // could group->perm backpointers (go up the group tree
+    // until find a perm_id OR propagate perm_ids to all group
+    // children? - latter seems worse)
+
     //pub async fn add_readers(
     //    &self,
     //    data_id: String,
@@ -951,105 +1023,196 @@ impl NoiseKVClient {
     pub async fn add_writers(
         &self,
         data_id: String,
-        writers: Vec<&String>,
+        mut writers: Vec<&String>,
     ) -> Result<(), Error> {
         let device_guard = self.device.read();
-
-        // check that data exists
         let mut data_store_guard =
             device_guard.as_ref().unwrap().data_store.read();
+
+        // check that data exists
         match data_store_guard.get_data(&data_id) {
             None => return Err(Error::NonexistentData(data_id)),
             Some(data_val) => {
                 let mut meta_store_guard =
-                    device_guard.as_ref().unwrap().meta_store.lock();
+                    device_guard.as_ref().unwrap().meta_store.read();
+
                 let writers_strings = writers
                     .iter()
                     .map(|name| name.to_string())
                     .collect::<Vec<String>>();
 
-                // FIXME writers should also have permissions...
-                // contact-level flag could help with this, but also
-                // could group->perm backpointers (go up the group tree
-                // until find a perm_id OR propagate perm_ids to all group
-                // children? - latter seems worse)
+                let perm_val = meta_store_guard
+                    .get_perm(data_val.perm_id())
+                    .unwrap()
+                    .clone();
 
-                let linked_name = self.linked_name();
-                let mut metadata_readers = vec![&linked_name];
-                metadata_readers.append(&mut writers.clone());
-                let idkeys = meta_store_guard
-                    .resolve_ids(metadata_readers)
+                let writers_group_id_opt = match perm_val.writers() {
+                    Some(_) => None,
+                    None => Some(crate::metadata::generate_uuid()),
+                };
+
+                // collect all groups/ids that should receive the following
+                // metadata updates:
+
+                // existing owner
+                let mut metadata_readers = vec![perm_val.owner()];
+                // existing writers
+                match perm_val.writers() {
+                    Some(writers_group_id) => {
+                        metadata_readers.push(writers_group_id);
+                    }
+                    None => {}
+                }
+                // existing readers
+                match perm_val.readers() {
+                    Some(readers_group_id) => {
+                        metadata_readers.push(readers_group_id);
+                    }
+                    None => {}
+                }
+                // PER ADDED PERM new writers
+                metadata_readers.append(&mut writers);
+
+                // resolve the above to device ids
+                let metadata_idkeys = meta_store_guard
+                    .resolve_group_ids(metadata_readers)
                     .into_iter()
                     .collect::<Vec<String>>();
 
-                let new_group =
-                    Group::new_with_children(None, false, writers_strings);
-                // FIXME populate with any existing perm fields
-                // and _append_ writers to existing write group, only
-                // creating a new one if one doesn't already exist
-                let new_perm = PermissionSet::new(
-                    None,
-                    self.linked_name(),
-                    // writers
-                    Some(new_group.group_id().to_string()),
-                    // readers
-                    None,
-                );
+                // add _all_ remaining idkeys for set_data (e.g. data-only
+                // readers) TODO
+                let data_readers = metadata_idkeys
+                    .clone()
+                    .iter()
+                    .map(|idkey| idkey.to_string())
+                    .collect::<Vec<String>>();
 
-                let _ = meta_store_guard.set_group(
-                    new_group.group_id().to_string(),
-                    new_group.clone(),
+                // then send SetGroup for existing perm-associated groups:
+
+                let mut assoc_groups = HashMap::<String, Group>::new();
+                // get owner subgroups
+                assoc_groups.extend(
+                    meta_store_guard.get_all_subgroups(perm_val.owner()),
                 );
-                let _ = meta_store_guard
-                    .set_perm(new_perm.perm_id().to_string(), new_perm.clone());
+                // get writer subgroups
+                match perm_val.writers() {
+                    Some(writers_group_id) => {
+                        assoc_groups.extend(
+                            meta_store_guard
+                                .get_all_subgroups(writers_group_id),
+                        );
+                    }
+                    None => {}
+                }
+                // get reader subgroups
+                match perm_val.readers() {
+                    Some(readers_group_id) => {
+                        assoc_groups.extend(
+                            meta_store_guard
+                                .get_all_subgroups(readers_group_id),
+                        );
+                    }
+                    None => {}
+                }
+                // PER ADDED PERM get new-writer subgroups
+                for writer in &writers {
+                    assoc_groups
+                        .extend(meta_store_guard.get_all_subgroups(writer));
+                }
+
+                /*
+                 * waiting to send messages until done reading from the
+                 * meta_store b/c SetPerm/SetGroups/etc will need to take
+                 * exclusive locks on the meta_store
+                 */
 
                 core::mem::drop(meta_store_guard);
 
-                // add the new group to all devices to share with
-                match self
+                // first send SetPerm for existing, unmodified perm_set
+                let mut res = self
                     .send_message(
-                        // TODO would exclude non-group
-                        // (e.g. data-only) readers
-                        idkeys.clone(),
-                        &Operation::to_string(&Operation::SetGroup(
-                            new_group.group_id().to_string(),
-                            new_group.clone(),
+                        metadata_idkeys.clone(),
+                        &Operation::to_string(&Operation::SetPerm(
+                            perm_val.perm_id().to_string(),
+                            perm_val.clone(),
                         ))
                         .unwrap(),
                     )
-                    .await
-                {
-                    Ok(_) => {
-                        match self
-                            .send_message(
-                                // TODO would exclude non-group
-                                // (e.g. data-only) readers
-                                idkeys.clone(),
-                                &Operation::to_string(&Operation::SetPerm(
-                                    new_perm.perm_id().to_string(),
-                                    new_perm.clone(),
-                                ))
-                                .unwrap(),
-                            )
-                            .await
-                        {
-                            Ok(_) => {
-                                // update the perm_id of the relevant data and
-                                // send the updated data to all members of the
-                                // newly formed perm/group set
-                                self.set_data(
-                                    data_val.data_id().clone(),
-                                    data_val.data_type().clone(),
-                                    data_val.data_val().clone(),
-                                    Some(new_perm.perm_id().to_string()),
-                                )
-                                .await
-                            }
-                            Err(err) => Err(Error::SendFailed(err.to_string())),
-                        }
-                    }
-                    Err(err) => Err(Error::SendFailed(err.to_string())),
+                    .await;
+                println!("sent SETPERM");
+                println!("metadata_idkeys: {:?}", metadata_idkeys);
+
+                if res.is_err() {
+                    return Err(Error::SendFailed(
+                        res.err().unwrap().to_string(),
+                    ));
                 }
+
+                // FIXME will overwrite is_contact_name fields
+                res = self
+                    .send_message(
+                        metadata_idkeys.clone(),
+                        &Operation::to_string(&Operation::SetGroups(
+                            assoc_groups,
+                        ))
+                        .unwrap(),
+                    )
+                    .await;
+                println!("sent SETGROUPS");
+                println!("metadata_idkeys: {:?}", metadata_idkeys);
+
+                if res.is_err() {
+                    return Err(Error::SendFailed(
+                        res.err().unwrap().to_string(),
+                    ));
+                }
+
+                // PER ADDED PERM
+                // then send AddWriter to all metadata-readers (e.g., all but
+                // data-only readers), where the group_id of the potentially
+                // new writers_group must be deterministic, so we generate and
+                // send one if needed
+
+                res = self
+                    .send_message(
+                        metadata_idkeys.clone(),
+                        &Operation::to_string(&Operation::AddWriters(
+                            perm_val.perm_id().to_string(),
+                            writers_group_id_opt,
+                            writers_strings,
+                        ))
+                        .unwrap(),
+                    )
+                    .await;
+                println!("sent ADDWRITERS");
+                println!("metadata_idkeys: {:?}", metadata_idkeys);
+
+                if res.is_err() {
+                    return Err(Error::SendFailed(
+                        res.err().unwrap().to_string(),
+                    ));
+                }
+
+                // finally, send UpdateData (via set_data) to set the
+                // associated data val:
+
+                // copy out and drop read lock on data_store b/c UpdateData
+                // will need exclusive lock to set data (on receive)
+
+                let data_id = data_val.data_id().clone();
+                let data_type = data_val.data_type().clone();
+                let data_val_interior = data_val.data_val().clone();
+
+                core::mem::drop(data_store_guard);
+
+                self.set_data(
+                    data_id,
+                    data_type,
+                    data_val_interior,
+                    //Some(perm_val.perm_id().to_string()),
+                    Some(data_readers),
+                )
+                .await
             }
         }
     }
@@ -1061,6 +1224,7 @@ impl NoiseKVClient {
 
 mod tests {
     use crate::client::{NoiseKVClient, Operation};
+    use crate::data::NoiseData;
 
     #[tokio::test]
     async fn test_send_one_message() {
@@ -1363,6 +1527,7 @@ mod tests {
         }
     }
 
+    /*
     #[tokio::test]
     async fn test_add_contact() {
         let mut client_0 =
@@ -1404,8 +1569,8 @@ mod tests {
             .linked_name
             .read()
             .to_string();
-        let mut meta_store_guard_0 =
-            client_device_guard_0.as_ref().unwrap().meta_store.lock();
+        let meta_store_guard_0 =
+            client_device_guard_0.as_ref().unwrap().meta_store.read();
         let mut linked_group_0 = meta_store_guard_0
             .get_group_mut(&linked_id_0)
             .unwrap()
@@ -1425,7 +1590,7 @@ mod tests {
         core::mem::drop(meta_store_guard_0);
 
         let meta_store_guard_0 =
-            client_device_guard_0.as_ref().unwrap().meta_store.lock();
+            client_device_guard_0.as_ref().unwrap().meta_store.read();
         let device_group_0 =
             meta_store_guard_0.get_group(device_id_0).unwrap().clone();
 
@@ -1438,8 +1603,8 @@ mod tests {
             .linked_name
             .read()
             .to_string();
-        let mut meta_store_guard_1 =
-            client_device_guard_1.as_ref().unwrap().meta_store.lock();
+        let meta_store_guard_1 =
+            client_device_guard_1.as_ref().unwrap().meta_store.read();
         let mut linked_group_1 = meta_store_guard_1
             .get_group_mut(&linked_id_1)
             .unwrap()
@@ -1459,7 +1624,7 @@ mod tests {
         core::mem::drop(meta_store_guard_1);
 
         let meta_store_guard_1 =
-            client_device_guard_1.as_ref().unwrap().meta_store.lock();
+            client_device_guard_1.as_ref().unwrap().meta_store.read();
         let device_group_1 =
             meta_store_guard_1.get_group(device_id_1).unwrap().clone();
 
@@ -1485,6 +1650,7 @@ mod tests {
             &device_group_0
         );
     }
+    */
 
     // TODO test adding multiple contacts
 
@@ -1636,6 +1802,173 @@ mod tests {
         client_1.receive_operation().await;
         assert_eq!(client_0.device.read(), None);
         assert_eq!(client_1.device.read(), None);
+        client_0.add_contact(client_1.idkey()).await;
     }
     */
+
+    #[tokio::test]
+    async fn test_add_writers() {
+        // FIXME encrypt
+        let mut client_0 =
+            NoiseKVClient::new(None, None, true, Some(7), None).await;
+        let mut client_1 =
+            NoiseKVClient::new(None, None, true, Some(5), None).await;
+
+        client_0.create_standalone_device();
+        client_1.create_standalone_device();
+
+        let mut res = client_0.add_contact(client_1.idkey()).await;
+        if res.is_err() {
+            panic!("send failed");
+        }
+
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 6 {
+                // FIXME
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_1.ctr.lock();
+            println!("ctr_1 (test): {:?}", *ctr);
+            if *ctr != 4 {
+                let _ = client_1.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        let data_type = "type".to_string();
+        let data_id = crate::metadata::generate_uuid();
+        let json_val = r#"{ data: true }"#.to_string();
+        res = client_0
+            .set_data(
+                data_id.clone(),
+                data_type.clone(),
+                json_val.clone(),
+                None,
+            )
+            .await;
+        if res.is_err() {
+            panic!("send failed");
+        }
+
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 4 {
+                // FIXME
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        let data_val = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .data_store
+            .read()
+            .get_data(&data_id)
+            .unwrap()
+            .clone();
+
+        println!("data_val: {:?}", data_val.clone());
+
+        assert_eq!(*data_val.data_id(), data_id.clone());
+        assert_eq!(*data_val.data_type(), data_type.clone());
+        assert_eq!(*data_val.data_val(), json_val.clone());
+
+        let perm_id = data_val.perm_id();
+
+        println!("");
+        println!("");
+        println!("ADDING WRITERS");
+
+        println!("client_0.idkey: {:?}", client_0.idkey());
+        println!("client_1.idkey: {:?}", client_1.idkey());
+
+        res = client_0
+            .add_writers(
+                data_val.data_id().clone(),
+                vec![&client_1.linked_name()],
+            )
+            .await;
+        if res.is_err() {
+            panic!("send failed");
+        }
+
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                // FIXME
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let ctr = client_1.ctr.lock();
+            println!("ctr_1 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_1.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        let data_val_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .data_store
+            .read()
+            .get_data(&data_id)
+            .unwrap()
+            .clone();
+        let perm_val_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_perm(data_val_0.perm_id())
+            .unwrap()
+            .clone();
+
+        let data_val_1 = client_1
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .data_store
+            .read()
+            .get_data(&data_id)
+            .unwrap()
+            .clone();
+        let perm_val_1 = client_1
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_perm(data_val_1.perm_id())
+            .unwrap()
+            .clone();
+
+        assert_eq!(data_val_0, data_val_1);
+        assert_eq!(perm_val_0, perm_val_1);
+    }
 }

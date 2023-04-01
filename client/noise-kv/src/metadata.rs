@@ -11,14 +11,20 @@ pub enum Error {
     GroupHasNoChildren(String),
     #[error("Group {0} does not exist")]
     GroupDoesNotExist(String),
+    #[error("Permission Set {0} does not exist")]
+    PermSetDoesNotExist(String),
 }
 
-// TODO should be an enum: NodeGroup or LeafGroup (idkeys)
+pub fn generate_uuid() -> String {
+    Uuid::new_v4().to_string()
+}
+
+// TODO make enum (one variant w children, one w/out)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
-    // FIXME not sure this is used anymore, any kind of defeats the purpose of
-    // our "flexible" group structure -> should remove
+    // FIXME not sure is_contact_name is useful anymore, and kind of defeats
+    // the purpose of our "flexible" group structure -> should remove
     pub is_contact_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
@@ -51,7 +57,7 @@ impl Group {
     ) -> Group {
         let init_group_id: String;
         if group_id.is_none() {
-            init_group_id = Uuid::new_v4().to_string();
+            init_group_id = generate_uuid();
         } else {
             init_group_id = group_id.unwrap();
         }
@@ -77,7 +83,7 @@ impl Group {
     ) -> Group {
         let init_group_id: String;
         if group_id.is_none() {
-            init_group_id = Uuid::new_v4().to_string();
+            init_group_id = generate_uuid();
         } else {
             init_group_id = group_id.unwrap();
         }
@@ -175,7 +181,7 @@ impl PermissionSet {
     ) -> PermissionSet {
         let init_perm_id: String;
         if perm_id.is_none() {
-            init_perm_id = Uuid::new_v4().to_string();
+            init_perm_id = generate_uuid();
         } else {
             init_perm_id = perm_id.unwrap();
         }
@@ -200,13 +206,26 @@ impl PermissionSet {
         &self.writers
     }
 
+    pub fn set_writers(&mut self, writer_group_id: &String) -> Option<String> {
+        let old_writers = self.writers.clone();
+        self.writers = Some(writer_group_id.to_string());
+        old_writers
+    }
+
     pub fn readers(&self) -> &Option<String> {
         &self.readers
+    }
+
+    pub fn set_readers(&mut self, reader_group_id: &String) -> Option<String> {
+        let old_readers = self.readers.clone();
+        self.readers = Some(reader_group_id.to_string());
+        old_readers
     }
 }
 
 // TODO maybe, in order to just have a single hashmap, Group vs
-// PermissionSet can be an enum
+// PermissionSet can be in an enum too -> but would this be helpful?
+// having two hashmaps is fine
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MetadataStore {
@@ -236,6 +255,50 @@ impl MetadataStore {
         perm_val: PermissionSet,
     ) -> Option<PermissionSet> {
         self.perm_store.insert(perm_id, perm_val)
+    }
+
+    pub fn add_writers(
+        &mut self,
+        perm_id: &String,
+        writers_group_id_opt: Option<String>,
+        writers: Vec<String>,
+    ) -> Result<(), Error> {
+        if self.get_perm(perm_id).is_none() {
+            return Err(Error::PermSetDoesNotExist(perm_id.to_string()));
+        }
+
+        let mut perm_set = self.get_perm(perm_id).unwrap().clone();
+        match perm_set.writers() {
+            Some(writers_group_id) => {
+                // add children to existing writers group
+                match self.get_group(writers_group_id) {
+                    Some(writers_group) => {
+                        for writer in writers.iter() {
+                            self.add_child(writers_group_id, writer);
+                        }
+                        // perm_set does not change
+                        Ok(())
+                    }
+                    None => Err(Error::GroupDoesNotExist(
+                        writers_group_id.to_string(),
+                    )),
+                }
+            }
+            None => {
+                // create new writers group
+                let writers_group = Group::new_with_children(
+                    writers_group_id_opt,
+                    false,
+                    writers,
+                );
+
+                // set_perm
+                perm_set.set_writers(writers_group.group_id());
+                self.set_perm(perm_set.perm_id().to_string(), perm_set);
+
+                Ok(())
+            }
+        }
     }
 
     pub fn get_all_perms(&self) -> &HashMap<String, PermissionSet> {
@@ -297,6 +360,12 @@ impl MetadataStore {
         group_val: Group,
     ) -> Option<Group> {
         self.group_store.insert(group_id, group_val)
+    }
+
+    pub fn set_groups(&mut self, groups: HashMap<String, Group>) {
+        groups.into_iter().for_each(|(group_id, group_val)| {
+            self.set_group(group_id, group_val);
+        });
     }
 
     pub fn add_parent(
@@ -497,18 +566,21 @@ impl MetadataStore {
         }
     }
 
-    pub fn resolve_ids<'a>(&'a self, ids: Vec<&'a String>) -> HashSet<String> {
+    pub fn resolve_group_ids<'a>(
+        &'a self,
+        ids: Vec<&'a String>,
+    ) -> HashSet<String> {
         let mut resolved_ids = HashSet::<String>::new();
         let mut visited = HashSet::<&String>::new();
 
         for id in ids {
-            self.resolve_ids_helper(&mut resolved_ids, &mut visited, id);
+            self.resolve_group_ids_helper(&mut resolved_ids, &mut visited, id);
         }
 
         resolved_ids
     }
 
-    fn resolve_ids_helper<'a>(
+    fn resolve_group_ids_helper<'a>(
         &'a self,
         resolved_ids: &mut HashSet<String>,
         visited: &mut HashSet<&'a String>,
@@ -846,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_ids() {
+    fn test_resolve_group_ids() {
         let base_group = Group::new(None, true, true);
         let group_0 = Group::new(None, true, true);
         let group_0a = Group::new(None, true, false);
@@ -888,19 +960,21 @@ mod tests {
         ]);
 
         assert_eq!(
-            meta_store.resolve_ids(vec![base_group.group_id()]),
+            meta_store.resolve_group_ids(vec![base_group.group_id()]),
             expected_ids
         );
 
         assert_eq!(
-            meta_store
-                .resolve_ids(vec![group_0.group_id(), group_1.group_id()]),
+            meta_store.resolve_group_ids(vec![
+                group_0.group_id(),
+                group_1.group_id()
+            ]),
             expected_ids
         );
     }
 
     #[test]
-    fn test_resolve_ids_cycles() {}
+    fn test_resolve_group_ids_cycles() {}
 
     #[test]
     fn test_is_member() {}

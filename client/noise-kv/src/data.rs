@@ -39,7 +39,7 @@ impl NoiseData for BasicData {
     }
 
     fn data_type(&self) -> &String {
-        &self.data_id
+        &self.data_type
     }
 
     fn data_val(&self) -> &String {

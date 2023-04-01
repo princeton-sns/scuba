@@ -257,7 +257,7 @@ impl LightswitchApp {
         }
 
         let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.lock();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
         let perms = meta_store_guard.get_all_perms().values();
 
         Ok(Some(itertools::join(perms, "\n")))
@@ -274,7 +274,7 @@ impl LightswitchApp {
         }
 
         let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.lock();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
         let groups = meta_store_guard.get_all_groups().values();
 
         Ok(Some(itertools::join(groups, "\n")))

@@ -877,7 +877,8 @@ impl NoiseKVClient {
         data_val: String,
         //perm_opt: Option<String>,
         // FIXME make perm_val_opt + calc data_readers _here_ (instead of in
-        // add_writers) - why? I've already forgotten
+        // add_writers) - I've already forgotten, maybe deadlock stuff but
+        // no longer needed
         data_readers: Option<Vec<String>>,
     ) -> Result<(), Error> {
         // FIXME check write permissions
@@ -891,6 +892,7 @@ impl NoiseKVClient {
         let perm_val;
         match existing_val {
             Some(old_val) => {
+                // FIXME writer_group_id_opt would override
                 println!("USING OLD PERMS");
                 perm_id = old_val.perm_id().to_string();
                 perm_val = device_guard
@@ -938,6 +940,9 @@ impl NoiseKVClient {
             }
         }
 
+        println!("perm_id: {:?}", perm_id);
+        println!("perm_val: {:?}", perm_val);
+
         core::mem::drop(data_store_guard);
 
         let basic_data = BasicData::new(
@@ -961,6 +966,8 @@ impl NoiseKVClient {
         } else {
             device_ids = data_readers.unwrap();
         }
+
+        println!("device_ids: {:?}", device_ids);
 
         match self
             .send_message(
@@ -1048,7 +1055,11 @@ impl NoiseKVClient {
 
                 let writers_group_id_opt = match perm_val.writers() {
                     Some(_) => None,
-                    None => Some(crate::metadata::generate_uuid()),
+                    None => {
+                        // TODO create new group w this id and writers
+                        // as children
+                        Some(crate::metadata::generate_uuid())
+                    }
                 };
 
                 // collect all groups/ids that should receive the following
@@ -1071,7 +1082,7 @@ impl NoiseKVClient {
                     None => {}
                 }
                 // PER ADDED PERM new writers
-                metadata_readers.append(&mut writers);
+                metadata_readers.append(&mut writers.clone());
 
                 // resolve the above to device ids
                 let metadata_idkeys = meta_store_guard
@@ -1119,6 +1130,18 @@ impl NoiseKVClient {
                     assoc_groups
                         .extend(meta_store_guard.get_all_subgroups(writer));
                 }
+                // PER ADDED PERM create new-writer group if doesn't exist
+                match writers_group_id_opt.clone() {
+                    Some(new_group_id) => {
+                        let new_group = Group::new_with_children(
+                            Some(new_group_id.clone()),
+                            false,
+                            writers_strings.clone(),
+                        );
+                        assoc_groups.insert(new_group_id, new_group);
+                    }
+                    None => {}
+                }
 
                 /*
                  * waiting to send messages until done reading from the
@@ -1148,6 +1171,7 @@ impl NoiseKVClient {
                     ));
                 }
 
+                // then send SetGroups for all associated subgroups
                 // FIXME will overwrite is_contact_name fields
                 res = self
                     .send_message(
@@ -1167,12 +1191,13 @@ impl NoiseKVClient {
                     ));
                 }
 
+                // then send SetGroup for the to-be created
+
                 // PER ADDED PERM
                 // then send AddWriter to all metadata-readers (e.g., all but
                 // data-only readers), where the group_id of the potentially
                 // new writers_group must be deterministic, so we generate and
                 // send one if needed
-
                 res = self
                     .send_message(
                         metadata_idkeys.clone(),
@@ -1893,7 +1918,9 @@ mod tests {
         println!("ADDING WRITERS");
 
         println!("client_0.idkey: {:?}", client_0.idkey());
+        println!("client_0.linked_name: {:?}", client_0.linked_name());
         println!("client_1.idkey: {:?}", client_1.idkey());
+        println!("client_1.linked_name: {:?}", client_1.linked_name());
 
         res = client_0
             .add_writers(
@@ -1936,16 +1963,6 @@ mod tests {
             .get_data(&data_id)
             .unwrap()
             .clone();
-        let perm_val_0 = client_0
-            .device
-            .read()
-            .as_ref()
-            .unwrap()
-            .meta_store
-            .read()
-            .get_perm(data_val_0.perm_id())
-            .unwrap()
-            .clone();
 
         let data_val_1 = client_1
             .device
@@ -1957,6 +1974,22 @@ mod tests {
             .get_data(&data_id)
             .unwrap()
             .clone();
+
+        println!("data_val_0: {:?}", data_val_0);
+        println!("data_val_1: {:?}", data_val_1);
+        assert_eq!(data_val_0, data_val_1);
+
+        let perm_val_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_perm(data_val_0.perm_id())
+            .unwrap()
+            .clone();
+
         let perm_val_1 = client_1
             .device
             .read()
@@ -1968,7 +2001,36 @@ mod tests {
             .unwrap()
             .clone();
 
-        assert_eq!(data_val_0, data_val_1);
+        println!("perm_val_0: {:?}", perm_val_0);
+        println!("perm_val_1: {:?}", perm_val_1);
         assert_eq!(perm_val_0, perm_val_1);
+
+        let writers_group_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_group(&perm_val_0.writers().as_ref().unwrap())
+            .unwrap()
+            .clone();
+
+        let writers_group_1 = client_1
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_group(&perm_val_1.writers().as_ref().unwrap())
+            .unwrap()
+            .clone();
+
+        println!("writers_group_0: {:?}", writers_group_0);
+        println!("writers_group_1: {:?}", writers_group_1);
+        assert_eq!(writers_group_0, writers_group_1);
+
+        // TODO check writers group exists and is the same
     }
 }

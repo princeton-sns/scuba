@@ -54,29 +54,51 @@ impl Crypto {
 
     pub fn symmetric_encrypt(
         &self,
-        plaintext: crate::hash_vectors::CommonPayload,
+        pt_obj: crate::hash_vectors::CommonPayload,
     ) -> (Vec<u8>, [u8; 16], [u8; 16]) {
+        let pt = serde_json::to_string(&pt_obj).unwrap().into_bytes();
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
 
-        let pt_bytes = serde_json::to_string(&plaintext).unwrap().into_bytes();
+        if self.turn_encryption_off {
+            return (pt, self.key, iv);
+        }
+
         let ct = Aes128CbcEnc::new(&self.key.into(), &iv.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(&pt_bytes);
+            .encrypt_padded_vec_mut::<Pkcs7>(&pt);
+
+        println!("OUTGOING");
+        println!("pt: {:?}", pt);
+        println!("ct: {:?}", ct);
 
         (ct, self.key, iv)
     }
 
     pub fn symmetric_decrypt(
         &self,
-        ciphertext: Vec<u8>,
+        ct: Vec<u8>,
         key: [u8; 16],
         iv: [u8; 16],
     ) -> String {
+        if self.turn_encryption_off {
+            return std::str::from_utf8(&ct).unwrap().to_string();
+        }
+
         let pt = Aes128CbcDec::new(&key.into(), &iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
+            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
             .unwrap();
 
-        std::str::from_utf8(&pt).unwrap().to_string()
+        println!("INCOMING");
+        println!("ct: {:?}", ct);
+        println!("pt: {:?}", pt);
+
+        // FIXME err when no print ^
+        match std::str::from_utf8(&pt) {
+            Ok(pt_str) => pt_str.to_string(),
+            Err(err) => {
+                panic!("err: {:?}", err);
+            }
+        }
     }
 
     pub fn generate_otkeys(&self, num: Option<usize>) -> OneTimeKeys {

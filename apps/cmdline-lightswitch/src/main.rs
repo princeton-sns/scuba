@@ -26,7 +26,7 @@ impl LightswitchApp {
             //Some("8080"),
             // FIXME something isn't working anymore w the sns server
             // specifically
-            false, None, None,
+            true, None, None, //Some(1),
         )
         .await;
         Self { client }
@@ -246,6 +246,23 @@ impl LightswitchApp {
         Ok(Some(itertools::join(data, "\n")))
     }
 
+    pub fn get_perms(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let device_guard = context.client.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let perms = meta_store_guard.get_all_perms().values();
+
+        Ok(Some(itertools::join(perms, "\n")))
+    }
+
     pub fn get_groups(
         _args: ArgMatches,
         context: &mut Arc<Self>,
@@ -257,9 +274,8 @@ impl LightswitchApp {
         }
 
         let device_guard = context.client.device.read();
-        let group_store_guard =
-            device_guard.as_ref().unwrap().group_store.lock();
-        let groups = group_store_guard.get_all_groups().values();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let groups = meta_store_guard.get_all_groups().values();
 
         Ok(Some(itertools::join(groups, "\n")))
     }
@@ -317,7 +333,37 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn share_lightbulb(
+    pub async fn add_readers_to_lightbulb(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        //let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
+        //let names = args
+        //    .get_many::<String>("names")
+        //    .unwrap()
+        //    .collect::<Vec<&String>>();
+        //match context.client.add_readers(id.clone(), names.clone()).await {
+        //    Ok(_) => Ok(Some(String::from(format!(
+        //        "Adding the following readers to lightbulb (id {}): \n{}",
+        //        id,
+        //        itertools::join(names, "\n")
+        //    )))),
+        //    Err(err) => Ok(Some(String::from(format!(
+        //        "Could not add readers to lightbulb: {}",
+        //        err.to_string()
+        //    )))),
+        //}
+
+        Ok(Some(String::from("Not impl")))
+    }
+
+    pub async fn add_writers_to_lightbulb(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -332,14 +378,14 @@ impl LightswitchApp {
             .get_many::<String>("names")
             .unwrap()
             .collect::<Vec<&String>>();
-        match context.client.share_data(id.clone(), names.clone()).await {
+        match context.client.add_writers(id.clone(), names.clone()).await {
             Ok(_) => Ok(Some(String::from(format!(
-                "Sharing lightbulb (id {}) with: \n{}",
+                "Adding the following writers to lightbulb (id {}): \n{}",
                 id,
                 itertools::join(names, "\n")
             )))),
             Err(err) => Ok(Some(String::from(format!(
-                "Could not share lightbulb: {}",
+                "Could not add writers to lightbulb: {}",
                 err.to_string()
             )))),
         }
@@ -437,6 +483,7 @@ async fn main() -> ReplResult<()> {
             LightswitchApp::get_linked_devices,
         )
         .with_command(Command::new("get_data"), LightswitchApp::get_data)
+        .with_command(Command::new("get_perms"), LightswitchApp::get_perms)
         .with_command(Command::new("get_groups"), LightswitchApp::get_groups)
         .with_command(
             Command::new("get_lightbulb_state")
@@ -447,7 +494,7 @@ async fn main() -> ReplResult<()> {
             Box::pin(LightswitchApp::add_lightbulb(context))
         })
         .with_command_async(
-            Command::new("share_lightbulb")
+            Command::new("add_readers_to_lightbulb")
                 .arg(
                     Arg::new("lightbulb_id")
                         .required(true)
@@ -462,7 +509,30 @@ async fn main() -> ReplResult<()> {
                         .action(ArgAction::Append),
                 ),
             |args, context| {
-                Box::pin(LightswitchApp::share_lightbulb(args, context))
+                Box::pin(LightswitchApp::add_readers_to_lightbulb(
+                    args, context,
+                ))
+            },
+        )
+        .with_command_async(
+            Command::new("add_writers_to_lightbulb")
+                .arg(
+                    Arg::new("lightbulb_id")
+                        .required(true)
+                        .long("id")
+                        .short('i'),
+                )
+                .arg(
+                    Arg::new("names")
+                        .required(true)
+                        .long("name")
+                        .short('n')
+                        .action(ArgAction::Append),
+                ),
+            |args, context| {
+                Box::pin(LightswitchApp::add_writers_to_lightbulb(
+                    args, context,
+                ))
             },
         )
         .with_command_async(

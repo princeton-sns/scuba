@@ -11,7 +11,7 @@ use noise_core::core::{Core, CoreClient};
 
 use crate::data::{BasicData, NoiseData};
 use crate::devices::Device;
-use crate::metadata::{Group, PermissionSet};
+use crate::metadata::{Group, PermType, PermissionSet};
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -55,9 +55,10 @@ enum Operation {
     AddContact(String, String, HashMap<String, Group>),
     ConfirmAddContact(String, HashMap<String, Group>),
     SetPerm(String, PermissionSet),
-    AddWriters(String, Option<String>, Vec<String>), /* TODO generalize
-                                                      * (use another param
-                                                      * -> perm_type) */
+    AddWriters(String, Option<String>, PermType), //Vec<String>),
+    /* TODO generalize
+     * (use another param
+     * -> perm_type) */
     // TODO RemovePerm
     SetGroup(String, Group),
     SetGroups(HashMap<String, Group>),
@@ -372,7 +373,7 @@ impl NoiseKVClient {
                     .unwrap()
                     .meta_store
                     .write()
-                    .add_writers(&perm_id, writers_group_id_opt, writers)
+                    .add_permissions(&perm_id, writers_group_id_opt, writers)
                     .map_err(Error::from)
             }
             Operation::SetGroup(group_id, group_val) => {
@@ -1204,7 +1205,7 @@ impl NoiseKVClient {
                         &Operation::to_string(&Operation::AddWriters(
                             perm_val.perm_id().to_string(),
                             writers_group_id_opt,
-                            writers_strings,
+                            PermType::Writers(writers_strings),
                         ))
                         .unwrap(),
                     )

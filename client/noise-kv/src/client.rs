@@ -105,9 +105,6 @@ impl CoreClient for NoiseKVClient {
 
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
-                println!("");
-                println!("cur idkey: {:?}", self.idkey());
-                println!("OPERATION: {:?}", operation);
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
@@ -135,8 +132,8 @@ impl CoreClient for NoiseKVClient {
 
         let mut ctr = self.ctr.lock();
         if *ctr != 0 {
-            println!("cb_ctr: {:?}", *ctr);
-            println!("");
+            //println!("cb_ctr: {:?}", *ctr);
+            //println!("");
             *ctr -= 1;
             self.ctr_cv.notify_all();
         }
@@ -897,8 +894,6 @@ impl NoiseKVClient {
         let perm_val;
         match existing_val {
             Some(old_val) => {
-                // FIXME writer_group_id_opt would override
-                println!("USING OLD PERMS");
                 perm_id = old_val.perm_id().to_string();
                 perm_val = device_guard
                     .as_ref()
@@ -910,7 +905,6 @@ impl NoiseKVClient {
                     .clone();
             }
             None => {
-                println!("CREATING NEW PERMS");
                 // create new perms for this data_val
                 perm_val =
                     PermissionSet::new(None, self.linked_name(), None, None);
@@ -934,8 +928,6 @@ impl NoiseKVClient {
                         .unwrap(),
                     )
                     .await;
-                println!("sent SETPERM (from set_data)");
-                println!("idkeys: {:?}", idkeys);
 
                 if res.is_err() {
                     return Err(Error::SendFailed(
@@ -944,9 +936,6 @@ impl NoiseKVClient {
                 }
             }
         }
-
-        println!("perm_id: {:?}", perm_id);
-        println!("perm_val: {:?}", perm_val);
 
         core::mem::drop(data_store_guard);
 
@@ -972,8 +961,6 @@ impl NoiseKVClient {
             device_ids = data_reader_idkeys.unwrap();
         }
 
-        println!("device_ids: {:?}", device_ids);
-
         match self
             .send_message(
                 // includes idkeys of _all_ permissions
@@ -986,11 +973,7 @@ impl NoiseKVClient {
             )
             .await
         {
-            Ok(_) => {
-                println!("SENT UPDATEDATA");
-                println!("device_ids: {:?}", device_ids);
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
         }
     }
@@ -1218,11 +1201,6 @@ impl NoiseKVClient {
                         .unwrap(),
                     )
                     .await;
-                println!("sent SETPERM");
-                println!(
-                    "metadata_reader_idkeys: {:?}",
-                    metadata_reader_idkeys
-                );
 
                 if res.is_err() {
                     return Err(Error::SendFailed(
@@ -1241,11 +1219,6 @@ impl NoiseKVClient {
                         .unwrap(),
                     )
                     .await;
-                println!("sent SETGROUPS");
-                println!(
-                    "metadata_reader_idkeys: {:?}",
-                    metadata_reader_idkeys
-                );
 
                 if res.is_err() {
                     return Err(Error::SendFailed(
@@ -1265,11 +1238,6 @@ impl NoiseKVClient {
                         .unwrap(),
                     )
                     .await;
-                println!("sent ADDPERMMEMBERS");
-                println!(
-                    "metadata_reader_idkeys: {:?}",
-                    metadata_reader_idkeys
-                );
 
                 if res.is_err() {
                     return Err(Error::SendFailed(

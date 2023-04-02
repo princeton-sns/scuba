@@ -343,24 +343,23 @@ impl LightswitchApp {
             )));
         }
 
-        //let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        //let names = args
-        //    .get_many::<String>("names")
-        //    .unwrap()
-        //    .collect::<Vec<&String>>();
-        //match context.client.add_readers(id.clone(), names.clone()).await {
-        //    Ok(_) => Ok(Some(String::from(format!(
-        //        "Adding the following readers to lightbulb (id {}): \n{}",
-        //        id,
-        //        itertools::join(names, "\n")
-        //    )))),
-        //    Err(err) => Ok(Some(String::from(format!(
-        //        "Could not add readers to lightbulb: {}",
-        //        err.to_string()
-        //    )))),
-        //}
-
-        Ok(Some(String::from("Not impl")))
+        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
+        let names = args
+            .get_many::<String>("names")
+            .unwrap()
+            .collect::<Vec<&String>>();
+        match context.client.add_readers(id.clone(), names.clone()).await {
+            Ok(_) => Ok(Some(String::from(format!(
+                "Adding the
+         following readers to lightbulb (id {}): \n{}",
+                id,
+                itertools::join(names, "\n")
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not add readers to lightbulb: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub async fn add_writers_to_lightbulb(

@@ -136,21 +136,17 @@ impl Group {
     }
 }
 
-// Permissions
-//
-// add/remove/has_privilege
-
-//pub enum Levels {
-//    Owner(String),
-//    Writers(String),
-//    Readers(String),
-//}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PermType {
+    //Owner(String), // b/c shouldn't change (at least not yet)
+    Writers(Vec<String>),
+    Readers(Vec<String>),
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermissionSet {
     perm_id: String,
     owner: String,
-    //admins: Option<String>,
     writers: Option<String>,
     readers: Option<String>,
 }
@@ -257,43 +253,54 @@ impl MetadataStore {
         self.perm_store.insert(perm_id, perm_val)
     }
 
-    pub fn add_writers(
+    pub fn add_permissions(
         &mut self,
         perm_id: &String,
-        writers_group_id_opt: Option<String>,
-        writers: Vec<String>,
+        group_id_opt: Option<String>,
+        new_perm_members: PermType,
     ) -> Result<(), Error> {
         if self.get_perm(perm_id).is_none() {
             return Err(Error::PermSetDoesNotExist(perm_id.to_string()));
         }
 
         let mut perm_set = self.get_perm(perm_id).unwrap().clone();
-        match perm_set.writers() {
-            Some(writers_group_id) => {
-                // add children to existing writers group
-                match self.get_group(writers_group_id) {
-                    Some(writers_group) => {
-                        for writer in writers.iter() {
-                            self.add_child(writers_group_id, writer);
+
+        let (existing_members, new_members) = match new_perm_members.clone() {
+            PermType::Writers(new_writers) => (perm_set.writers(), new_writers),
+            PermType::Readers(new_readers) => (perm_set.readers(), new_readers),
+        };
+
+        match existing_members {
+            Some(existing_group_id) => {
+                // add children to existing group
+                match self.get_group(existing_group_id) {
+                    Some(existing_group) => {
+                        for new_member in new_members.iter() {
+                            self.add_child(existing_group_id, new_member);
                         }
-                        // perm_set does not change
+                        // perm_set does not change b/c using existing
+                        // group id
                         Ok(())
                     }
                     None => Err(Error::GroupDoesNotExist(
-                        writers_group_id.to_string(),
+                        existing_group_id.to_string(),
                     )),
                 }
             }
             None => {
-                // create new writers group
-                let writers_group = Group::new_with_children(
-                    writers_group_id_opt,
-                    false,
-                    writers,
-                );
+                // create new group
+                let new_group =
+                    Group::new_with_children(group_id_opt, false, new_members);
 
-                // set_perm
-                perm_set.set_writers(writers_group.group_id());
+                // set perm
+                match new_perm_members {
+                    PermType::Writers(_) => {
+                        perm_set.set_writers(new_group.group_id());
+                    }
+                    PermType::Readers(_) => {
+                        perm_set.set_readers(new_group.group_id());
+                    }
+                }
                 self.set_perm(perm_set.perm_id().to_string(), perm_set);
 
                 Ok(())
@@ -341,6 +348,8 @@ impl MetadataStore {
             None => false,
         }
     }
+
+    // TODO remove permissions
 
     /*
      * Group methods

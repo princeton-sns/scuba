@@ -322,6 +322,7 @@ impl NoiseKVClient {
                 //        .read()
                 //        .get_group
                 //}
+                // FIXME
                 Ok(())
             }
             Operation::SetGroups(groups) => Ok(()),

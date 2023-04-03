@@ -24,7 +24,7 @@ pub enum Error {
                                               * msg */
     #[error("Pending idkey {0} does not match sender idkey {0}")]
     PendingIdkeyMismatch(String, String),
-    #[error("Permission set with id {0} already exists; to modify must use Add/RemovePermMember operation")]
+    #[error("Permission set with id {0} already exists; cannot use SetPerm")]
     PermAlreadyExists(String),
     #[error("{0} is not a valid contact.")]
     InvalidContactName(String),
@@ -63,12 +63,12 @@ enum Operation {
     // TODO RemovePermMember
     SetGroup(String, Group),
     SetGroups(HashMap<String, Group>),
-    LinkGroups(String, String),
-    DeleteGroup(String),
-    AddParent(String, String),
-    RemoveParent(String, String),
-    AddChild(String, String),
-    RemoveChild(String, String), // FIXME may never be used
+    //LinkGroups(String, String),
+    //DeleteGroup(String),
+    //AddParent(String, String),
+    //RemoveParent(String, String),
+    //AddChild(String, String),
+    //RemoveChild(String, String),
     UpdateData(String, BasicData),
     DeleteData(String),
     DeleteSelfDevice,
@@ -258,14 +258,20 @@ impl NoiseKVClient {
                     .as_ref()
                     .unwrap()
                     .get_pending_link_idkey();
-                if let Some(pending_idkey) = pending_idkey_opt {
-                    if pending_idkey == sender.to_string()
-                    {
-                        return Ok(());
-                    }
-                    return Err(Error::PendingIdkeyMismatch(pending_idkey, sender.to_string()));
+                if pending_idkey_opt.is_none() {
+                    return Err(Error::PendingIdkeyMismatch(
+                        "None".to_string(),
+                        sender.to_string(),
+                    ));
                 }
-                Err(Error::PendingIdkeyMismatch("None".to_string(), sender.to_string()))
+                let pending_idkey = pending_idkey_opt.unwrap();
+                if pending_idkey != sender.to_string() {
+                    return Err(Error::PendingIdkeyMismatch(
+                        pending_idkey,
+                        sender.to_string(),
+                    ));
+                }
+                Ok(())
             }
             /* Need metadata-mod permissions */
             Operation::SetPerm(perm_id, perm_val) => {
@@ -277,14 +283,15 @@ impl NoiseKVClient {
                     .unwrap()
                     .meta_store
                     .read()
-                    .get_perm(perm_id).is_none()
+                    .get_perm(perm_id)
+                    .is_some()
                 {
-                    return Ok(());
+                    return Err(Error::PermAlreadyExists(perm_id.to_string()));
                 }
-                Err(Error::PermAlreadyExists(perm_id.to_string()))
+                Ok(())
             }
             Operation::AddPermMembers(perm_id, group_id_opt, new_members) => {
-                if self
+                if !self
                     .device
                     .read()
                     .as_ref()
@@ -293,26 +300,39 @@ impl NoiseKVClient {
                     .read()
                     .has_metadata_mod_permissions(sender, perm_id)
                 {
-                    return Ok(());
+                    return Err(Error::InsufficientPermissions(
+                        sender.to_string(),
+                        perm_id.to_string(),
+                    ));
                 }
-                Err(Error::InsufficientPermissions(
-                    sender.to_string(),
-                    perm_id.to_string(),
-                ))
+                Ok(())
             }
-            /* Need metadata-mod permissions via perm-backpointer */
-            // TODO ^
-            //Operation::SetGroup(group_id, group_val) => Ok(()),
-            //Operation::SetGroups(groups) => Ok(()),
+            /* Need metadata-mod permissions (via perm-backpointer) */
+            Operation::SetGroup(group_id, group_val) => {
+                //println!("group_val: {:?}", group_val);
+                //let mut cur_group_val = group_val;
+                //while cur_group_val.perm_id().is_none() {
+                //    // multiple parents...
+                //    cur_group_val = self
+                //        .device
+                //        .read()
+                //        .as_ref()
+                //        .unwrap()
+                //        .meta_store
+                //        .read()
+                //        .get_group
+                //}
+                Ok(())
+            }
+            Operation::SetGroups(groups) => Ok(()),
             //Operation::LinkGroups(parent_id, child_id) => Ok(()),
             //Operation::DeleteGroup(group_id) => Ok(()),
             //Operation::AddParent(group_id, parent_id) => Ok(()),
             //Operation::RemoveParent(group_id, parent_id) => Ok(()),
             //Operation::AddChild(group_id, child_id) => Ok(()),
-            //Operation::RemoveChild(group_id, child_id) => Ok(()),
             /* Need data-mod permissions */
             Operation::UpdateData(data_id, data_val) => {
-                if self
+                if !self
                     .device
                     .read()
                     .as_ref()
@@ -321,12 +341,12 @@ impl NoiseKVClient {
                     .read()
                     .has_data_mod_permissions(sender, data_val.perm_id())
                 {
-                    return Ok(());
+                    return Err(Error::InsufficientPermissions(
+                        sender.to_string(),
+                        data_val.perm_id().to_string(),
+                    ));
                 }
-                Err(Error::InsufficientPermissions(
-                    sender.to_string(),
-                    data_val.perm_id().to_string(),
-                ))
+                Ok(())
             }
             Operation::DeleteData(data_id) => {
                 match self
@@ -339,7 +359,7 @@ impl NoiseKVClient {
                     .get_data(data_id)
                 {
                     Some(data_val) => {
-                        if self
+                        if !self
                             .device
                             .read()
                             .as_ref()
@@ -351,12 +371,12 @@ impl NoiseKVClient {
                                 data_val.perm_id(),
                             )
                         {
-                            return Ok(());
+                            return Err(Error::InsufficientPermissions(
+                                sender.to_string(),
+                                data_val.perm_id().to_string(),
+                            ));
                         }
-                        Err(Error::InsufficientPermissions(
-                            sender.to_string(),
-                            data_val.perm_id().to_string(),
-                        ))
+                        Ok(())
                     }
                     // data doesn't exist, so continue (otherwise would
                     // get confusing error message)
@@ -458,61 +478,61 @@ impl NoiseKVClient {
                     .set_groups(groups);
                 Ok(())
             }
-            Operation::LinkGroups(parent_id, child_id) => self
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .meta_store
-                .write()
-                .link_groups(&parent_id, &child_id)
-                .map_err(Error::from),
-            Operation::DeleteGroup(group_id) => {
-                self.device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .write()
-                    .delete_group(&group_id);
-                Ok(())
-            }
-            Operation::AddParent(group_id, parent_id) => self
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .meta_store
-                .write()
-                .add_parent(&group_id, &parent_id)
-                .map_err(Error::from),
-            Operation::RemoveParent(group_id, parent_id) => self
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .meta_store
-                .write()
-                .remove_parent(&group_id, &parent_id)
-                .map_err(Error::from),
-            Operation::AddChild(group_id, child_id) => self
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .meta_store
-                .write()
-                .add_child(&group_id, &child_id)
-                .map_err(Error::from),
-            Operation::RemoveChild(group_id, child_id) => self
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .meta_store
-                .write()
-                .remove_child(&group_id, &child_id)
-                .map_err(Error::from),
+            //Operation::LinkGroups(parent_id, child_id) => self
+            //    .device
+            //    .read()
+            //    .as_ref()
+            //    .unwrap()
+            //    .meta_store
+            //    .write()
+            //    .link_groups(&parent_id, &child_id)
+            //    .map_err(Error::from),
+            //Operation::DeleteGroup(group_id) => {
+            //    self.device
+            //        .read()
+            //        .as_ref()
+            //        .unwrap()
+            //        .meta_store
+            //        .write()
+            //        .delete_group(&group_id);
+            //    Ok(())
+            //}
+            //Operation::AddParent(group_id, parent_id) => self
+            //    .device
+            //    .read()
+            //    .as_ref()
+            //    .unwrap()
+            //    .meta_store
+            //    .write()
+            //    .add_parent(&group_id, &parent_id)
+            //    .map_err(Error::from),
+            //Operation::RemoveParent(group_id, parent_id) => self
+            //    .device
+            //    .read()
+            //    .as_ref()
+            //    .unwrap()
+            //    .meta_store
+            //    .write()
+            //    .remove_parent(&group_id, &parent_id)
+            //    .map_err(Error::from),
+            //Operation::AddChild(group_id, child_id) => self
+            //    .device
+            //    .read()
+            //    .as_ref()
+            //    .unwrap()
+            //    .meta_store
+            //    .write()
+            //    .add_child(&group_id, &child_id)
+            //    .map_err(Error::from),
+            //Operation::RemoveChild(group_id, child_id) => self
+            //    .device
+            //    .read()
+            //    .as_ref()
+            //    .unwrap()
+            //    .meta_store
+            //    .write()
+            //    .remove_child(&group_id, &child_id)
+            //    .map_err(Error::from),
             Operation::UpdateData(data_id, data_val) => {
                 self.device
                     .read()

@@ -2,5 +2,6 @@
 members = [
     "client/core",
     "client/noise-kv",
+    "client/serializable-noise-kv",
     "apps/cmdline-lightswitch",
 ]

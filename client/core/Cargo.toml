@@ -23,3 +23,4 @@ async-trait = "0.1.64"
 aes = "0.8.2"
 rand = "0.8.5"
 cbc = { version = "0.1.2", features = ["alloc"] }
+base64 = "0.21.0"

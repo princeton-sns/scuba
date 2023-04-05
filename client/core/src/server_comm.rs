@@ -9,133 +9,83 @@ use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
 
-const IP_ADDR: &str = "localhost";
-const PORT_NUM: &str = "8080";
-const HTTP_PREFIX: &str = "http://";
-const COLON: &str = ":";
 
-#[derive(PartialEq, Debug)]
+// Bootstrap server
+const BOOTSTRAP_SERVER_URL: &'static str = "http://localhost:8081";
+
+#[derive(Debug)]
 pub enum Event {
     Otkey,
-    Msg(String),
+    Msg(EncryptedInboxMessage),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EncryptedCommonPayload {
-    byte_vec: Vec<u8>,
-}
+// Transparent wrapper around a byte array, as a marker that this is
+// the encrypted shared/common payload.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(transparent)]
+pub struct EncryptedCommonPayload(pub String);
 
 impl EncryptedCommonPayload {
-    pub fn new(byte_vec: Vec<u8>) -> EncryptedCommonPayload {
-        Self { byte_vec }
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+	use base64::{Engine as _, engine::general_purpose};
+	EncryptedCommonPayload(general_purpose::STANDARD_NO_PAD.encode(bytes))
     }
 
-    pub fn byte_vec(&self) -> &Vec<u8> {
-        &self.byte_vec
+    pub fn to_bytes(&self) -> Vec<u8> {
+	use base64::{Engine as _, engine::general_purpose};
+	general_purpose::STANDARD_NO_PAD.decode(&self.0).unwrap()
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedPerRecipientPayload {
-    c_type: usize,
-    ciphertext: String,
+    pub c_type: usize,
+    pub ciphertext: String,
 }
 
-impl EncryptedPerRecipientPayload {
-    pub fn new(
-        c_type: usize,
-        ciphertext: String,
-    ) -> EncryptedPerRecipientPayload {
-        Self { c_type, ciphertext }
-    }
-
-    pub fn c_type(&self) -> usize {
-        self.c_type
-    }
-
-    pub fn ciphertext(&self) -> &String {
-        &self.ciphertext
-    }
+#[derive(Debug, Serialize, Clone)]
+pub struct EncryptedOutboxMessage {
+    pub enc_common: EncryptedCommonPayload,
+    // map from recipient id to payload
+    pub enc_recipients: HashMap<String, EncryptedPerRecipientPayload>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OutgoingMessage {
-    device_id: String,
-    enc_common: EncryptedCommonPayload,
-    enc_per_recipient: EncryptedPerRecipientPayload,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EncryptedInboxMessage {
+    pub sender: String,
+    // TODO: currently both the server and the common payload contain the
+    // full list of recipients. We should optimize this to use a hash
+    // of the list of recipients in the common payload.
+    //
+    // We need to make sure of the following:
+    // - the sending client can't lie about the list of recipients of a message.
+    //   We achieve that by having the server provide us the list of recipients.
+    // - the server can't lie about the list of recipients to a subset of
+    //   clients. We achieve that by including a hash of the list of recipients
+    //   in the common payload.
+    // If these two do not match, we MUST refuse (drop) the message. If the
+    // sending client lied, this will just cause the message to be dropped
+    // everywhere. If the server lied, this will then be detected through
+    // LVS, because a subset of clients will see the message as dropped.
+    pub recipients: Vec<String>,
+    pub enc_common: EncryptedCommonPayload,
+    pub enc_recipient: EncryptedPerRecipientPayload,
+    pub seq_id: u128,
 }
 
-impl OutgoingMessage {
-    pub fn new(
-        device_id: String,
-        enc_common: EncryptedCommonPayload,
-        enc_per_recipient: EncryptedPerRecipientPayload,
-    ) -> OutgoingMessage {
-        Self {
-            device_id,
-            enc_common,
-            enc_per_recipient,
-        }
-    }
+#[derive(Deserialize, Clone, Debug)]
+pub struct EpochMessageBatch {
+    pub epoch_id: u64,
+    pub messages: Vec<EncryptedInboxMessage>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct Batch {
-    batch: Vec<OutgoingMessage>,
-}
 
-impl Batch {
-    pub fn new() -> Self {
-        Self {
-            batch: Vec::<OutgoingMessage>::new(),
-        }
-    }
-
-    pub fn from_vec(batch: Vec<OutgoingMessage>) -> Self {
-        Self { batch }
-    }
-
-    pub fn push(&mut self, message: OutgoingMessage) {
-        self.batch.push(message);
-    }
-
-    //pub fn pop(&mut self) -> Option<OutgoingMessage> {
-    //  self.batch.pop()
-    //}
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IncomingMessage {
-    sender: String,
-    enc_common: EncryptedCommonPayload,
-    enc_per_recipient: EncryptedPerRecipientPayload,
-    seq_id: u64,
-}
-
-impl IncomingMessage {
+impl EncryptedInboxMessage {
     pub fn from_string(msg: String) -> Self {
-        serde_json::from_str(msg.as_str()).unwrap()
-    }
-
-    pub fn sender(&self) -> &String {
-        &self.sender
-    }
-
-    pub fn enc_common(&self) -> &EncryptedCommonPayload {
-        &self.enc_common
-    }
-
-    pub fn enc_per_recipient(&self) -> &EncryptedPerRecipientPayload {
-        &self.enc_per_recipient
-    }
-
-    pub fn seq_id(&self) -> u64 {
-        self.seq_id
+	serde_json::from_str(msg.as_str()).unwrap()
     }
 }
+
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,11 +128,22 @@ impl<C: CoreClient> ServerComm<C> {
         idkey: String,
         core_option: Option<Arc<Core<C>>>,
     ) -> Self {
-        let ip_addr = ip_arg.unwrap_or(IP_ADDR);
-        let port_num = port_arg.unwrap_or(PORT_NUM);
-        let base_url =
-            Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
-                .expect("Failed base_url construction");
+	// Resolve our home-shard base-url by contacting the bootstrap shard:
+	let client = reqwest::Client::new();
+	let base_url = Url::parse(
+	    &client
+		.get(format!("{}/shard", BOOTSTRAP_SERVER_URL))
+		.header(
+                    "Authorization",
+                    &format!("Bearer {}", &idkey),
+		)
+		.send()
+		.await
+		.expect("Failed to contact the bootstrap server shard")
+		.text()
+		.await
+		.expect("Failed to retrieve response from the bootstrap server shard")
+	).expect("Failed to construct home-shard base url from response");
 
         let task_base_url = base_url.clone();
         let task_idkey = idkey.clone();
@@ -220,10 +181,10 @@ impl<C: CoreClient> ServerComm<C> {
                         SSE::Comment(_) => {}
                         SSE::Event(event) => match event.event_type.as_str() {
                             "otkey" => {
-                                //println!(
-                                //    "got OTKEY event from server - {:?}",
-                                //    task_idkey
-                                //);
+                                println!(
+                                   "got OTKEY event from server - {:?}",
+                                   task_idkey
+                                );
                                 if let Some(ref core) = core_option {
                                     core.server_comm_callback(Ok(Event::Otkey))
                                         .await;
@@ -231,16 +192,28 @@ impl<C: CoreClient> ServerComm<C> {
                             }
                             "msg" => {
                                 //println!("got MSG event from server");
-                                let msg = String::from(event.data);
-                                //println!("msg: {:?}", msg);
                                 if let Some(ref core) = core_option {
                                     core.server_comm_callback(Ok(Event::Msg(
-                                        msg,
+                                        EncryptedInboxMessage::from_string(event.data),
                                     )))
                                     .await;
                                 }
                             }
-                            _ => {}
+			    "epoch_message_batch" => {
+                                // println!("got EpochMessageBatch event from server");
+                                if let Some(ref core) = core_option {
+				    let emb: EpochMessageBatch = serde_json::from_str(&event.data).unwrap();
+				    // TODO: handle lost epochs
+				    println!("EpochMessageBatch for epoch {}", emb.epoch_id);
+				    for msg in emb.messages {
+					core.server_comm_callback(Ok(Event::Msg(
+                                            msg,
+					)))
+					    .await;
+				    }
+                                }
+                            }
+                            _ => panic!("Got unexpected SSE event: {:?}", event),
                         },
                     },
                 }
@@ -250,13 +223,13 @@ impl<C: CoreClient> ServerComm<C> {
         Self {
             base_url,
             idkey,
-            client: reqwest::Client::new(),
+            client,
             _listener_task_handle,
             _pd: PhantomData,
         }
     }
 
-    pub async fn send_message(&self, batch: &Batch) -> Result<Response> {
+    pub async fn send_message(&self, batch: &EncryptedOutboxMessage) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message").expect("").as_str())
             .header("Content-Type", "application/json")

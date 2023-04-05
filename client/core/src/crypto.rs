@@ -718,7 +718,6 @@ mod tests {
     use crate::core::PerRecipientPayload;
     use crate::crypto::Crypto;
     use crate::hash_vectors::{CommonPayload, ValidationPayload};
-    use crate::server_comm::Batch;
 
     #[test]
     fn test_symmetric_encrypt_and_decrypt() {

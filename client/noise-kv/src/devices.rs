@@ -53,7 +53,12 @@ impl<T: NoiseData> Device<T> {
         // set device group
         meta_store.set_group(
             idkey.clone(),
-            Group::new(Some(idkey.clone()), None, false, None),
+            Group::new(
+                Some(idkey.clone()),
+                Some(vec![linked_perm_set.perm_id().to_string()]),
+                false,
+                None,
+            ),
         );
         // link linked and device groups
         meta_store.link_groups(&linked_name, &idkey);
@@ -274,7 +279,7 @@ mod tests {
         let linked_group = meta_store.get_group(&linked_name).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name);
         assert_eq!(linked_group.is_contact_name, false);
-        assert_eq!(linked_group.parents(), &HashSet::<String>::new());
+        assert_ne!(linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             linked_group.children(),
             &Some(HashSet::<String>::from([idkey.clone()]))
@@ -349,7 +354,7 @@ mod tests {
         let merged_linked_group =
             merged_linked_members.get(&linked_name_0).unwrap();
         assert_eq!(merged_linked_group.group_id(), &linked_name_0);
-        assert_eq!(merged_linked_group.parents(), &HashSet::<String>::new());
+        assert_ne!(merged_linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             merged_linked_group.children().as_ref(),
             Some(&HashSet::<String>::from([idkey_1.clone(), idkey_0.clone()]))
@@ -421,7 +426,7 @@ mod tests {
         let merged_linked_group =
             merged_linked_members.get(&linked_name_0).unwrap();
         assert_eq!(merged_linked_group.group_id(), &linked_name_0);
-        assert_eq!(merged_linked_group.parents(), &HashSet::<String>::new());
+        assert_ne!(merged_linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             merged_linked_group.children().as_ref(),
             Some(&HashSet::<String>::from([idkey_1.clone(), idkey_0.clone()]))
@@ -495,7 +500,7 @@ mod tests {
 
         let linked_group = linked_members.get(&linked_name_0).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name_0);
-        assert_eq!(linked_group.parents(), &HashSet::<String>::new());
+        assert_ne!(linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             linked_group.children().as_ref(),
             Some(&HashSet::<String>::from([idkey_0.clone()]))
@@ -563,7 +568,7 @@ mod tests {
 
         let linked_group = linked_members.get(&linked_name_0).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name_0);
-        assert_eq!(linked_group.parents(), &HashSet::<String>::new());
+        assert_ne!(linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             linked_group.children().as_ref(),
             Some(&HashSet::<String>::from([idkey_0.clone()]))

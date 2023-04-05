@@ -135,8 +135,8 @@ impl CoreClient for NoiseKVClient {
 
         let mut ctr = self.ctr.lock();
         if *ctr != 0 {
-            //println!("cb_ctr: {:?}", *ctr);
-            //println!("");
+            println!("cb_ctr: {:?}", *ctr);
+            println!("");
             *ctr -= 1;
             self.ctr_cv.notify_all();
         }
@@ -309,6 +309,7 @@ impl NoiseKVClient {
             }
             /* Need metadata-mod permissions (via perm-backpointer) */
             Operation::SetGroup(group_id, group_val) => {
+                // FIXME think more about what kind of check is useful
                 //if !self
                 //    .device
                 //    .read()
@@ -2011,6 +2012,104 @@ mod tests {
     */
 
     #[tokio::test]
+    async fn test_set_data() {
+        let mut client_0 =
+            NoiseKVClient::new(None, None, false, Some(3), None).await;
+        client_0.create_standalone_device();
+
+        let data_type = "type".to_string();
+        let data_id = crate::metadata::generate_uuid();
+        let json_val = r#"{ data: true }"#.to_string();
+
+        println!("");
+        println!("BEFORE SETTING DATA");
+        println!("");
+
+        println!("client_0.idkey: {:?}", client_0.idkey());
+        println!("client_0.linked_name: {:?}", client_0.linked_name());
+        println!(
+            "client_0.perms: {:?}",
+            client_0
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .read()
+                .get_all_perms()
+        );
+        let groups_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_all_groups()
+            .clone();
+        println!("client_0.groups:");
+        for group in groups_0 {
+            println!("--{:?}", group);
+        }
+        println!(
+            "client_0.data: {:?}",
+            client_0
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .data_store
+                .read()
+                .get_all_data()
+        );
+
+        println!("");
+        println!("SETTING DATA");
+        println!("");
+
+        let res = client_0
+            .set_data(
+                data_id.clone(),
+                data_type.clone(),
+                json_val.clone(),
+                None,
+            )
+            .await;
+        if res.is_err() {
+            panic!("send failed");
+        }
+
+        loop {
+            let ctr = client_0.ctr.lock();
+            println!("ctr_0 (test): {:?}", *ctr);
+            if *ctr != 0 {
+                let _ = client_0.ctr_cv.wait(ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        let data_val = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .data_store
+            .read()
+            .get_data(&data_id)
+            .unwrap()
+            .clone();
+
+        println!("data_val: {:?}", data_val.clone());
+
+        assert_eq!(*data_val.data_id(), data_id.clone());
+        assert_eq!(*data_val.data_type(), data_type.clone());
+        assert_eq!(*data_val.data_val(), json_val.clone());
+
+        //let perm_id = data_val.perm_id();
+    }
+
+    #[tokio::test]
     async fn test_add_writers() {
         let mut client_0 =
             NoiseKVClient::new(None, None, false, Some(8), None).await;
@@ -2045,9 +2144,100 @@ mod tests {
             }
         }
 
+        println!("");
+        println!("CONTACTS ADDED");
+        println!("");
+
         let data_type = "type".to_string();
         let data_id = crate::metadata::generate_uuid();
         let json_val = r#"{ data: true }"#.to_string();
+
+        println!("");
+        println!("BEFORE SETTING DATA");
+        println!("");
+
+        println!("client_0.idkey: {:?}", client_0.idkey());
+        println!("client_0.linked_name: {:?}", client_0.linked_name());
+        println!(
+            "client_0.perms: {:?}",
+            client_0
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .read()
+                .get_all_perms()
+        );
+        let groups_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_all_groups()
+            .clone();
+        println!("client_0.groups:");
+        for group in groups_0 {
+            println!("--{:?}", group);
+        }
+        println!(
+            "client_0.data: {:?}",
+            client_0
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .data_store
+                .read()
+                .get_all_data()
+        );
+
+        println!("");
+
+        println!("client_1.idkey: {:?}", client_1.idkey());
+        println!("client_1.linked_name: {:?}", client_1.linked_name());
+        println!(
+            "client_1.perms: {:?}",
+            client_1
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .read()
+                .get_all_perms()
+        );
+        let groups_1 = client_1
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_all_groups()
+            .clone();
+        println!("client_1.groups:");
+        for group in groups_1 {
+            println!("--{:?}", group);
+        }
+        println!(
+            "client_1.data: {:?}",
+            client_1
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .data_store
+                .read()
+                .get_all_data()
+        );
+
+        println!("");
+        println!("SETTING DATA");
+        println!("");
+
         res = client_0
             .set_data(
                 data_id.clone(),
@@ -2060,10 +2250,6 @@ mod tests {
             panic!("send failed");
         }
 
-        println!("");
-        println!("SET DATA");
-        println!("");
-
         loop {
             let ctr = client_0.ctr.lock();
             println!("ctr_0 (test): {:?}", *ctr);
@@ -2073,6 +2259,10 @@ mod tests {
                 break;
             }
         }
+
+        println!("");
+        println!("SET DATA");
+        println!("");
 
         let data_val = client_0
             .device
@@ -2096,11 +2286,6 @@ mod tests {
         println!("");
         println!("");
         println!("ADDING WRITERS");
-
-        println!("client_0.idkey: {:?}", client_0.idkey());
-        println!("client_0.linked_name: {:?}", client_0.linked_name());
-        println!("client_1.idkey: {:?}", client_1.idkey());
-        println!("client_1.linked_name: {:?}", client_1.linked_name());
 
         res = client_0
             .add_writers(

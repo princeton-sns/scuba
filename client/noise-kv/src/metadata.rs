@@ -287,7 +287,7 @@ impl MetadataStore {
                 match self.get_group(existing_group_id) {
                     Some(existing_group) => {
                         for new_member in new_members.iter() {
-                            self.add_child(existing_group_id, new_member);
+                            self.link_groups(existing_group_id, new_member);
                         }
                         // perm_set does not change b/c using existing
                         // group id
@@ -300,16 +300,21 @@ impl MetadataStore {
             }
             None => {
                 // create new group
+                println!("CREATING NEW GROUP");
+                println!("new_members: {:?}", new_members.clone());
                 let new_group = Group::new(
                     group_id_opt,
                     Some(vec![perm_id.to_string()]),
                     false,
-                    Some(Some(new_members)),
+                    Some(Some(new_members.clone())),
                 );
                 self.set_group(
                     new_group.group_id().to_string(),
                     new_group.clone(),
                 );
+                for new_member in new_members {
+                    self.add_parent(&new_member, new_group.group_id());
+                }
 
                 // set perm
                 match new_perm_members {
@@ -408,14 +413,12 @@ impl MetadataStore {
         modifying_group_id: &String,
         to_modify_group_val: Group,
     ) -> bool {
-        println!("all_groups: {:?}", self.get_all_groups());
-        println!("");
         let perm_ids = to_modify_group_val.perm_ids();
-        println!("modifying_group_id: {:?}", modifying_group_id.clone());
         println!(
             "modifying_group_val: {:?}",
             self.get_group(modifying_group_id)
         );
+        // FIXME doesn't exist in store yet
         println!("to_modify_group_val: {:?}", to_modify_group_val.clone());
         for perm_id in perm_ids {
             println!("");

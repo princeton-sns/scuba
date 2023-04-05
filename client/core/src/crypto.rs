@@ -8,7 +8,7 @@ use olm_rs::account::{IdentityKeys, OlmAccount, OneTimeKeys};
 use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
 use parking_lot::Mutex;
 use rand::RngCore;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem;
 
 // TODO sender-key optimization
@@ -24,7 +24,7 @@ pub struct Crypto {
     idkeys: IdentityKeys,
     // Wrap OlmAccount and MessageQueue in Mutex for Send/Sync
     account: Mutex<OlmAccount>,
-    message_queue: Mutex<Vec<String>>,
+    message_queue: Mutex<VecDeque<String>>,
     // Wrap entire HashMap in a Mutex for Send/Sync; this is ok because
     // any time sessions is accessed we have a &mut self - no deadlock
     // risk b/c only one &mut self can be helf at a time, anyway
@@ -45,7 +45,7 @@ impl Crypto {
             turn_encryption_off,
             idkeys,
             account,
-            message_queue: Mutex::new(Vec::new()),
+            message_queue: Mutex::new(VecDeque::new()),
             sessions: Mutex::new(HashMap::new()),
             sessions_cv: Condvar::new(),
             key,
@@ -54,9 +54,9 @@ impl Crypto {
 
     pub fn symmetric_encrypt(
         &self,
-        pt_obj: crate::hash_vectors::CommonPayload,
+        pt_string: String,
     ) -> (Vec<u8>, [u8; 16], [u8; 16]) {
-        let pt = serde_json::to_string(&pt_obj).unwrap().into_bytes();
+        let pt = pt_string.into_bytes();
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
 
@@ -66,10 +66,6 @@ impl Crypto {
 
         let ct = Aes128CbcEnc::new(&self.key.into(), &iv.into())
             .encrypt_padded_vec_mut::<Pkcs7>(&pt);
-
-        println!("OUTGOING");
-        println!("pt: {:?}", pt);
-        println!("ct: {:?}", ct);
 
         (ct, self.key, iv)
     }
@@ -88,16 +84,9 @@ impl Crypto {
             .decrypt_padded_vec_mut::<Pkcs7>(&ct)
             .unwrap();
 
-        println!("INCOMING");
-        println!("ct: {:?}", ct);
-        println!("pt: {:?}", pt);
-
-        // FIXME err when no print ^
-        match std::str::from_utf8(&pt) {
+        match String::from_utf8(pt) {
             Ok(pt_str) => pt_str.to_string(),
-            Err(err) => {
-                panic!("err: {:?}", err);
-            }
+            Err(err) => panic!("err: {:?}", err),
         }
     }
 
@@ -263,7 +252,7 @@ impl Crypto {
         plaintext: &String,
     ) -> (usize, String) {
         if *dst_idkey == self.get_idkey() {
-            self.message_queue.lock().push(plaintext.to_string());
+            self.message_queue.lock().push_front(plaintext.to_string());
             return (1, "".to_string());
         }
         let (c_type, ciphertext) = self
@@ -301,7 +290,7 @@ impl Crypto {
         if *sender == self.get_idkey() {
             // FIXME handle dos attack where client poses as "self" -
             // this unwrap will panic
-            return self.message_queue.lock().pop().unwrap().to_string();
+            return self.message_queue.lock().pop_back().unwrap().to_string();
         }
         let res = self.get_inbound_session(sender, ciphertext, |session| {
             session.decrypt(ciphertext.clone())
@@ -726,8 +715,10 @@ mod tests {
         // TODO add test that stresses adding two sessions at once
     */
 
+    use crate::core::PerRecipientPayload;
     use crate::crypto::Crypto;
-    use crate::hash_vectors::CommonPayload;
+    use crate::hash_vectors::{CommonPayload, ValidationPayload};
+    use crate::server_comm::Batch;
 
     #[test]
     fn test_symmetric_encrypt_and_decrypt() {
@@ -741,12 +732,45 @@ mod tests {
             vec![idkey1.clone(), idkey2.clone()],
             message.clone(),
         );
-        let (ct, key, iv) = crypto1.symmetric_encrypt(cp);
-
-        println!("ct: {:?}", ct);
+        let (ct, key, iv) =
+            crypto1.symmetric_encrypt(CommonPayload::to_string(&cp));
 
         let pt = crypto2.symmetric_decrypt(ct, key, iv);
+        let common_payload = CommonPayload::from_string(pt);
 
-        println!("pt: {:?}", pt);
+        assert_eq!(common_payload.message().to_string(), message);
     }
+
+    //#[tokio::test]
+    //async fn test_complete_encryption_and_decryption() {
+    //    let crypto1 = Crypto::new(false);
+    //    let idkey1 = crypto1.get_idkey();
+    //    let crypto2 = Crypto::new(false);
+    //    let idkey2 = crypto2.get_idkey();
+
+    //    let recipients = vec![idkey1.clone(), idkey2.clone()];
+
+    //    let message = String::from("testingtesting123");
+
+    //    let cp = CommonPayload::new(
+    //        recipients.clone(),
+    //        message.clone(),
+    //    );
+    //    let (ct, key, iv) =
+    // crypto1.symmetric_encrypt(CommonPayload::to_string(&cp));
+
+    //    let mut batch = Batch::new();
+
+    //    let vp1 = ValidationPayload::dummy(recipients.clone(),
+    // message.clone());    let vp2 =
+    // ValidationPayload::dummy(recipients.clone(), message.clone());
+
+    //    let pr1_string = PerRecipientPayload::new_and_to_string(vp1, key,
+    // iv);    let pr2_string =
+    // PerRecipientPayload::new_and_to_string(vp2, key, iv);
+
+    //    //let (ctype1, pr1_ct) = crypto1.encrypt(
+    //    //
+    //    //).await;
+    //}
 }

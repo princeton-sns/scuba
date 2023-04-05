@@ -1859,11 +1859,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_writers() {
-        // FIXME encrypt
         let mut client_0 =
-            NoiseKVClient::new(None, None, true, Some(7), None).await;
+            NoiseKVClient::new(None, None, false, Some(7), None).await;
         let mut client_1 =
-            NoiseKVClient::new(None, None, true, Some(5), None).await;
+            NoiseKVClient::new(None, None, false, Some(5), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -1877,7 +1876,6 @@ mod tests {
             let ctr = client_0.ctr.lock();
             println!("ctr_0 (test): {:?}", *ctr);
             if *ctr != 6 {
-                // FIXME
                 let _ = client_0.ctr_cv.wait(ctr).await;
             } else {
                 break;
@@ -1913,7 +1911,6 @@ mod tests {
             let ctr = client_0.ctr.lock();
             println!("ctr_0 (test): {:?}", *ctr);
             if *ctr != 4 {
-                // FIXME
                 let _ = client_0.ctr_cv.wait(ctr).await;
             } else {
                 break;
@@ -1962,7 +1959,6 @@ mod tests {
             let ctr = client_0.ctr.lock();
             println!("ctr_0 (test): {:?}", *ctr);
             if *ctr != 0 {
-                // FIXME
                 let _ = client_0.ctr_cv.wait(ctr).await;
             } else {
                 break;
@@ -2062,11 +2058,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_readers() {
-        // FIXME encrypt
         let mut client_0 =
-            NoiseKVClient::new(None, None, true, Some(9), None).await;
+            NoiseKVClient::new(None, None, false, Some(9), None).await;
         let mut client_1 =
-            NoiseKVClient::new(None, None, true, Some(7), None).await;
+            NoiseKVClient::new(None, None, false, Some(7), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();

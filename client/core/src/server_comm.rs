@@ -243,11 +243,24 @@ impl<C: CoreClient> ServerComm<C> {
         &self,
         dst_idkey: &String,
     ) -> Result<OtkeyResponse> {
-        let mut url = self.base_url.join("/devices/otkey").expect("");
-        url.set_query(Some(
-            &vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
-        ));
-        self.client.get(url).send().await?.json().await
+	use tokio::time::{sleep, Duration};
+
+	let mut retry_count = 0;
+
+	loop {
+            let mut url = self.base_url.join("/devices/otkey").expect("");
+            url.set_query(Some(
+		&vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
+            ));
+            let res = self.client.get(url).send().await?;
+	    if res.status().is_success() || retry_count >= 3 {
+		return res.json().await;
+	    } else {
+		retry_count += 1;
+		println!("Failed to fetch otkey for client_id \"\", retrying in 1 sec...");
+		sleep(Duration::from_secs(1)).await;
+	    }
+	}
     }
 
     pub async fn delete_messages_from_server(

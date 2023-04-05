@@ -26,7 +26,7 @@ impl LightswitchApp {
             //Some("8080"),
             // FIXME something isn't working anymore w the sns server
             // specifically
-            true, None, None, //Some(1),
+            false, None, None, //Some(1),
         )
         .await;
         Self { client }

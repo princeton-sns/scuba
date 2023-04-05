@@ -2012,11 +2012,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_writers() {
-        // FIXME encrypt
         let mut client_0 =
-            NoiseKVClient::new(None, None, true, Some(8), None).await;
+            NoiseKVClient::new(None, None, false, Some(8), None).await;
         let mut client_1 =
-            NoiseKVClient::new(None, None, true, Some(5), None).await;
+            NoiseKVClient::new(None, None, false, Some(5), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -2216,11 +2215,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_readers() {
-        // FIXME encrypt
         let mut client_0 =
-            NoiseKVClient::new(None, None, true, Some(10), None).await;
+            NoiseKVClient::new(None, None, false, Some(10), None).await;
         let mut client_1 =
-            NoiseKVClient::new(None, None, true, Some(7), None).await;
+            NoiseKVClient::new(None, None, false, Some(7), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::data::{DataStore, NoiseData};
-use crate::metadata::{Group, MetadataStore, PermissionSet};
+use crate::metadata::{Group, MetadataStore, PermType, PermissionSet};
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -33,27 +33,36 @@ impl<T: NoiseData> Device<T> {
             linked_name_arg.unwrap_or(crate::metadata::generate_uuid());
         let mut meta_store = MetadataStore::new();
 
+        // set linked_group permissions set
+        let linked_perm_set = PermissionSet::new(None, None, None, None);
+        meta_store.set_perm(
+            linked_perm_set.perm_id().to_string(),
+            linked_perm_set.clone(),
+        );
+
         // set linked group
         meta_store.set_group(
             linked_name.clone(),
-            Group::new(Some(linked_name.clone()), false, true),
+            Group::new(
+                Some(linked_name.clone()),
+                Some(vec![linked_perm_set.perm_id().to_string()]),
+                false,
+                Some(None),
+            ),
         );
         // set device group
         meta_store.set_group(
             idkey.clone(),
-            Group::new(Some(idkey.clone()), false, false),
+            Group::new(Some(idkey.clone()), None, false, None),
         );
+        // link linked and device groups
         meta_store.link_groups(&linked_name, &idkey);
 
-        // set permissions
-        meta_store.set_perm(
-            linked_name.clone(),
-            PermissionSet::new(
-                Some(linked_name.clone()),
-                linked_name.clone(),
-                None,
-                None,
-            ),
+        // add linked_group as owner in permissions set
+        meta_store.add_permissions(
+            linked_perm_set.perm_id(),
+            None,
+            PermType::Owners(vec![linked_name.clone()]),
         );
 
         Self {
@@ -96,6 +105,10 @@ impl<T: NoiseData> Device<T> {
 
     // TODO use when linking a pre-existing device to another set of
     // devices
+    pub fn get_pending_link_idkey(&self) -> Option<String> {
+        self.pending_link_idkey.read().clone()
+    }
+
     fn set_pending_link_idkey(&self, idkey: String) {
         *self.pending_link_idkey.write() = Some(idkey);
     }

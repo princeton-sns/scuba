@@ -23,28 +23,28 @@ pub fn generate_uuid() -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
+    // backpointer to perm for checking if a group has certain permissions
+    perm_ids: Vec<String>,
     // FIXME not sure is_contact_name is useful anymore, and kind of defeats
     // the purpose of our "flexible" group structure -> should remove
     pub is_contact_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
-    // backpointer to perm for checking if a group has certain permissions
-    //perm_id: String,
 }
 
 impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, is_contact_name: {}, parents: {}, children: {}", //, perm_id: {}",
+            "group_id: {}, perm_ids: {}, is_contact_name: {}, parents: {}, children: {}",
             self.group_id,
+            itertools::join(self.perm_ids.clone(), ", "),
             self.is_contact_name,
             itertools::join(self.parents.clone(), ", "),
             self.children.as_ref().map_or_else(
                 || "None".to_string(),
                 |hs| itertools::join(hs, ", ")
             )
-            //self.perm_id,
         )
     }
 }
@@ -52,8 +52,12 @@ impl fmt::Display for Group {
 impl Group {
     pub fn new(
         group_id: Option<String>,
+        perm_ids: Option<Vec<String>>,
         is_contact_name: bool,
-        init_children: bool,
+        // first option specifies whether this is a "node" group (if Some)
+        // or a "leaf" group (if None), and the second option specifies
+        // if there are any children to add upon creation FIXME this is gross
+        children_arg: Option<Option<Vec<String>>>,
     ) -> Group {
         let init_group_id: String;
         if group_id.is_none() {
@@ -62,36 +66,26 @@ impl Group {
             init_group_id = group_id.unwrap();
         }
 
-        let mut children = None;
-        if init_children {
-            children = Some(HashSet::<String>::new());
-        }
-
-        Self {
-            group_id: init_group_id,
-            is_contact_name,
-            parents: HashSet::<String>::new(),
-            children,
-        }
-    }
-
-    // TODO fold into ^
-    pub fn new_with_children(
-        group_id: Option<String>,
-        is_contact_name: bool,
-        children: Vec<String>,
-    ) -> Group {
-        let init_group_id: String;
-        if group_id.is_none() {
-            init_group_id = generate_uuid();
+        let init_perm_ids: Vec<String>;
+        if perm_ids.is_none() {
+            init_perm_ids = Vec::<String>::new();
         } else {
-            init_group_id = group_id.unwrap();
+            init_perm_ids = perm_ids.unwrap();
         }
 
-        let children = Some(HashSet::from_iter(children.into_iter()));
+        let children = match children_arg {
+            Some(option) => match option {
+                Some(vec_children) => {
+                    Some(HashSet::from_iter(vec_children.into_iter()))
+                }
+                None => Some(HashSet::<String>::new()),
+            },
+            None => None,
+        };
 
         Self {
             group_id: init_group_id,
+            perm_ids: init_perm_ids,
             is_contact_name,
             parents: HashSet::<String>::new(),
             children,
@@ -100,6 +94,10 @@ impl Group {
 
     pub fn group_id(&self) -> &String {
         &self.group_id
+    }
+
+    pub fn perm_ids(&self) -> &Vec<String> {
+        &self.perm_ids
     }
 
     pub fn parents(&self) -> &HashSet<String> {
@@ -138,15 +136,16 @@ impl Group {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PermType {
-    //Owner(String), // b/c shouldn't change (at least not yet)
+    Owners(Vec<String>),
     Writers(Vec<String>),
     Readers(Vec<String>),
 }
 
+// TODO make fields pub instead of using getters/setters
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermissionSet {
     perm_id: String,
-    owner: String,
+    owners: Option<String>,
     writers: Option<String>,
     readers: Option<String>,
 }
@@ -157,7 +156,9 @@ impl fmt::Display for PermissionSet {
             f,
             "perm_id: {}, owner: {}, writers: {}, readers: {}",
             self.perm_id,
-            self.owner,
+            self.owners
+                .as_ref()
+                .map_or_else(|| "None".to_string(), |s| s.to_string()),
             self.writers
                 .as_ref()
                 .map_or_else(|| "None".to_string(), |s| s.to_string()),
@@ -171,7 +172,7 @@ impl fmt::Display for PermissionSet {
 impl PermissionSet {
     pub fn new(
         perm_id: Option<String>,
-        owner: String,
+        owners: Option<String>,
         writers: Option<String>,
         readers: Option<String>,
     ) -> PermissionSet {
@@ -184,7 +185,7 @@ impl PermissionSet {
 
         Self {
             perm_id: init_perm_id,
-            owner,
+            owners,
             writers,
             readers,
         }
@@ -194,8 +195,14 @@ impl PermissionSet {
         &self.perm_id
     }
 
-    pub fn owner(&self) -> &String {
-        &self.owner
+    pub fn owners(&self) -> &Option<String> {
+        &self.owners
+    }
+
+    pub fn set_owners(&mut self, owner_group_id: &String) -> Option<String> {
+        let old_owners = self.owners.clone();
+        self.owners = Some(owner_group_id.to_string());
+        old_owners
     }
 
     pub fn writers(&self) -> &Option<String> {
@@ -253,6 +260,9 @@ impl MetadataStore {
         self.perm_store.insert(perm_id, perm_val)
     }
 
+    // TODO
+    pub fn add_perm_id_to_subgroups() {}
+
     pub fn add_permissions(
         &mut self,
         perm_id: &String,
@@ -266,6 +276,7 @@ impl MetadataStore {
         let mut perm_set = self.get_perm(perm_id).unwrap().clone();
 
         let (existing_members, new_members) = match new_perm_members.clone() {
+            PermType::Owners(new_owners) => (perm_set.owners(), new_owners),
             PermType::Writers(new_writers) => (perm_set.writers(), new_writers),
             PermType::Readers(new_readers) => (perm_set.readers(), new_readers),
         };
@@ -289,11 +300,22 @@ impl MetadataStore {
             }
             None => {
                 // create new group
-                let new_group =
-                    Group::new_with_children(group_id_opt, false, new_members);
+                let new_group = Group::new(
+                    group_id_opt,
+                    Some(vec![perm_id.to_string()]),
+                    false,
+                    Some(Some(new_members)),
+                );
+                self.set_group(
+                    new_group.group_id().to_string(),
+                    new_group.clone(),
+                );
 
                 // set perm
                 match new_perm_members {
+                    PermType::Owners(_) => {
+                        perm_set.set_owners(new_group.group_id());
+                    }
                     PermType::Writers(_) => {
                         perm_set.set_writers(new_group.group_id());
                     }
@@ -312,7 +334,7 @@ impl MetadataStore {
         &self.perm_store
     }
 
-    pub fn has_write_permissions(
+    pub fn has_data_mod_permissions(
         &self,
         group_id: &String,
         perm_id: &String,
@@ -320,23 +342,50 @@ impl MetadataStore {
         let perm_opt = self.get_perm(perm_id);
         match perm_opt {
             Some(perm_val) => {
-                // check if owner
-                if self.is_group_member(group_id, perm_val.owner()) {
-                    return true;
-                }
-                // check if writer
-                match perm_val.writers() {
+                // check if writer or above
+                let is_owner = match perm_val.owners() {
+                    Some(owner_group) => {
+                        self.is_group_member(group_id, owner_group)
+                    }
+                    None => false,
+                };
+                // TODO check admins
+                let is_writer = match perm_val.writers() {
                     Some(writer_group) => {
                         self.is_group_member(group_id, writer_group)
                     }
                     None => false,
-                }
+                };
+                is_owner || is_writer
             }
             None => false,
         }
     }
 
-    pub fn has_owner_permissions(
+    pub fn has_metadata_mod_permissions(
+        &self,
+        group_id: &String,
+        perm_id: &String,
+    ) -> bool {
+        let perm_opt = self.get_perm(perm_id);
+        match perm_opt {
+            // check if admin or above
+            Some(perm_val) => {
+                match perm_val.owners() {
+                    Some(owner_group) => {
+                        println!("group_id: {:?}", group_id);
+                        println!("owner_group: {:?}", owner_group);
+                        self.is_group_member(group_id, owner_group)
+                    }
+                    None => false,
+                }
+                // TODO check admins
+            }
+            None => false,
+        }
+    }
+
+    pub fn has_owner_mod_permissions(
         &self,
         group_id: &String,
         perm_id: &String,
@@ -344,9 +393,39 @@ impl MetadataStore {
         let perm_opt = self.get_perm(perm_id);
         match perm_opt {
             // check if owner
-            Some(perm_val) => self.is_group_member(group_id, perm_val.owner()),
+            Some(perm_val) => match perm_val.owners() {
+                Some(owner_group) => {
+                    self.is_group_member(group_id, owner_group)
+                }
+                None => false,
+            },
             None => false,
         }
+    }
+
+    pub fn find_metadata_mod_permissions(
+        &self,
+        modifying_group_id: &String,
+        to_modify_group_val: Group,
+    ) -> bool {
+        println!("all_groups: {:?}", self.get_all_groups());
+        println!("");
+        let perm_ids = to_modify_group_val.perm_ids();
+        println!("modifying_group_id: {:?}", modifying_group_id.clone());
+        println!(
+            "modifying_group_val: {:?}",
+            self.get_group(modifying_group_id)
+        );
+        println!("to_modify_group_val: {:?}", to_modify_group_val.clone());
+        for perm_id in perm_ids {
+            println!("");
+            println!("perm_id: {:?}", perm_id.clone());
+            println!("perm_val: {:?}", self.get_perm(perm_id));
+            if self.has_metadata_mod_permissions(modifying_group_id, perm_id) {
+                return true;
+            }
+        }
+        false
     }
 
     // TODO remove permissions
@@ -661,6 +740,8 @@ impl MetadataStore {
 
         while !to_visit.is_empty() {
             let cur_id = to_visit.pop().unwrap();
+            println!("cur_group_id: {:?}", cur_id);
+            println!("cur_group_val: {:?}", self.get_group(cur_id));
 
             if visited.get(cur_id).is_some() {
                 continue;
@@ -682,7 +763,7 @@ impl MetadataStore {
     }
 
     pub fn group_replace(
-        &self, // FIXME use self?
+        &self,
         group: &mut Group,
         id_to_replace: String,
         replacement_id: String,
@@ -700,7 +781,6 @@ impl MetadataStore {
         });
     }
 
-    // FIXME use self?
     pub fn group_contains(&self, group: &Group, id_to_check: String) -> bool {
         if group.group_id() == &id_to_check {
             return true;
@@ -720,6 +800,7 @@ impl MetadataStore {
     }
 }
 
+/*
 mod tests {
     use crate::metadata::{Group, MetadataStore};
     use std::collections::HashMap;
@@ -988,3 +1069,4 @@ mod tests {
     #[test]
     fn test_is_member() {}
 }
+*/

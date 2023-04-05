@@ -9,9 +9,146 @@ use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
 
+pub mod attestation {
+    use super::EncryptedInboxMessage;
 
-// Bootstrap server
+    #[derive(Clone, Debug)]
+    // Format:
+    // - u64: first_epoch
+    // - u64: next_epoch
+    // - [u8; 32]: messages_digest
+    pub struct AttestationData([u8; 48]);
+
+    impl AttestationData {
+        pub fn from_inbox_epochs<'a>(
+            first_epoch: u64,
+            next_epoch: u64,
+            messages: impl Iterator<Item = &'a EncryptedInboxMessage>,
+        ) -> AttestationData {
+            use sha2::{Digest, Sha256};
+
+            let mut message_hasher = Sha256::new();
+            let mut attestation_messages_hasher = Sha256::new();
+
+            for message in messages {
+                for r in message.recipients.iter() {
+                    message_hasher.update(r.as_bytes());
+                    message_hasher.update(b";");
+                }
+                let mut recipients_digest = [0; 32];
+                message_hasher
+                    .finalize_into_reset((&mut recipients_digest).into());
+                attestation_messages_hasher.update(&recipients_digest);
+
+                let mut payload_digest = [0; 32];
+                message_hasher.update(message.enc_common.0.as_bytes());
+                message_hasher
+                    .finalize_into_reset((&mut payload_digest).into());
+                attestation_messages_hasher.update(&recipients_digest);
+            }
+
+            let mut attestation_messages_hash = [0; 32];
+            attestation_messages_hasher
+                .finalize_into((&mut attestation_messages_hash).into());
+
+            let mut attestation_data = [0; 48];
+            attestation_data[0..8]
+                .copy_from_slice(&u64::to_le_bytes(first_epoch));
+            attestation_data[8..16]
+                .copy_from_slice(&u64::to_le_bytes(next_epoch));
+            attestation_data[16..].copy_from_slice(&attestation_messages_hash);
+            AttestationData(attestation_data)
+        }
+
+        pub fn attest(
+            &self,
+            attestation_key: &ed25519_dalek::Keypair,
+        ) -> Attestation {
+            use ed25519_dalek::Signer;
+            let signature = attestation_key.sign(&self.0);
+
+            let mut attestation = [0; 48 + 64];
+            attestation[0..48].copy_from_slice(&self.0);
+            attestation[48..].copy_from_slice(&signature.to_bytes());
+            Attestation(attestation)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Attestation([u8; 48 + 64]);
+
+    impl Attestation {
+        pub fn into_arr(self) -> [u8; 48 + 64] {
+            self.0
+        }
+
+        pub fn from_arr(arr: [u8; 48 + 64]) -> Self {
+            Attestation(arr)
+        }
+
+        pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+            if bytes.len() != 48 + 64 {
+                Err(())
+            } else {
+                let mut buf = [0; 48 + 64];
+                buf.copy_from_slice(bytes);
+                Ok(Attestation(buf))
+            }
+        }
+
+        pub fn decode_base64(s: &str) -> Result<Self, ()> {
+            use base64::{engine::general_purpose, Engine as _};
+
+            if let Ok(vec) = general_purpose::STANDARD_NO_PAD.decode(s) {
+                if vec.len() != 48 + 64 {
+                    Err(())
+                } else {
+                    let mut buf = [0; 48 + 64];
+                    buf.copy_from_slice(&vec);
+                    Ok(Attestation(buf))
+                }
+            } else {
+                Err(())
+            }
+        }
+
+        pub fn encode_base64(&self) -> String {
+            use base64::{engine::general_purpose, Engine as _};
+            general_purpose::STANDARD_NO_PAD.encode(&self.0)
+        }
+
+        pub fn first_epoch(&self) -> u64 {
+            u64::from_le_bytes([
+                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4],
+                self.0[5], self.0[6], self.0[7],
+            ])
+        }
+
+        pub fn next_epoch(&self) -> u64 {
+            u64::from_le_bytes([
+                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12],
+                self.0[13], self.0[14], self.0[15],
+            ])
+        }
+
+        pub fn verify(
+            &self,
+            data: &AttestationData,
+            public_key: &ed25519_dalek::PublicKey,
+        ) -> bool {
+            use ed25519_dalek::Verifier;
+
+            let signature =
+                ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
+            data.0 == self.0[0..48]
+                && public_key.verify(&data.0, &signature).is_ok()
+        }
+    }
+}
+
 const BOOTSTRAP_SERVER_URL: &'static str = "http://localhost:8081";
+const SERVER_ATTESTATION_PUBKEY: &'static str =
+    "l07hNTVLaGBKesJDe1QT1ebxtKgh+nZnrGaeud5E99k";
 
 #[derive(Debug)]
 pub enum Event {
@@ -27,13 +164,13 @@ pub struct EncryptedCommonPayload(pub String);
 
 impl EncryptedCommonPayload {
     pub fn from_bytes(bytes: &[u8]) -> Self {
-	use base64::{Engine as _, engine::general_purpose};
-	EncryptedCommonPayload(general_purpose::STANDARD_NO_PAD.encode(bytes))
+        use base64::{engine::general_purpose, Engine as _};
+        EncryptedCommonPayload(general_purpose::STANDARD_NO_PAD.encode(bytes))
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-	use base64::{Engine as _, engine::general_purpose};
-	general_purpose::STANDARD_NO_PAD.decode(&self.0).unwrap()
+        use base64::{engine::general_purpose, Engine as _};
+        general_purpose::STANDARD_NO_PAD.decode(&self.0).unwrap()
     }
 }
 
@@ -58,8 +195,9 @@ pub struct EncryptedInboxMessage {
     // of the list of recipients in the common payload.
     //
     // We need to make sure of the following:
-    // - the sending client can't lie about the list of recipients of a message.
-    //   We achieve that by having the server provide us the list of recipients.
+    // - the sending client can't lie about the list of recipients of a
+    //   message. We achieve that by having the server provide us the list of
+    //   recipients.
     // - the server can't lie about the list of recipients to a subset of
     //   clients. We achieve that by including a hash of the list of recipients
     //   in the common payload.
@@ -80,13 +218,11 @@ pub struct EpochMessageBatch {
     pub attestation: String,
 }
 
-
 impl EncryptedInboxMessage {
     pub fn from_string(msg: String) -> Self {
-	serde_json::from_str(msg.as_str()).unwrap()
+        serde_json::from_str(msg.as_str()).unwrap()
     }
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,9 +265,9 @@ impl<C: CoreClient> ServerComm<C> {
         idkey: String,
         core_option: Option<Arc<Core<C>>>,
     ) -> Self {
-	// Resolve our home-shard base-url by contacting the bootstrap shard:
-	let client = reqwest::Client::new();
-	let base_url = Url::parse(
+        // Resolve our home-shard base-url by contacting the bootstrap shard:
+        let client = reqwest::Client::new();
+        let base_url = Url::parse(
 	    &client
 		.get(format!("{}/shard", BOOTSTRAP_SERVER_URL))
 		.header(
@@ -145,6 +281,17 @@ impl<C: CoreClient> ServerComm<C> {
 		.await
 		.expect("Failed to retrieve response from the bootstrap server shard")
 	).expect("Failed to construct home-shard base url from response");
+
+        let server_attestation_pubkey = {
+            use base64::{engine::general_purpose, Engine as _};
+
+            ed25519_dalek::PublicKey::from_bytes(
+                &general_purpose::STANDARD_NO_PAD
+                    .decode(SERVER_ATTESTATION_PUBKEY)
+                    .unwrap(),
+            )
+            .unwrap()
+        };
 
         let task_base_url = base_url.clone();
         let task_idkey = idkey.clone();
@@ -166,6 +313,7 @@ impl<C: CoreClient> ServerComm<C> {
             )
             .stream();
 
+            let mut next_epoch = 0;
             loop {
                 //println!("IN LOOP");
                 match listener.as_mut().try_next().await {
@@ -178,45 +326,72 @@ impl<C: CoreClient> ServerComm<C> {
                     Ok(None) => {
                         //println!("got NONE from server")
                     }
-                    Ok(Some(event)) => match event {
-                        SSE::Comment(_) => {}
-                        SSE::Event(event) => match event.event_type.as_str() {
-                            "otkey" => {
-                                println!(
+                    Ok(Some(event)) => {
+                        match event {
+                            SSE::Comment(_) => {}
+                            SSE::Event(event) => {
+                                match event.event_type.as_str() {
+                                    "otkey" => {
+                                        println!(
                                    "got OTKEY event from server - {:?}",
                                    task_idkey
                                 );
-                                if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Otkey))
-                                        .await;
-                                }
-                            }
-                            "msg" => {
-                                //println!("got MSG event from server");
-                                if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Msg(
+                                        if let Some(ref core) = core_option {
+                                            core.server_comm_callback(Ok(
+                                                Event::Otkey,
+                                            ))
+                                            .await;
+                                        }
+                                    }
+                                    "msg" => {
+                                        //println!("got MSG event from
+                                        // server");
+                                        if let Some(ref core) = core_option {
+                                            core.server_comm_callback(Ok(Event::Msg(
                                         EncryptedInboxMessage::from_string(event.data),
                                     )))
                                     .await;
+                                        }
+                                    }
+                                    "epoch_message_batch" => {
+                                        // println!("got EpochMessageBatch event
+                                        // from server");
+                                        if let Some(ref core) = core_option {
+                                            let emb: EpochMessageBatch =
+                                                serde_json::from_str(
+                                                    &event.data,
+                                                )
+                                                .unwrap();
+                                            // TODO: handle lost epochs
+                                            println!("EpochMessageBatch for epoch {}", emb.epoch_id);
+
+                                            let attestation = attestation::Attestation::decode_base64(&emb.attestation).expect("Failed to parse attestation payload");
+                                            assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
+                                            assert!(attestation.next_epoch() == emb.epoch_id + 1, "Attestation claims to cover unreceived epochs");
+                                            let attestation_data =
+					attestation::AttestationData::from_inbox_epochs(
+					    attestation.first_epoch(), attestation.next_epoch(),
+					    emb.messages.iter());
+                                            assert!(attestation.verify(&attestation_data, &server_attestation_pubkey), "Attestation verification failed");
+                                            next_epoch =
+                                                attestation.next_epoch();
+
+                                            for msg in emb.messages {
+                                                core.server_comm_callback(Ok(
+                                                    Event::Msg(msg),
+                                                ))
+                                                .await;
+                                            }
+                                        }
+                                    }
+                                    _ => panic!(
+                                        "Got unexpected SSE event: {:?}",
+                                        event
+                                    ),
                                 }
                             }
-			    "epoch_message_batch" => {
-                                // println!("got EpochMessageBatch event from server");
-                                if let Some(ref core) = core_option {
-				    let emb: EpochMessageBatch = serde_json::from_str(&event.data).unwrap();
-				    // TODO: handle lost epochs
-				    println!("EpochMessageBatch for epoch {}, attestation: {}", emb.epoch_id, emb.attestation);
-				    for msg in emb.messages {
-					core.server_comm_callback(Ok(Event::Msg(
-                                            msg,
-					)))
-					    .await;
-				    }
-                                }
-                            }
-                            _ => panic!("Got unexpected SSE event: {:?}", event),
-                        },
-                    },
+                        }
+                    }
                 }
             }
         });
@@ -230,7 +405,10 @@ impl<C: CoreClient> ServerComm<C> {
         }
     }
 
-    pub async fn send_message(&self, batch: &EncryptedOutboxMessage) -> Result<Response> {
+    pub async fn send_message(
+        &self,
+        batch: &EncryptedOutboxMessage,
+    ) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message").expect("").as_str())
             .header("Content-Type", "application/json")
@@ -244,24 +422,25 @@ impl<C: CoreClient> ServerComm<C> {
         &self,
         dst_idkey: &String,
     ) -> Result<OtkeyResponse> {
-	use tokio::time::{sleep, Duration};
+        use tokio::time::{sleep, Duration};
 
-	let mut retry_count = 0;
+        let mut retry_count = 0;
+        sleep(Duration::from_millis(10)).await;
 
-	loop {
+        loop {
             let mut url = self.base_url.join("/devices/otkey").expect("");
             url.set_query(Some(
-		&vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
+                &vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
             ));
             let res = self.client.get(url).send().await?;
-	    if res.status().is_success() || retry_count >= 3 {
-		return res.json().await;
-	    } else {
-		retry_count += 1;
-		println!("Failed to fetch otkey for client_id \"\", retrying in 1 sec...");
-		sleep(Duration::from_secs(1)).await;
-	    }
-	}
+            if res.status().is_success() || retry_count >= 3 {
+                return res.json().await;
+            } else {
+                retry_count += 1;
+                println!("Failed to fetch otkey for client_id \"\", retrying in 1 sec...");
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
     }
 
     pub async fn delete_messages_from_server(

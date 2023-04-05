@@ -45,7 +45,7 @@ impl<T: NoiseData> Device<T> {
             linked_name.clone(),
             Group::new(
                 Some(linked_name.clone()),
-                Some(linked_perm_set.perm_id().to_string()),
+                Some(vec![linked_perm_set.perm_id().to_string()]),
                 false,
                 Some(None),
             ),

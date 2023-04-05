@@ -309,20 +309,20 @@ impl NoiseKVClient {
             }
             /* Need metadata-mod permissions (via perm-backpointer) */
             Operation::SetGroup(group_id, group_val) => {
-                //println!("group_val: {:?}", group_val);
-                //let mut cur_group_val = group_val;
-                //while cur_group_val.perm_id().is_none() {
-                //    // multiple parents...
-                //    cur_group_val = self
-                //        .device
-                //        .read()
-                //        .as_ref()
-                //        .unwrap()
-                //        .meta_store
-                //        .read()
-                //        .get_group
+                //if !self
+                //    .device
+                //    .read()
+                //    .as_ref()
+                //    .unwrap()
+                //    .meta_store
+                //    .read()
+                //    .find_metadata_mod_permissions(sender, group_val.clone())
+                //{
+                //    return Err(Error::InsufficientPermissions(
+                //        sender.to_string(),
+                //        group_id.to_string(), // FIXME use diff error
+                //    ));
                 //}
-                // FIXME
                 Ok(())
             }
             Operation::SetGroups(groups) => Ok(()),
@@ -1013,7 +1013,7 @@ impl NoiseKVClient {
                 // create owner group that includes self.linked_name()
                 let group_val = Group::new(
                     None,
-                    Some(perm_id.to_string()),
+                    Some(vec![perm_id.to_string()]),
                     false,
                     Some(Some(vec![self.linked_name().to_string()])),
                 );
@@ -1325,7 +1325,7 @@ impl NoiseKVClient {
                         | PermType::Readers(new_members_vec) => {
                             let new_group = Group::new(
                                 Some(new_group_id.clone()),
-                                Some(perm_val.perm_id().to_string()),
+                                Some(vec![perm_val.perm_id().to_string()]),
                                 false,
                                 Some(Some(new_members_vec.clone())),
                             );

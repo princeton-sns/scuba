@@ -24,7 +24,7 @@ pub fn generate_uuid() -> String {
 pub struct Group {
     group_id: String,
     // backpointer to perm for checking if a group has certain permissions
-    perm_id: Option<String>,
+    perm_ids: Vec<String>,
     // FIXME not sure is_contact_name is useful anymore, and kind of defeats
     // the purpose of our "flexible" group structure -> should remove
     pub is_contact_name: bool,
@@ -36,12 +36,9 @@ impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, perm_id: {}, is_contact_name: {}, parents: {}, children: {}",
+            "group_id: {}, perm_ids: {}, is_contact_name: {}, parents: {}, children: {}",
             self.group_id,
-            self.perm_id.as_ref().map_or_else(
-                || "None".to_string(),
-                |id| id.clone()
-            ),
+            itertools::join(self.perm_ids.clone(), ", "),
             self.is_contact_name,
             itertools::join(self.parents.clone(), ", "),
             self.children.as_ref().map_or_else(
@@ -55,7 +52,7 @@ impl fmt::Display for Group {
 impl Group {
     pub fn new(
         group_id: Option<String>,
-        perm_id: Option<String>,
+        perm_ids: Option<Vec<String>>,
         is_contact_name: bool,
         // first option specifies whether this is a "node" group (if Some)
         // or a "leaf" group (if None), and the second option specifies
@@ -67,6 +64,13 @@ impl Group {
             init_group_id = generate_uuid();
         } else {
             init_group_id = group_id.unwrap();
+        }
+
+        let init_perm_ids: Vec<String>;
+        if perm_ids.is_none() {
+            init_perm_ids = Vec::<String>::new();
+        } else {
+            init_perm_ids = perm_ids.unwrap();
         }
 
         let children = match children_arg {
@@ -81,7 +85,7 @@ impl Group {
 
         Self {
             group_id: init_group_id,
-            perm_id,
+            perm_ids: init_perm_ids,
             is_contact_name,
             parents: HashSet::<String>::new(),
             children,
@@ -92,8 +96,8 @@ impl Group {
         &self.group_id
     }
 
-    pub fn perm_id(&self) -> &Option<String> {
-        &self.perm_id
+    pub fn perm_ids(&self) -> &Vec<String> {
+        &self.perm_ids
     }
 
     pub fn parents(&self) -> &HashSet<String> {
@@ -256,6 +260,9 @@ impl MetadataStore {
         self.perm_store.insert(perm_id, perm_val)
     }
 
+    // TODO
+    pub fn add_perm_id_to_subgroups() {}
+
     pub fn add_permissions(
         &mut self,
         perm_id: &String,
@@ -295,7 +302,7 @@ impl MetadataStore {
                 // create new group
                 let new_group = Group::new(
                     group_id_opt,
-                    Some(perm_id.to_string()),
+                    Some(vec![perm_id.to_string()]),
                     false,
                     Some(Some(new_members)),
                 );
@@ -366,6 +373,8 @@ impl MetadataStore {
             Some(perm_val) => {
                 match perm_val.owners() {
                     Some(owner_group) => {
+                        println!("group_id: {:?}", group_id);
+                        println!("owner_group: {:?}", owner_group);
                         self.is_group_member(group_id, owner_group)
                     }
                     None => false,
@@ -392,6 +401,31 @@ impl MetadataStore {
             },
             None => false,
         }
+    }
+
+    pub fn find_metadata_mod_permissions(
+        &self,
+        modifying_group_id: &String,
+        to_modify_group_val: Group,
+    ) -> bool {
+        println!("all_groups: {:?}", self.get_all_groups());
+        println!("");
+        let perm_ids = to_modify_group_val.perm_ids();
+        println!("modifying_group_id: {:?}", modifying_group_id.clone());
+        println!(
+            "modifying_group_val: {:?}",
+            self.get_group(modifying_group_id)
+        );
+        println!("to_modify_group_val: {:?}", to_modify_group_val.clone());
+        for perm_id in perm_ids {
+            println!("");
+            println!("perm_id: {:?}", perm_id.clone());
+            println!("perm_val: {:?}", self.get_perm(perm_id));
+            if self.has_metadata_mod_permissions(modifying_group_id, perm_id) {
+                return true;
+            }
+        }
+        false
     }
 
     // TODO remove permissions
@@ -706,6 +740,8 @@ impl MetadataStore {
 
         while !to_visit.is_empty() {
             let cur_id = to_visit.pop().unwrap();
+            println!("cur_group_id: {:?}", cur_id);
+            println!("cur_group_val: {:?}", self.get_group(cur_id));
 
             if visited.get(cur_id).is_some() {
                 continue;

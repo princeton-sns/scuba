@@ -77,6 +77,7 @@ pub struct EncryptedInboxMessage {
 pub struct EpochMessageBatch {
     pub epoch_id: u64,
     pub messages: Vec<EncryptedInboxMessage>,
+    pub attestation: String,
 }
 
 
@@ -204,7 +205,7 @@ impl<C: CoreClient> ServerComm<C> {
                                 if let Some(ref core) = core_option {
 				    let emb: EpochMessageBatch = serde_json::from_str(&event.data).unwrap();
 				    // TODO: handle lost epochs
-				    println!("EpochMessageBatch for epoch {}", emb.epoch_id);
+				    println!("EpochMessageBatch for epoch {}, attestation: {}", emb.epoch_id, emb.attestation);
 				    for msg in emb.messages {
 					core.server_comm_callback(Ok(Event::Msg(
                                             msg,

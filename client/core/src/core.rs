@@ -20,7 +20,7 @@ pub struct PerRecipientPayload {
 }
 
 impl PerRecipientPayload {
-    fn new(
+    pub fn new(
         val_payload: ValidationPayload,
         key: [u8; 16],
         iv: [u8; 16],
@@ -40,13 +40,17 @@ impl PerRecipientPayload {
         self.iv
     }
 
-    fn to_string(
+    pub fn new_and_to_string(
         val_payload: ValidationPayload,
         key: [u8; 16],
         iv: [u8; 16],
     ) -> String {
         serde_json::to_string(&PerRecipientPayload::new(val_payload, key, iv))
             .unwrap()
+    }
+
+    fn to_string(per_recipient_payload: &PerRecipientPayload) -> String {
+        serde_json::to_string(per_recipient_payload).unwrap()
     }
 
     fn from_string(per_recipient_payload: String) -> PerRecipientPayload {
@@ -178,15 +182,16 @@ impl<C: CoreClient> Core<C> {
         //println!("...UNLOCKED SEND...");
 
         // symmetrically encrypt common_payload once
-        let (common_ct, key, iv) =
-            self.crypto.symmetric_encrypt(common_payload.clone());
+        let (common_ct, key, iv) = self
+            .crypto
+            .symmetric_encrypt(CommonPayload::to_string(&common_payload));
 
         let mut batch = Batch::new();
 
         // TODO loop to encrypt key + iv + val_payload per client
         for (idkey, val_payload) in val_payloads {
             let per_recipient_payload =
-                PerRecipientPayload::to_string(val_payload, key, iv);
+                PerRecipientPayload::new_and_to_string(val_payload, key, iv);
 
             let (c_type, per_recipient_ct) = self
                 .crypto

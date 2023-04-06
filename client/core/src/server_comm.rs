@@ -9,131 +9,218 @@ use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
 
-const IP_ADDR: &str = "localhost";
-const PORT_NUM: &str = "8080";
-const HTTP_PREFIX: &str = "http://";
-const COLON: &str = ":";
+pub mod attestation {
+    use super::EncryptedInboxMessage;
 
-#[derive(PartialEq, Debug)]
+    #[derive(Clone, Debug)]
+    // Format:
+    // - u64: first_epoch
+    // - u64: next_epoch
+    // - [u8; 32]: messages_digest
+    pub struct AttestationData([u8; 48]);
+
+    impl AttestationData {
+        pub fn from_inbox_epochs<'a>(
+            first_epoch: u64,
+            next_epoch: u64,
+            messages: impl Iterator<Item = &'a EncryptedInboxMessage>,
+        ) -> AttestationData {
+            use sha2::{Digest, Sha256};
+
+            let mut message_hasher = Sha256::new();
+            let mut attestation_messages_hasher = Sha256::new();
+
+            for message in messages {
+                for r in message.recipients.iter() {
+                    message_hasher.update(r.as_bytes());
+                    message_hasher.update(b";");
+                }
+                let mut recipients_digest = [0; 32];
+                message_hasher
+                    .finalize_into_reset((&mut recipients_digest).into());
+                attestation_messages_hasher.update(&recipients_digest);
+
+                let mut payload_digest = [0; 32];
+                message_hasher.update(message.enc_common.0.as_bytes());
+                message_hasher
+                    .finalize_into_reset((&mut payload_digest).into());
+                attestation_messages_hasher.update(&recipients_digest);
+            }
+
+            let mut attestation_messages_hash = [0; 32];
+            attestation_messages_hasher
+                .finalize_into((&mut attestation_messages_hash).into());
+
+            let mut attestation_data = [0; 48];
+            attestation_data[0..8]
+                .copy_from_slice(&u64::to_le_bytes(first_epoch));
+            attestation_data[8..16]
+                .copy_from_slice(&u64::to_le_bytes(next_epoch));
+            attestation_data[16..].copy_from_slice(&attestation_messages_hash);
+            AttestationData(attestation_data)
+        }
+
+        pub fn attest(
+            &self,
+            attestation_key: &ed25519_dalek::Keypair,
+        ) -> Attestation {
+            use ed25519_dalek::Signer;
+            let signature = attestation_key.sign(&self.0);
+
+            let mut attestation = [0; 48 + 64];
+            attestation[0..48].copy_from_slice(&self.0);
+            attestation[48..].copy_from_slice(&signature.to_bytes());
+            Attestation(attestation)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Attestation([u8; 48 + 64]);
+
+    impl Attestation {
+        pub fn into_arr(self) -> [u8; 48 + 64] {
+            self.0
+        }
+
+        pub fn from_arr(arr: [u8; 48 + 64]) -> Self {
+            Attestation(arr)
+        }
+
+        pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+            if bytes.len() != 48 + 64 {
+                Err(())
+            } else {
+                let mut buf = [0; 48 + 64];
+                buf.copy_from_slice(bytes);
+                Ok(Attestation(buf))
+            }
+        }
+
+        pub fn decode_base64(s: &str) -> Result<Self, ()> {
+            use base64::{engine::general_purpose, Engine as _};
+
+            if let Ok(vec) = general_purpose::STANDARD_NO_PAD.decode(s) {
+                if vec.len() != 48 + 64 {
+                    Err(())
+                } else {
+                    let mut buf = [0; 48 + 64];
+                    buf.copy_from_slice(&vec);
+                    Ok(Attestation(buf))
+                }
+            } else {
+                Err(())
+            }
+        }
+
+        pub fn encode_base64(&self) -> String {
+            use base64::{engine::general_purpose, Engine as _};
+            general_purpose::STANDARD_NO_PAD.encode(&self.0)
+        }
+
+        pub fn first_epoch(&self) -> u64 {
+            u64::from_le_bytes([
+                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4],
+                self.0[5], self.0[6], self.0[7],
+            ])
+        }
+
+        pub fn next_epoch(&self) -> u64 {
+            u64::from_le_bytes([
+                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12],
+                self.0[13], self.0[14], self.0[15],
+            ])
+        }
+
+        pub fn verify(
+            &self,
+            data: &AttestationData,
+            public_key: &ed25519_dalek::PublicKey,
+        ) -> bool {
+            use ed25519_dalek::Verifier;
+
+            let signature =
+                ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
+            data.0 == self.0[0..48]
+                && public_key.verify(&data.0, &signature).is_ok()
+        }
+    }
+}
+
+const BOOTSTRAP_SERVER_URL: &'static str = "http://localhost:8081";
+const SERVER_ATTESTATION_PUBKEY: &'static str =
+    "l07hNTVLaGBKesJDe1QT1ebxtKgh+nZnrGaeud5E99k";
+
+#[derive(Debug)]
 pub enum Event {
     Otkey,
-    Msg(String),
+    Msg(EncryptedInboxMessage),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EncryptedCommonPayload {
-    byte_vec: Vec<u8>,
-}
+// Transparent wrapper around a byte array, as a marker that this is
+// the encrypted shared/common payload.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(transparent)]
+pub struct EncryptedCommonPayload(pub String);
 
 impl EncryptedCommonPayload {
-    pub fn new(byte_vec: Vec<u8>) -> EncryptedCommonPayload {
-        Self { byte_vec }
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        use base64::{engine::general_purpose, Engine as _};
+        EncryptedCommonPayload(general_purpose::STANDARD_NO_PAD.encode(bytes))
     }
 
-    pub fn byte_vec(&self) -> &Vec<u8> {
-        &self.byte_vec
+    pub fn to_bytes(&self) -> Vec<u8> {
+        use base64::{engine::general_purpose, Engine as _};
+        general_purpose::STANDARD_NO_PAD.decode(&self.0).unwrap()
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedPerRecipientPayload {
-    c_type: usize,
-    ciphertext: String,
+    pub c_type: usize,
+    pub ciphertext: String,
 }
 
-impl EncryptedPerRecipientPayload {
-    pub fn new(
-        c_type: usize,
-        ciphertext: String,
-    ) -> EncryptedPerRecipientPayload {
-        Self { c_type, ciphertext }
-    }
-
-    pub fn c_type(&self) -> usize {
-        self.c_type
-    }
-
-    pub fn ciphertext(&self) -> &String {
-        &self.ciphertext
-    }
+#[derive(Debug, Serialize, Clone)]
+pub struct EncryptedOutboxMessage {
+    pub enc_common: EncryptedCommonPayload,
+    // map from recipient id to payload
+    pub enc_recipients: HashMap<String, EncryptedPerRecipientPayload>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OutgoingMessage {
-    device_id: String,
-    enc_common: EncryptedCommonPayload,
-    enc_per_recipient: EncryptedPerRecipientPayload,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EncryptedInboxMessage {
+    pub sender: String,
+    // TODO: currently both the server and the common payload contain the
+    // full list of recipients. We should optimize this to use a hash
+    // of the list of recipients in the common payload.
+    //
+    // We need to make sure of the following:
+    // - the sending client can't lie about the list of recipients of a
+    //   message. We achieve that by having the server provide us the list of
+    //   recipients.
+    // - the server can't lie about the list of recipients to a subset of
+    //   clients. We achieve that by including a hash of the list of recipients
+    //   in the common payload.
+    // If these two do not match, we MUST refuse (drop) the message. If the
+    // sending client lied, this will just cause the message to be dropped
+    // everywhere. If the server lied, this will then be detected through
+    // LVS, because a subset of clients will see the message as dropped.
+    pub recipients: Vec<String>,
+    pub enc_common: EncryptedCommonPayload,
+    pub enc_recipient: EncryptedPerRecipientPayload,
+    pub seq_id: u128,
 }
 
-impl OutgoingMessage {
-    pub fn new(
-        device_id: String,
-        enc_common: EncryptedCommonPayload,
-        enc_per_recipient: EncryptedPerRecipientPayload,
-    ) -> OutgoingMessage {
-        Self {
-            device_id,
-            enc_common,
-            enc_per_recipient,
-        }
-    }
+#[derive(Deserialize, Clone, Debug)]
+pub struct EpochMessageBatch {
+    pub epoch_id: u64,
+    pub messages: Vec<EncryptedInboxMessage>,
+    pub attestation: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct Batch {
-    batch: Vec<OutgoingMessage>,
-}
-
-impl Batch {
-    pub fn new() -> Self {
-        Self {
-            batch: Vec::<OutgoingMessage>::new(),
-        }
-    }
-
-    pub fn from_vec(batch: Vec<OutgoingMessage>) -> Self {
-        Self { batch }
-    }
-
-    pub fn push(&mut self, message: OutgoingMessage) {
-        self.batch.push(message);
-    }
-
-    //pub fn pop(&mut self) -> Option<OutgoingMessage> {
-    //  self.batch.pop()
-    //}
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IncomingMessage {
-    sender: String,
-    enc_common: EncryptedCommonPayload,
-    enc_per_recipient: EncryptedPerRecipientPayload,
-    seq_id: u64,
-}
-
-impl IncomingMessage {
+impl EncryptedInboxMessage {
     pub fn from_string(msg: String) -> Self {
         serde_json::from_str(msg.as_str()).unwrap()
-    }
-
-    pub fn sender(&self) -> &String {
-        &self.sender
-    }
-
-    pub fn enc_common(&self) -> &EncryptedCommonPayload {
-        &self.enc_common
-    }
-
-    pub fn enc_per_recipient(&self) -> &EncryptedPerRecipientPayload {
-        &self.enc_per_recipient
-    }
-
-    pub fn seq_id(&self) -> u64 {
-        self.seq_id
     }
 }
 
@@ -178,11 +265,33 @@ impl<C: CoreClient> ServerComm<C> {
         idkey: String,
         core_option: Option<Arc<Core<C>>>,
     ) -> Self {
-        let ip_addr = ip_arg.unwrap_or(IP_ADDR);
-        let port_num = port_arg.unwrap_or(PORT_NUM);
-        let base_url =
-            Url::parse(&vec![HTTP_PREFIX, ip_addr, COLON, port_num].join(""))
-                .expect("Failed base_url construction");
+        // Resolve our home-shard base-url by contacting the bootstrap shard:
+        let client = reqwest::Client::new();
+        let base_url = Url::parse(
+	    &client
+		.get(format!("{}/shard", BOOTSTRAP_SERVER_URL))
+		.header(
+                    "Authorization",
+                    &format!("Bearer {}", &idkey),
+		)
+		.send()
+		.await
+		.expect("Failed to contact the bootstrap server shard")
+		.text()
+		.await
+		.expect("Failed to retrieve response from the bootstrap server shard")
+	).expect("Failed to construct home-shard base url from response");
+
+        let server_attestation_pubkey = {
+            use base64::{engine::general_purpose, Engine as _};
+
+            ed25519_dalek::PublicKey::from_bytes(
+                &general_purpose::STANDARD_NO_PAD
+                    .decode(SERVER_ATTESTATION_PUBKEY)
+                    .unwrap(),
+            )
+            .unwrap()
+        };
 
         let task_base_url = base_url.clone();
         let task_idkey = idkey.clone();
@@ -204,6 +313,7 @@ impl<C: CoreClient> ServerComm<C> {
             )
             .stream();
 
+            let mut next_epoch = 0;
             loop {
                 //println!("IN LOOP");
                 match listener.as_mut().try_next().await {
@@ -216,33 +326,72 @@ impl<C: CoreClient> ServerComm<C> {
                     Ok(None) => {
                         //println!("got NONE from server")
                     }
-                    Ok(Some(event)) => match event {
-                        SSE::Comment(_) => {}
-                        SSE::Event(event) => match event.event_type.as_str() {
-                            "otkey" => {
-                                //println!(
-                                //    "got OTKEY event from server - {:?}",
-                                //    task_idkey
-                                //);
-                                if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Otkey))
-                                        .await;
-                                }
-                            }
-                            "msg" => {
-                                //println!("got MSG event from server");
-                                let msg = String::from(event.data);
-                                //println!("msg: {:?}", msg);
-                                if let Some(ref core) = core_option {
-                                    core.server_comm_callback(Ok(Event::Msg(
-                                        msg,
+                    Ok(Some(event)) => {
+                        match event {
+                            SSE::Comment(_) => {}
+                            SSE::Event(event) => {
+                                match event.event_type.as_str() {
+                                    "otkey" => {
+                                        println!(
+                                   "got OTKEY event from server - {:?}",
+                                   task_idkey
+                                );
+                                        if let Some(ref core) = core_option {
+                                            core.server_comm_callback(Ok(
+                                                Event::Otkey,
+                                            ))
+                                            .await;
+                                        }
+                                    }
+                                    "msg" => {
+                                        //println!("got MSG event from
+                                        // server");
+                                        if let Some(ref core) = core_option {
+                                            core.server_comm_callback(Ok(Event::Msg(
+                                        EncryptedInboxMessage::from_string(event.data),
                                     )))
                                     .await;
+                                        }
+                                    }
+                                    "epoch_message_batch" => {
+                                        // println!("got EpochMessageBatch event
+                                        // from server");
+                                        if let Some(ref core) = core_option {
+                                            let emb: EpochMessageBatch =
+                                                serde_json::from_str(
+                                                    &event.data,
+                                                )
+                                                .unwrap();
+                                            // TODO: handle lost epochs
+                                            println!("EpochMessageBatch for epoch {}", emb.epoch_id);
+
+                                            let attestation = attestation::Attestation::decode_base64(&emb.attestation).expect("Failed to parse attestation payload");
+                                            assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
+                                            assert!(attestation.next_epoch() == emb.epoch_id + 1, "Attestation claims to cover unreceived epochs");
+                                            let attestation_data =
+					attestation::AttestationData::from_inbox_epochs(
+					    attestation.first_epoch(), attestation.next_epoch(),
+					    emb.messages.iter());
+                                            assert!(attestation.verify(&attestation_data, &server_attestation_pubkey), "Attestation verification failed");
+                                            next_epoch =
+                                                attestation.next_epoch();
+
+                                            for msg in emb.messages {
+                                                core.server_comm_callback(Ok(
+                                                    Event::Msg(msg),
+                                                ))
+                                                .await;
+                                            }
+                                        }
+                                    }
+                                    _ => panic!(
+                                        "Got unexpected SSE event: {:?}",
+                                        event
+                                    ),
                                 }
                             }
-                            _ => {}
-                        },
-                    },
+                        }
+                    }
                 }
             }
         });
@@ -250,13 +399,16 @@ impl<C: CoreClient> ServerComm<C> {
         Self {
             base_url,
             idkey,
-            client: reqwest::Client::new(),
+            client,
             _listener_task_handle,
             _pd: PhantomData,
         }
     }
 
-    pub async fn send_message(&self, batch: &Batch) -> Result<Response> {
+    pub async fn send_message(
+        &self,
+        batch: &EncryptedOutboxMessage,
+    ) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message").expect("").as_str())
             .header("Content-Type", "application/json")
@@ -270,11 +422,25 @@ impl<C: CoreClient> ServerComm<C> {
         &self,
         dst_idkey: &String,
     ) -> Result<OtkeyResponse> {
-        let mut url = self.base_url.join("/devices/otkey").expect("");
-        url.set_query(Some(
-            &vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
-        ));
-        self.client.get(url).send().await?.json().await
+        use tokio::time::{sleep, Duration};
+
+        let mut retry_count = 0;
+        sleep(Duration::from_millis(10)).await;
+
+        loop {
+            let mut url = self.base_url.join("/devices/otkey").expect("");
+            url.set_query(Some(
+                &vec!["device_id", &encode(dst_idkey).into_owned()].join("="),
+            ));
+            let res = self.client.get(url).send().await?;
+            if res.status().is_success() || retry_count >= 3 {
+                return res.json().await;
+            } else {
+                retry_count += 1;
+                println!("Failed to fetch otkey for client_id \"\", retrying in 1 sec...");
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
     }
 
     pub async fn delete_messages_from_server(

@@ -20,6 +20,8 @@ sha2 = "0.10.6"
 parking_lot = "0.12.1"
 async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }
 async-trait = "0.1.64"
-cbc = { version = "0.1.2", features = ["alloc"] }
 aes = "0.8.2"
 rand = "0.8.5"
+cbc = { version = "0.1.2", features = ["alloc"] }
+base64 = "0.21.0"
+ed25519-dalek = "1.0.1"

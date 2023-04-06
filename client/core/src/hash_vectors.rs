@@ -97,6 +97,10 @@ impl CommonPayload {
     pub fn from_string(common_payload: String) -> Self {
         serde_json::from_str(common_payload.as_str()).unwrap()
     }
+
+    pub fn to_string(common_payload: &CommonPayload) -> String {
+        serde_json::to_string(common_payload).unwrap()
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -112,6 +116,18 @@ impl ValidationPayload {
             consistency_loopback: false,
             validation_seq: None,
             validation_digest: None,
+        }
+    }
+
+    pub fn dummy(
+        mut recipients: Vec<DeviceId>,
+        message: Message,
+    ) -> ValidationPayload {
+        let hash = hash_message(None, &mut recipients, message);
+        ValidationPayload {
+            consistency_loopback: false,
+            validation_seq: Some(78),
+            validation_digest: Some(hash),
         }
     }
 

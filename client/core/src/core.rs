@@ -1,15 +1,15 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
-    Batch, EncryptedCommonPayload, EncryptedPerRecipientPayload, Event,
-    IncomingMessage, OutgoingMessage, ServerComm, ToDelete,
+    EncryptedCommonPayload, EncryptedPerRecipientPayload, Event,
+    EncryptedInboxMessage, EncryptedOutboxMessage, ServerComm, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,7 +20,7 @@ pub struct PerRecipientPayload {
 }
 
 impl PerRecipientPayload {
-    fn new(
+    pub fn new(
         val_payload: ValidationPayload,
         key: [u8; 16],
         iv: [u8; 16],
@@ -40,13 +40,17 @@ impl PerRecipientPayload {
         self.iv
     }
 
-    fn to_string(
+    pub fn new_and_to_string(
         val_payload: ValidationPayload,
         key: [u8; 16],
         iv: [u8; 16],
     ) -> String {
         serde_json::to_string(&PerRecipientPayload::new(val_payload, key, iv))
             .unwrap()
+    }
+
+    fn to_string(per_recipient_payload: &PerRecipientPayload) -> String {
+        serde_json::to_string(per_recipient_payload).unwrap()
     }
 
     fn from_string(per_recipient_payload: String) -> PerRecipientPayload {
@@ -178,31 +182,35 @@ impl<C: CoreClient> Core<C> {
         //println!("...UNLOCKED SEND...");
 
         // symmetrically encrypt common_payload once
-        let (common_ct, key, iv) =
-            self.crypto.symmetric_encrypt(common_payload.clone());
+        let (common_ct, key, iv) = self
+            .crypto
+            .symmetric_encrypt(CommonPayload::to_string(&common_payload));
 
-        let mut batch = Batch::new();
+	// Can't use .iter().map().collect() due to async/await
+	let mut encrypted_per_recipient_payloads = HashMap::new();
+	for (idkey, val_payload) in val_payloads {
+	    let (c_type, ciphertext) = self
+		.crypto
+		.encrypt(
+		    &self.server_comm.read().await.as_ref().unwrap(),
+		    &idkey,
+		    &PerRecipientPayload::new_and_to_string(val_payload, key, iv),
+		)
+		.await;
 
-        // TODO loop to encrypt key + iv + val_payload per client
-        for (idkey, val_payload) in val_payloads {
-            let per_recipient_payload =
-                PerRecipientPayload::to_string(val_payload, key, iv);
+	    // Ensure we're never encrypting to the same key twice
+	    assert!(
+		encrypted_per_recipient_payloads.insert(
+		    idkey,
+		    EncryptedPerRecipientPayload { c_type, ciphertext }
+		).is_none()
+	    );
+	}
 
-            let (c_type, per_recipient_ct) = self
-                .crypto
-                .encrypt(
-                    &self.server_comm.read().await.as_ref().unwrap(),
-                    &idkey,
-                    &per_recipient_payload,
-                )
-                .await;
-
-            batch.push(OutgoingMessage::new(
-                idkey,
-                EncryptedCommonPayload::new(common_ct.clone()),
-                EncryptedPerRecipientPayload::new(c_type, per_recipient_ct),
-            ));
-        }
+	let encrypted_message = EncryptedOutboxMessage {
+	    enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
+	    enc_recipients: encrypted_per_recipient_payloads,
+	};
 
         // loop until front of queue is ready to send
         loop {
@@ -223,7 +231,7 @@ impl<C: CoreClient> Core<C> {
             .await
             .as_ref()
             .unwrap()
-            .send_message(&batch)
+            .send_message(&encrypted_message)
             .await
     }
 
@@ -257,20 +265,17 @@ impl<C: CoreClient> Core<C> {
                     self.init_cv.notify_all();
                 }
             }
-            Ok(Event::Msg(msg_string)) => {
-                let msg: IncomingMessage =
-                    IncomingMessage::from_string(msg_string);
-
+            Ok(Event::Msg(msg)) => {
                 let decrypted_per_recipient = self.crypto.decrypt(
-                    &msg.sender(),
-                    msg.enc_per_recipient().c_type(),
-                    &msg.enc_per_recipient().ciphertext(),
+                    &msg.sender,
+                    msg.enc_recipient.c_type,
+                    &msg.enc_recipient.ciphertext,
                 );
 
                 let per_recipient_payload =
                     PerRecipientPayload::from_string(decrypted_per_recipient);
                 let decrypted_common = self.crypto.symmetric_decrypt(
-                    msg.enc_common().byte_vec().clone(),
+                    msg.enc_common.to_bytes(),
                     per_recipient_payload.key(),
                     per_recipient_payload.iv(),
                 );
@@ -334,7 +339,7 @@ impl<C: CoreClient> Core<C> {
                 let mut hash_vectors_guard = self.hash_vectors.lock().await;
                 //println!("...GOT RECV LOCK...");
                 let parsed_res = hash_vectors_guard.parse_message(
-                    &msg.sender(),
+                    &msg.sender,
                     common_payload.clone(),
                     &per_recipient_payload.val_payload,
                 );
@@ -379,7 +384,7 @@ impl<C: CoreClient> Core<C> {
                             .await
                             .as_ref()
                             .unwrap()
-                            .client_callback(msg.sender().clone(), message)
+                            .client_callback(msg.sender.clone(), message)
                             .await;
 
                         // TODO allow client to determine when to send these

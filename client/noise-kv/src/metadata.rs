@@ -11,11 +11,22 @@ pub enum Error {
     GroupHasNoChildren(String),
     #[error("Group {0} does not exist")]
     GroupDoesNotExist(String),
+    #[error("Permission Set {0} does not exist")]
+    PermSetDoesNotExist(String),
 }
 
+pub fn generate_uuid() -> String {
+    Uuid::new_v4().to_string()
+}
+
+// TODO make enum (one variant w children, one w/out)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     group_id: String,
+    // backpointer to perm for checking if a group has certain permissions
+    perm_ids: Vec<String>,
+    // FIXME not sure is_contact_name is useful anymore, and kind of defeats
+    // the purpose of our "flexible" group structure -> should remove
     pub is_contact_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
@@ -25,8 +36,9 @@ impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, is_contact_name: {}, parents: {}, children: {}",
+            "group_id: {}, perm_ids: {}, is_contact_name: {}, parents: {}, children: {}",
             self.group_id,
+            itertools::join(self.perm_ids.clone(), ", "),
             self.is_contact_name,
             itertools::join(self.parents.clone(), ", "),
             self.children.as_ref().map_or_else(
@@ -40,45 +52,40 @@ impl fmt::Display for Group {
 impl Group {
     pub fn new(
         group_id: Option<String>,
+        perm_ids: Option<Vec<String>>,
         is_contact_name: bool,
-        init_children: bool,
+        // first option specifies whether this is a "node" group (if Some)
+        // or a "leaf" group (if None), and the second option specifies
+        // if there are any children to add upon creation FIXME this is gross
+        children_arg: Option<Option<Vec<String>>>,
     ) -> Group {
         let init_group_id: String;
         if group_id.is_none() {
-            init_group_id = Uuid::new_v4().to_string();
+            init_group_id = generate_uuid();
         } else {
             init_group_id = group_id.unwrap();
         }
 
-        let mut children = None;
-        if init_children {
-            children = Some(HashSet::<String>::new());
-        }
-
-        Self {
-            group_id: init_group_id,
-            is_contact_name,
-            parents: HashSet::<String>::new(),
-            children,
-        }
-    }
-
-    pub fn new_with_children(
-        group_id: Option<String>,
-        is_contact_name: bool,
-        children: Vec<String>,
-    ) -> Group {
-        let init_group_id: String;
-        if group_id.is_none() {
-            init_group_id = Uuid::new_v4().to_string();
+        let init_perm_ids: Vec<String>;
+        if perm_ids.is_none() {
+            init_perm_ids = Vec::<String>::new();
         } else {
-            init_group_id = group_id.unwrap();
+            init_perm_ids = perm_ids.unwrap();
         }
 
-        let children = Some(HashSet::from_iter(children.into_iter()));
+        let children = match children_arg {
+            Some(option) => match option {
+                Some(vec_children) => {
+                    Some(HashSet::from_iter(vec_children.into_iter()))
+                }
+                None => Some(HashSet::<String>::new()),
+            },
+            None => None,
+        };
 
         Self {
             group_id: init_group_id,
+            perm_ids: init_perm_ids,
             is_contact_name,
             parents: HashSet::<String>::new(),
             children,
@@ -89,15 +96,9 @@ impl Group {
         &self.group_id
     }
 
-    //pub fn is_contact_name(&self) -> &bool {
-    //    &self.is_contact_name
-    //}
-
-    //pub fn update_is_contact_name(&mut self, is_contact_name: bool) ->
-    // bool {    let old_is_contact_name = self.is_contact_name;
-    //    self.is_contact_name = is_contact_name;
-    //    old_is_contact_name
-    //}
+    pub fn perm_ids(&self) -> &Vec<String> {
+        &self.perm_ids
+    }
 
     pub fn parents(&self) -> &HashSet<String> {
         &self.parents
@@ -133,24 +134,315 @@ impl Group {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct GroupStore {
-    store: HashMap<String, Group>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PermType {
+    Owners(Vec<String>),
+    Writers(Vec<String>),
+    Readers(Vec<String>),
 }
 
-impl GroupStore {
-    pub fn new() -> GroupStore {
+// TODO make fields pub instead of using getters/setters
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PermissionSet {
+    perm_id: String,
+    owners: Option<String>,
+    writers: Option<String>,
+    readers: Option<String>,
+}
+
+impl fmt::Display for PermissionSet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "perm_id: {}, owner: {}, writers: {}, readers: {}",
+            self.perm_id,
+            self.owners
+                .as_ref()
+                .map_or_else(|| "None".to_string(), |s| s.to_string()),
+            self.writers
+                .as_ref()
+                .map_or_else(|| "None".to_string(), |s| s.to_string()),
+            self.readers
+                .as_ref()
+                .map_or_else(|| "None".to_string(), |s| s.to_string()),
+        )
+    }
+}
+
+impl PermissionSet {
+    pub fn new(
+        perm_id: Option<String>,
+        owners: Option<String>,
+        writers: Option<String>,
+        readers: Option<String>,
+    ) -> PermissionSet {
+        let init_perm_id: String;
+        if perm_id.is_none() {
+            init_perm_id = generate_uuid();
+        } else {
+            init_perm_id = perm_id.unwrap();
+        }
+
         Self {
-            store: HashMap::<String, Group>::new(),
+            perm_id: init_perm_id,
+            owners,
+            writers,
+            readers,
         }
     }
 
+    pub fn perm_id(&self) -> &String {
+        &self.perm_id
+    }
+
+    pub fn owners(&self) -> &Option<String> {
+        &self.owners
+    }
+
+    pub fn set_owners(&mut self, owner_group_id: &String) -> Option<String> {
+        let old_owners = self.owners.clone();
+        self.owners = Some(owner_group_id.to_string());
+        old_owners
+    }
+
+    pub fn writers(&self) -> &Option<String> {
+        &self.writers
+    }
+
+    pub fn set_writers(&mut self, writer_group_id: &String) -> Option<String> {
+        let old_writers = self.writers.clone();
+        self.writers = Some(writer_group_id.to_string());
+        old_writers
+    }
+
+    pub fn readers(&self) -> &Option<String> {
+        &self.readers
+    }
+
+    pub fn set_readers(&mut self, reader_group_id: &String) -> Option<String> {
+        let old_readers = self.readers.clone();
+        self.readers = Some(reader_group_id.to_string());
+        old_readers
+    }
+}
+
+// TODO maybe, in order to just have a single hashmap, Group vs
+// PermissionSet can be in an enum too -> but would this be helpful?
+// having two hashmaps is fine
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MetadataStore {
+    group_store: HashMap<String, Group>,
+    perm_store: HashMap<String, PermissionSet>,
+}
+
+impl MetadataStore {
+    pub fn new() -> MetadataStore {
+        Self {
+            group_store: HashMap::<String, Group>::new(),
+            perm_store: HashMap::<String, PermissionSet>::new(),
+        }
+    }
+
+    /*
+     * Permission methods
+     */
+
+    pub fn get_perm(&self, perm_id: &String) -> Option<&PermissionSet> {
+        self.perm_store.get(perm_id)
+    }
+
+    pub fn set_perm(
+        &mut self,
+        perm_id: String,
+        perm_val: PermissionSet,
+    ) -> Option<PermissionSet> {
+        self.perm_store.insert(perm_id, perm_val)
+    }
+
+    // TODO
+    pub fn add_perm_id_to_subgroups() {}
+
+    pub fn add_permissions(
+        &mut self,
+        perm_id: &String,
+        group_id_opt: Option<String>,
+        new_perm_members: PermType,
+    ) -> Result<(), Error> {
+        if self.get_perm(perm_id).is_none() {
+            return Err(Error::PermSetDoesNotExist(perm_id.to_string()));
+        }
+
+        let mut perm_set = self.get_perm(perm_id).unwrap().clone();
+
+        let (existing_members, new_members) = match new_perm_members.clone() {
+            PermType::Owners(new_owners) => (perm_set.owners(), new_owners),
+            PermType::Writers(new_writers) => (perm_set.writers(), new_writers),
+            PermType::Readers(new_readers) => (perm_set.readers(), new_readers),
+        };
+
+        match existing_members {
+            Some(existing_group_id) => {
+                // add children to existing group
+                match self.get_group(existing_group_id) {
+                    Some(existing_group) => {
+                        for new_member in new_members.iter() {
+                            self.link_groups(existing_group_id, new_member);
+                        }
+                        // perm_set does not change b/c using existing
+                        // group id
+                        Ok(())
+                    }
+                    None => Err(Error::GroupDoesNotExist(
+                        existing_group_id.to_string(),
+                    )),
+                }
+            }
+            None => {
+                // create new group
+                println!("CREATING NEW GROUP");
+                println!("new_members: {:?}", new_members.clone());
+                let new_group = Group::new(
+                    group_id_opt,
+                    Some(vec![perm_id.to_string()]),
+                    false,
+                    Some(Some(new_members.clone())),
+                );
+                self.set_group(
+                    new_group.group_id().to_string(),
+                    new_group.clone(),
+                );
+                for new_member in new_members {
+                    self.add_parent(&new_member, new_group.group_id());
+                }
+
+                // set perm
+                match new_perm_members {
+                    PermType::Owners(_) => {
+                        perm_set.set_owners(new_group.group_id());
+                    }
+                    PermType::Writers(_) => {
+                        perm_set.set_writers(new_group.group_id());
+                    }
+                    PermType::Readers(_) => {
+                        perm_set.set_readers(new_group.group_id());
+                    }
+                }
+                self.set_perm(perm_set.perm_id().to_string(), perm_set);
+
+                Ok(())
+            }
+        }
+    }
+
+    pub fn get_all_perms(&self) -> &HashMap<String, PermissionSet> {
+        &self.perm_store
+    }
+
+    pub fn has_data_mod_permissions(
+        &self,
+        group_id: &String,
+        perm_id: &String,
+    ) -> bool {
+        let perm_opt = self.get_perm(perm_id);
+        match perm_opt {
+            Some(perm_val) => {
+                // check if writer or above
+                let is_owner = match perm_val.owners() {
+                    Some(owner_group) => {
+                        self.is_group_member(group_id, owner_group)
+                    }
+                    None => false,
+                };
+                // TODO check admins
+                let is_writer = match perm_val.writers() {
+                    Some(writer_group) => {
+                        self.is_group_member(group_id, writer_group)
+                    }
+                    None => false,
+                };
+                is_owner || is_writer
+            }
+            None => false,
+        }
+    }
+
+    pub fn has_metadata_mod_permissions(
+        &self,
+        group_id: &String,
+        perm_id: &String,
+    ) -> bool {
+        let perm_opt = self.get_perm(perm_id);
+        match perm_opt {
+            // check if admin or above
+            Some(perm_val) => {
+                match perm_val.owners() {
+                    Some(owner_group) => {
+                        println!("group_id: {:?}", group_id);
+                        println!("owner_group: {:?}", owner_group);
+                        self.is_group_member(group_id, owner_group)
+                    }
+                    None => false,
+                }
+                // TODO check admins
+            }
+            None => false,
+        }
+    }
+
+    pub fn has_owner_mod_permissions(
+        &self,
+        group_id: &String,
+        perm_id: &String,
+    ) -> bool {
+        let perm_opt = self.get_perm(perm_id);
+        match perm_opt {
+            // check if owner
+            Some(perm_val) => match perm_val.owners() {
+                Some(owner_group) => {
+                    self.is_group_member(group_id, owner_group)
+                }
+                None => false,
+            },
+            None => false,
+        }
+    }
+
+    pub fn find_metadata_mod_permissions(
+        &self,
+        modifying_group_id: &String,
+        to_modify_group_val: Group,
+    ) -> bool {
+        let perm_ids = to_modify_group_val.perm_ids();
+        println!(
+            "modifying_group_val: {:?}",
+            self.get_group(modifying_group_id)
+        );
+        // FIXME doesn't exist in store yet
+        println!("to_modify_group_val: {:?}", to_modify_group_val.clone());
+        for perm_id in perm_ids {
+            println!("");
+            println!("perm_id: {:?}", perm_id.clone());
+            println!("perm_val: {:?}", self.get_perm(perm_id));
+            if self.has_metadata_mod_permissions(modifying_group_id, perm_id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    // TODO remove permissions
+
+    /*
+     * Group methods
+     */
+
     pub fn get_group(&self, group_id: &String) -> Option<&Group> {
-        self.store.get(group_id)
+        self.group_store.get(group_id)
     }
 
     pub fn get_group_mut(&mut self, group_id: &String) -> Option<&mut Group> {
-        self.store.get_mut(group_id)
+        self.group_store.get_mut(group_id)
     }
 
     pub fn set_group(
@@ -158,7 +450,13 @@ impl GroupStore {
         group_id: String,
         group_val: Group,
     ) -> Option<Group> {
-        self.store.insert(group_id, group_val)
+        self.group_store.insert(group_id, group_val)
+    }
+
+    pub fn set_groups(&mut self, groups: HashMap<String, Group>) {
+        groups.into_iter().for_each(|(group_id, group_val)| {
+            self.set_group(group_id, group_val);
+        });
     }
 
     pub fn add_parent(
@@ -329,7 +627,7 @@ impl GroupStore {
             }
         }
 
-        self.store.remove(group_id)
+        self.group_store.remove(group_id)
     }
 
     pub fn is_device_group(&self, group_val: &Group) -> bool {
@@ -359,18 +657,21 @@ impl GroupStore {
         }
     }
 
-    pub fn resolve_ids<'a>(&'a self, ids: Vec<&'a String>) -> HashSet<String> {
+    pub fn resolve_group_ids<'a>(
+        &'a self,
+        ids: Vec<&'a String>,
+    ) -> HashSet<String> {
         let mut resolved_ids = HashSet::<String>::new();
         let mut visited = HashSet::<&String>::new();
 
         for id in ids {
-            self.resolve_ids_helper(&mut resolved_ids, &mut visited, id);
+            self.resolve_group_ids_helper(&mut resolved_ids, &mut visited, id);
         }
 
         resolved_ids
     }
 
-    fn resolve_ids_helper<'a>(
+    fn resolve_group_ids_helper<'a>(
         &'a self,
         resolved_ids: &mut HashSet<String>,
         visited: &mut HashSet<&'a String>,
@@ -398,7 +699,7 @@ impl GroupStore {
     }
 
     pub fn get_all_groups(&self) -> &HashMap<String, Group> {
-        &self.store
+        &self.group_store
     }
 
     pub fn get_all_subgroups<'a>(
@@ -442,6 +743,8 @@ impl GroupStore {
 
         while !to_visit.is_empty() {
             let cur_id = to_visit.pop().unwrap();
+            println!("cur_group_id: {:?}", cur_id);
+            println!("cur_group_val: {:?}", self.get_group(cur_id));
 
             if visited.get(cur_id).is_some() {
                 continue;
@@ -463,7 +766,7 @@ impl GroupStore {
     }
 
     pub fn group_replace(
-        &self, // FIXME use self?
+        &self,
         group: &mut Group,
         id_to_replace: String,
         replacement_id: String,
@@ -481,7 +784,6 @@ impl GroupStore {
         });
     }
 
-    // FIXME use self?
     pub fn group_contains(&self, group: &Group, id_to_check: String) -> bool {
         if group.group_id() == &id_to_check {
             return true;
@@ -501,22 +803,26 @@ impl GroupStore {
     }
 }
 
+/*
 mod tests {
-    use crate::groups::{Group, GroupStore};
+    use crate::metadata::{Group, MetadataStore};
     use std::collections::HashMap;
     use std::collections::HashSet;
 
     #[test]
     fn test_new() {
-        assert_eq!(GroupStore::new().store, HashMap::<String, Group>::new());
+        assert_eq!(
+            MetadataStore::new().group_store,
+            HashMap::<String, Group>::new()
+        );
     }
 
     #[test]
     fn test_set_get_group() {
         let group = Group::new(None, true, false);
-        let mut group_store = GroupStore::new();
-        group_store.set_group(group.group_id.clone(), group.clone());
-        assert_eq!(*group_store.get_group(&group.group_id).unwrap(), group);
+        let mut meta_store = MetadataStore::new();
+        meta_store.set_group(group.group_id.clone(), group.clone());
+        assert_eq!(*meta_store.get_group(&group.group_id).unwrap(), group);
     }
 
     #[test]
@@ -551,19 +857,19 @@ mod tests {
         let group_0 = Group::new(None, true, true);
         let group_1 = Group::new(None, true, false);
 
-        let mut group_store = GroupStore::new();
-        group_store.set_group(group_0.group_id.clone(), group_0.clone());
-        group_store.set_group(group_1.group_id.clone(), group_1.clone());
+        let mut meta_store = MetadataStore::new();
+        meta_store.set_group(group_0.group_id.clone(), group_0.clone());
+        meta_store.set_group(group_1.group_id.clone(), group_1.clone());
 
-        group_store.link_groups(&group_0.group_id, &group_1.group_id);
+        meta_store.link_groups(&group_0.group_id, &group_1.group_id);
 
-        let new_group_0 = group_store.get_group(&group_0.group_id).unwrap();
+        let new_group_0 = meta_store.get_group(&group_0.group_id).unwrap();
         assert_eq!(
             new_group_0.children.as_ref().unwrap(),
             &HashSet::from([group_1.group_id.clone()])
         );
 
-        let new_group_1 = group_store.get_group(&group_1.group_id).unwrap();
+        let new_group_1 = meta_store.get_group(&group_1.group_id).unwrap();
         assert_eq!(
             new_group_1.parents,
             HashSet::from([group_0.group_id.clone()])
@@ -575,24 +881,24 @@ mod tests {
         let group_0 = Group::new(None, true, true);
         let group_1 = Group::new(None, true, false);
 
-        let mut group_store = GroupStore::new();
-        group_store.set_group(group_0.group_id.clone(), group_0.clone());
-        group_store.set_group(group_1.group_id.clone(), group_1.clone());
+        let mut meta_store = MetadataStore::new();
+        meta_store.set_group(group_0.group_id.clone(), group_0.clone());
+        meta_store.set_group(group_1.group_id.clone(), group_1.clone());
 
-        group_store.link_groups(&group_0.group_id, &group_1.group_id);
-        group_store.unlink_groups(&group_0.group_id, &group_1.group_id);
+        meta_store.link_groups(&group_0.group_id, &group_1.group_id);
+        meta_store.unlink_groups(&group_0.group_id, &group_1.group_id);
 
-        assert_eq!(&group_0, group_store.get_group(&group_0.group_id).unwrap());
-        assert_eq!(&group_1, group_store.get_group(&group_1.group_id).unwrap());
+        assert_eq!(&group_0, meta_store.get_group(&group_0.group_id).unwrap());
+        assert_eq!(&group_1, meta_store.get_group(&group_1.group_id).unwrap());
     }
 
     #[test]
     fn test_delete_group() {
         let group = Group::new(None, true, false);
-        let mut group_store = GroupStore::new();
-        group_store.set_group(group.group_id.clone(), group.clone());
-        group_store.delete_group(&group.group_id);
-        assert_eq!(group_store.get_group(&group.group_id), None);
+        let mut meta_store = MetadataStore::new();
+        meta_store.set_group(group.group_id.clone(), group.clone());
+        meta_store.delete_group(&group.group_id);
+        assert_eq!(meta_store.get_group(&group.group_id), None);
     }
 
     #[test]
@@ -600,15 +906,15 @@ mod tests {
         let group_0 = Group::new(None, true, true);
         let group_1 = Group::new(None, true, false);
 
-        let mut group_store = GroupStore::new();
-        group_store.set_group(group_0.group_id.clone(), group_0.clone());
-        group_store.set_group(group_1.group_id.clone(), group_1.clone());
+        let mut meta_store = MetadataStore::new();
+        meta_store.set_group(group_0.group_id.clone(), group_0.clone());
+        meta_store.set_group(group_1.group_id.clone(), group_1.clone());
 
-        group_store.link_groups(&group_0.group_id, &group_1.group_id);
-        group_store.delete_group(&group_0.group_id);
+        meta_store.link_groups(&group_0.group_id, &group_1.group_id);
+        meta_store.delete_group(&group_0.group_id);
 
-        assert_eq!(group_store.get_group(&group_0.group_id), None);
-        assert_eq!(group_store.get_group(&group_1.group_id).unwrap(), &group_1);
+        assert_eq!(meta_store.get_group(&group_0.group_id), None);
+        assert_eq!(meta_store.get_group(&group_1.group_id).unwrap(), &group_1);
     }
 
     #[test]
@@ -618,20 +924,20 @@ mod tests {
         let group_1 = Group::new(None, true, false);
         let group_2 = Group::new(None, true, false);
 
-        let mut group_store = GroupStore::new();
+        let mut meta_store = MetadataStore::new();
 
-        group_store.set_group(base_group.group_id.clone(), base_group.clone());
-        group_store.set_group(group_0.group_id.clone(), group_0.clone());
-        group_store.set_group(group_1.group_id.clone(), group_1.clone());
-        group_store.set_group(group_2.group_id.clone(), group_2.clone());
+        meta_store.set_group(base_group.group_id.clone(), base_group.clone());
+        meta_store.set_group(group_0.group_id.clone(), group_0.clone());
+        meta_store.set_group(group_1.group_id.clone(), group_1.clone());
+        meta_store.set_group(group_2.group_id.clone(), group_2.clone());
 
-        group_store.add_members(
+        meta_store.add_members(
             base_group.group_id(),
             vec![group_0.group_id(), group_1.group_id(), group_2.group_id()],
         );
 
         let new_base_group =
-            group_store.get_group(base_group.group_id()).unwrap();
+            meta_store.get_group(base_group.group_id()).unwrap();
         assert_eq!(
             new_base_group.children.as_ref().unwrap(),
             &HashSet::from([
@@ -642,17 +948,17 @@ mod tests {
         );
 
         assert_eq!(
-            group_store.get_group(group_0.group_id()).unwrap().parents,
+            meta_store.get_group(group_0.group_id()).unwrap().parents,
             HashSet::from([base_group.group_id.clone()])
         );
 
         assert_eq!(
-            group_store.get_group(group_1.group_id()).unwrap().parents,
+            meta_store.get_group(group_1.group_id()).unwrap().parents,
             HashSet::from([base_group.group_id.clone()])
         );
 
         assert_eq!(
-            group_store.get_group(group_2.group_id()).unwrap().parents,
+            meta_store.get_group(group_2.group_id()).unwrap().parents,
             HashSet::from([base_group.group_id.clone()])
         );
     }
@@ -664,48 +970,48 @@ mod tests {
         let group_1 = Group::new(None, true, false);
         let group_2 = Group::new(None, true, false);
 
-        let mut group_store = GroupStore::new();
+        let mut meta_store = MetadataStore::new();
 
-        group_store.set_group(base_group.group_id.clone(), base_group.clone());
-        group_store.set_group(group_0.group_id.clone(), group_0.clone());
-        group_store.set_group(group_1.group_id.clone(), group_1.clone());
-        group_store.set_group(group_2.group_id.clone(), group_2.clone());
+        meta_store.set_group(base_group.group_id.clone(), base_group.clone());
+        meta_store.set_group(group_0.group_id.clone(), group_0.clone());
+        meta_store.set_group(group_1.group_id.clone(), group_1.clone());
+        meta_store.set_group(group_2.group_id.clone(), group_2.clone());
 
-        group_store.add_members(
+        meta_store.add_members(
             base_group.group_id(),
             vec![group_0.group_id(), group_1.group_id(), group_2.group_id()],
         );
 
-        group_store.remove_members(
+        meta_store.remove_members(
             base_group.group_id(),
             vec![group_0.group_id(), group_2.group_id()],
         );
 
         let new_base_group =
-            group_store.get_group(base_group.group_id()).unwrap();
+            meta_store.get_group(base_group.group_id()).unwrap();
         assert_eq!(
             new_base_group.children.as_ref().unwrap(),
             &HashSet::from([group_1.group_id.clone()]),
         );
 
         assert_eq!(
-            group_store.get_group(group_0.group_id()).unwrap().parents,
+            meta_store.get_group(group_0.group_id()).unwrap().parents,
             HashSet::new()
         );
 
         assert_eq!(
-            group_store.get_group(group_1.group_id()).unwrap().parents,
+            meta_store.get_group(group_1.group_id()).unwrap().parents,
             HashSet::from([base_group.group_id.clone()])
         );
 
         assert_eq!(
-            group_store.get_group(group_2.group_id()).unwrap().parents,
+            meta_store.get_group(group_2.group_id()).unwrap().parents,
             HashSet::new()
         );
     }
 
     #[test]
-    fn test_resolve_ids() {
+    fn test_resolve_group_ids() {
         let base_group = Group::new(None, true, true);
         let group_0 = Group::new(None, true, true);
         let group_0a = Group::new(None, true, false);
@@ -714,27 +1020,27 @@ mod tests {
         let group_1a = Group::new(None, true, false);
         let group_1b = Group::new(None, true, false);
 
-        let mut group_store = GroupStore::new();
+        let mut meta_store = MetadataStore::new();
 
-        group_store.set_group(base_group.group_id.clone(), base_group.clone());
-        group_store.set_group(group_0.group_id.clone(), group_0.clone());
-        group_store.set_group(group_0a.group_id.clone(), group_0a.clone());
-        group_store.set_group(group_0b.group_id.clone(), group_0b.clone());
-        group_store.set_group(group_1.group_id.clone(), group_1.clone());
-        group_store.set_group(group_1a.group_id.clone(), group_1a.clone());
-        group_store.set_group(group_1b.group_id.clone(), group_1b.clone());
+        meta_store.set_group(base_group.group_id.clone(), base_group.clone());
+        meta_store.set_group(group_0.group_id.clone(), group_0.clone());
+        meta_store.set_group(group_0a.group_id.clone(), group_0a.clone());
+        meta_store.set_group(group_0b.group_id.clone(), group_0b.clone());
+        meta_store.set_group(group_1.group_id.clone(), group_1.clone());
+        meta_store.set_group(group_1a.group_id.clone(), group_1a.clone());
+        meta_store.set_group(group_1b.group_id.clone(), group_1b.clone());
 
-        group_store.add_members(
+        meta_store.add_members(
             base_group.group_id(),
             vec![group_0.group_id(), group_1.group_id()],
         );
 
-        group_store.add_members(
+        meta_store.add_members(
             group_0.group_id(),
             vec![group_0a.group_id(), group_0b.group_id()],
         );
 
-        group_store.add_members(
+        meta_store.add_members(
             group_1.group_id(),
             vec![group_1a.group_id(), group_1b.group_id()],
         );
@@ -747,20 +1053,23 @@ mod tests {
         ]);
 
         assert_eq!(
-            group_store.resolve_ids(vec![base_group.group_id()]),
+            meta_store.resolve_group_ids(vec![base_group.group_id()]),
             expected_ids
         );
 
         assert_eq!(
-            group_store
-                .resolve_ids(vec![group_0.group_id(), group_1.group_id()]),
+            meta_store.resolve_group_ids(vec![
+                group_0.group_id(),
+                group_1.group_id()
+            ]),
             expected_ids
         );
     }
 
     #[test]
-    fn test_resolve_ids_cycles() {}
+    fn test_resolve_group_ids_cycles() {}
 
     #[test]
     fn test_is_member() {}
 }
+*/

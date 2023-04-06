@@ -100,11 +100,30 @@ struct Transaction {
     status: TxStatus,
     coordinator: String,
     recipients: Vec<String>,
+    num_recipients: Option<usize>,
     ops: Vec<Operation>,
     seq_num: Option<u64>,
+    prev_seq_num: Option<u64>,
 }
 
 impl Transaction {
+    fn new(
+        device_id: String,
+        recipients: Vec<String>,
+        ops: Vec<Operation>,
+    ) -> Transaction {
+
+        Transaction {
+            status: TxStatus::Pending,
+            coordinator: device_id,
+            recipients: recipients.clone(),
+            num_recipients : Some(recipients.len()),
+            ops,
+            seq_num: None,
+            prev_seq_num: None,
+        }
+    }
+
     fn to_string(msg: &Transaction) -> Result<String, serde_json::Error> {
         serde_json::to_string(msg)
     }
@@ -123,22 +142,37 @@ impl Transaction {
         }
         Ok(())
     }
+
 }
 
 pub struct TxCoordinator {
-    local_pending_tx: Vec<Transaction>, //transactions managed by me
-    remote_pending_tx: Vec<Transaction>, //transactions managed by others
-    committed_tx: Vec<Transaction>,     /* transactions committed (may be
-                                         * unecessary) */
+    seq_number: u64,
+    /* transactions managed by me */
+    local_pending_tx: Vec<(Vec<Option<String>>, Transaction)>,
+    /* transactions managed by others awaiting commit message */
+    remote_pending_tx: Vec<Transaction>,
+    /* transactions committed (may be unecessary) */
+    committed_tx: Vec<Transaction>,
 }
 
+// TODO: figure out how to trim committed histories
 impl TxCoordinator {
-    fn initiate_transaction(msg: Vec<Operation>) {
-        //add to my pending queue
+    fn new() -> TxCoordinator {
+        TxCoordinator {
+            seq_number: 0,
+            local_pending_tx: Vec::new(),
+            remote_pending_tx: Vec::new(),
+            committed_tx: Vec::new(),
+        }
+    }
 
-        //send first phase commit message to others
+    fn recevice_local_tx_abort(msg: &Transaction) {
+        unimplemented!();
+    }
 
-        //await abort messages from others
+    fn receive_remote_tx_abort(msg: &Transaction) {
+        //check sender is tx coordinator
+        unimplemented!();
     }
 
     // accept a new tx request and await abort or commit msg
@@ -149,11 +183,57 @@ impl TxCoordinator {
 
     // abort transaction initiated by me
     fn abort_local_transaction() {}
+
+    fn detect_conflict(&self, msg: &Transaction) -> bool {
+        let mut tx_keys = Vec::new();
+
+        for op in msg.ops.clone().into_iter() {
+            if let Operation::UpdateData(data_id, _) = op {
+                tx_keys.push(data_id);
+            }
+        }
+
+        //impl for all enums -> move to func over two txs
+        for tx in self.local_pending_tx.clone().into_iter() {
+            for op in tx.1.ops.clone().into_iter() {
+                if let Operation::UpdateData(data_id, _) = op {
+                    if tx_keys.contains(&data_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for tx in self.remote_pending_tx.clone().into_iter() {
+            for op in tx.ops.clone().into_iter() {
+                if let Operation::UpdateData(data_id, _) = op {
+                    if tx_keys.contains(&data_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for tx in self.committed_tx.clone().into_iter() {
+            //only iterate through committed transactions that were sequenced
+            // after the prev txn accepted by the original client
+            if tx.seq_num > msg.prev_seq_num {
+                for op in tx.ops.clone().into_iter() {
+                    if let Operation::UpdateData(data_id, _) = op {
+                        if tx_keys.contains(&data_id) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
 }
 
 #[derive(Clone)]
-pub struct NoiseKVClient {
-    core: Option<Arc<Core<NoiseKVClient>>>,
+pub struct NoiseSerializableKVClient {
+    core: Option<Arc<Core<NoiseSerializableKVClient>>>,
     pub device: Arc<RwLock<Option<Device<BasicData>>>>,
     ctr: Arc<Mutex<u32>>,
     ctr_cv: Arc<Condvar>,
@@ -266,7 +346,7 @@ impl NoiseKVClient {
             .clone()
     }
 
-    /* Sending-side functions */
+    /* Sending-side function */
 
     async fn send_message(
         &self,
@@ -280,8 +360,42 @@ impl NoiseKVClient {
             .await
     }
 
-    /* Receiving-side functions */
+    /* Transactions */
+    fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
+        let mut recipients = Vec::new();
+        for op in msg {
+            if let Operation::UpdateData(_, data) = op {
+                let group_id = data.group_id();
+                let device_ids = self
+                    .device
+                    .read() //resolve by moving into client
+                    .as_ref()
+                    .unwrap()
+                    .group_store
+                    .lock()
+                    .resolve_ids(vec![&group_id])
+                    .into_iter()
+                    .collect::<Vec<String>>();
 
+                recipients.extend(device_ids);
+            }
+        }
+
+        recipients.sort();
+        recipients.dedup();
+
+        return recipients;
+    }
+
+
+    fn initiate_transaction(&mut self, device_id: String, ops: Vec<Operation>, recipients: Vec<String>) {
+        let transaction = Transaction::new(device_id, recipients, ops);
+        self.local_pending_tx.push((vec![None; transaction.num_recipients.unwrap()], transaction));
+        self.send_message(recipients, Transaction::to_string(&transaction));
+    }
+
+    /* Receiving-side functions */
+    
     fn check_permissions(
         &self,
         _sender: &String,
@@ -818,6 +932,14 @@ impl NoiseKVClient {
      * Data
      */
 
+    pub async fn start_transaction(&self) -> result<(), Error> {
+        unimplemented!();
+    }
+
+    pub async fn end_transaction(&self) -> result<(), Error> {
+        unimplemented!();
+    }
+    
     pub async fn set_data(
         &self,
         data_id: String,

@@ -8,8 +8,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
-    EncryptedCommonPayload, EncryptedPerRecipientPayload, Event,
-    EncryptedInboxMessage, EncryptedOutboxMessage, ServerComm, ToDelete,
+    EncryptedCommonPayload, EncryptedInboxMessage, EncryptedOutboxMessage,
+    EncryptedPerRecipientPayload, Event, ServerComm, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,31 +186,35 @@ impl<C: CoreClient> Core<C> {
             .crypto
             .symmetric_encrypt(CommonPayload::to_string(&common_payload));
 
-	// Can't use .iter().map().collect() due to async/await
-	let mut encrypted_per_recipient_payloads = HashMap::new();
-	for (idkey, val_payload) in val_payloads {
-	    let (c_type, ciphertext) = self
-		.crypto
-		.encrypt(
-		    &self.server_comm.read().await.as_ref().unwrap(),
-		    &idkey,
-		    &PerRecipientPayload::new_and_to_string(val_payload, key, iv),
-		)
-		.await;
+        // Can't use .iter().map().collect() due to async/await
+        let mut encrypted_per_recipient_payloads = HashMap::new();
+        for (idkey, val_payload) in val_payloads {
+            let (c_type, ciphertext) = self
+                .crypto
+                .encrypt(
+                    &self.server_comm.read().await.as_ref().unwrap(),
+                    &idkey,
+                    &PerRecipientPayload::new_and_to_string(
+                        val_payload,
+                        key,
+                        iv,
+                    ),
+                )
+                .await;
 
-	    // Ensure we're never encrypting to the same key twice
-	    assert!(
-		encrypted_per_recipient_payloads.insert(
-		    idkey,
-		    EncryptedPerRecipientPayload { c_type, ciphertext }
-		).is_none()
-	    );
-	}
+            // Ensure we're never encrypting to the same key twice
+            assert!(encrypted_per_recipient_payloads
+                .insert(
+                    idkey,
+                    EncryptedPerRecipientPayload { c_type, ciphertext }
+                )
+                .is_none());
+        }
 
-	let encrypted_message = EncryptedOutboxMessage {
-	    enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
-	    enc_recipients: encrypted_per_recipient_payloads,
-	};
+        let encrypted_message = EncryptedOutboxMessage {
+            enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
+            enc_recipients: encrypted_per_recipient_payloads,
+        };
 
         // loop until front of queue is ready to send
         loop {

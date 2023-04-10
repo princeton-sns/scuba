@@ -69,6 +69,10 @@ enum Operation {
     DeleteSelfDevice,
     DeleteOtherDevice(String),
     Test(String),
+    //need to make sure these dont recurse
+    TxStart(String, Transaction),
+    TxCommit(String, u64),
+    TxAbort(String, u64),
 }
 
 impl Operation {
@@ -79,12 +83,6 @@ impl Operation {
     fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
         serde_json::from_str(msg.as_str())
     }
-}
-
-enum TxOperation {
-    Start(Transaction),
-    Commit(Transaction),
-    Abort(Transaction),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -125,25 +123,28 @@ impl Transaction {
 pub struct TxCoordinator {
     seq_number: u64,
     /* transactions managed by me */
-    local_pending_tx: Vec<(Vec<Option<String>>, Transaction)>,
+    local_pending_tx: HashMap<u64, (Vec<String>, Transaction)>,
     /* transactions managed by others awaiting commit message */
-    remote_pending_tx: Vec<Transaction>,
+    remote_pending_tx: HashMap<u64, Transaction>,
     /* transactions committed (may be unecessary) */
-    committed_tx: Vec<Transaction>,
+    committed_tx: Vec<(u64, Transaction)>,
 
     tx_state: bool,
     /* true if currently within transaction */
     temp_tx_ops: Vec<Operation>,
 }
 
-// TODO: figure out how to trim committed histories
+// TODO: trim committed histories
+// pass in device id to know what is mine
+// pass in seq number from message
+// this may have to go in core?
 impl TxCoordinator {
     fn new() -> TxCoordinator {
         TxCoordinator {
             seq_number: 0,
             tx_state: false,
-            local_pending_tx: Vec::new(),
-            remote_pending_tx: Vec::new(),
+            local_pending_tx: HashMap::new(),
+            remote_pending_tx: HashMap::new(),
             committed_tx: Vec::new(),
             temp_tx_ops: Vec::new(),
         }
@@ -167,28 +168,80 @@ impl TxCoordinator {
         return ops;
     }
 
-    //TODO: write setters/getters maybe w diff data structures
     fn add_op_to_cur_tx(&mut self, msg: Operation) {
         self.temp_tx_ops.push(msg);
     }
 
-    fn put_local_tx(&mut self, msg: Transaction) {
-        self.local_pending_tx.push((Vec::new(), msg));
+    fn start_message(&mut self, sender: String, tx: Transaction) {
+        //TODO  pass client id
+        let my_device_id = "id";
+        //TODO pass in sequencer number;
+        let tx_id: u64 = 1;
+
+        if sender == my_device_id {
+            self.local_pending_tx.insert(tx_id, (Vec::new(), tx));
+        } else {
+            self.remote_pending_tx.insert(tx_id, tx);
+        }
     }
 
-    fn commit_local_tx(&mut self, tx_seq: u64) {
-        // todo: move from local to committed
-        // seq number of commit or original msg?
-        unimplemented!();
+    fn commit_message(&mut self, sender: String, tx_id: &u64) {
+        //TODO  pass client id
+        let my_device_id = "id";
+
+        // committing a tx i coordinated
+        if sender == my_device_id {
+            let q = &mut self.local_pending_tx;
+            let tx = q[tx_id].1.clone();
+            //TODO: call apply locally
+            q.remove(tx_id);
+            self.committed_tx.push((*tx_id, tx));
+
+        //coordinating commit messages from not me
+        } else if self.local_pending_tx.contains_key(tx_id) {
+            let tuple = self.local_pending_tx[tx_id].clone();
+            let mut new_tuple = tuple.clone();
+            new_tuple.0.push(sender);
+
+            self.local_pending_tx.insert(*tx_id, new_tuple);
+            if tuple.0.len() == tuple.1.num_recipients.unwrap() {
+                //TODO: send commit to all recipients including me
+                return;
+            }
+
+        // commit message for a remote transaction
+        } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
+            == sender
+        {
+            //TODO: call apply locally
+            let tx = self.remote_pending_tx.remove(tx_id).unwrap();
+            self.committed_tx.push((*tx_id, tx));
+        }
     }
 
-    fn abort_local_tx() {}
+    fn abort_message(&mut self, sender: String, tx_id: &u64) {
+        //TODO  pass client id
+        let my_device_id = "id";
 
-    fn put_remote_tx() {}
-
-    fn commit_remote_tx() {}
-
-    fn abort_remote_tx() {}
+        if sender == my_device_id {
+            self.local_pending_tx.remove(tx_id);
+            return;
+        } else if self.local_pending_tx.contains_key(tx_id) {
+            assert!(self
+                .remote_pending_tx
+                .get(tx_id)
+                .unwrap()
+                .recipients
+                .contains(&sender));
+            //send abort message to all recipients including me
+        } else if self.remote_pending_tx.contains_key(tx_id) {
+            assert_eq!(
+                self.remote_pending_tx.get(tx_id).unwrap().coordinator,
+                sender
+            );
+            self.remote_pending_tx.remove(tx_id);
+        }
+    }
 
     fn detect_conflict(&self, msg: &Transaction) -> bool {
         let mut tx_keys = Vec::new();
@@ -201,7 +254,7 @@ impl TxCoordinator {
 
         //impl for all enums -> move to func over two txs
         for tx in self.local_pending_tx.clone().into_iter() {
-            for op in tx.1.ops.clone().into_iter() {
+            for op in tx.1 .1.ops.clone().into_iter() {
                 if let Operation::UpdateData(data_id, _) = op {
                     if tx_keys.contains(&data_id) {
                         return true;
@@ -211,7 +264,7 @@ impl TxCoordinator {
         }
 
         for tx in self.remote_pending_tx.clone().into_iter() {
-            for op in tx.ops.clone().into_iter() {
+            for op in tx.1.ops.clone().into_iter() {
                 if let Operation::UpdateData(data_id, _) = op {
                     if tx_keys.contains(&data_id) {
                         return true;
@@ -223,8 +276,8 @@ impl TxCoordinator {
         for tx in self.committed_tx.clone().into_iter() {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
-            if tx.seq_num > msg.prev_seq_num {
-                for op in tx.ops.clone().into_iter() {
+            if tx.1.seq_num > msg.prev_seq_num {
+                for op in tx.1.ops.clone().into_iter() {
                     if let Operation::UpdateData(data_id, _) = op {
                         if tx_keys.contains(&data_id) {
                             return true;
@@ -404,14 +457,12 @@ impl NoiseKVClient {
 
     fn initiate_transaction(&mut self, device_id: String, ops: Vec<Operation>) {
         let recipients = self.collect_recipients(ops.clone());
-        let transaction = Transaction::new(device_id, recipients.clone(), ops);
-        self.tx_coordinator.write().local_pending_tx.push((
-            vec![None; transaction.num_recipients.unwrap()],
-            transaction.clone(),
-        ));
+        let transaction =
+            Transaction::new(device_id.clone(), recipients.clone(), ops);
         self.send_message(
             recipients,
-            &Transaction::to_string(&transaction).unwrap(),
+            &Operation::to_string(&Operation::TxStart(device_id, transaction))
+                .unwrap(),
         );
     }
 
@@ -607,6 +658,18 @@ impl NoiseKVClient {
                 .delete_device(idkey_to_delete)
                 .map_err(Error::from),
             Operation::Test(_) => Ok(()),
+            Operation::TxStart(sender, tx) => {
+                self.tx_coordinator.write().start_message(sender, tx);
+                Ok(()) //FIX return something more meaningful
+            }
+            Operation::TxCommit(sender, tx_id) => {
+                self.tx_coordinator.write().commit_message(sender, &tx_id);
+                Ok(())
+            }
+            Operation::TxAbort(sender, tx_id) => {
+                self.tx_coordinator.write().abort_message(sender, &tx_id);
+                Ok(())
+            }
         }
     }
 
@@ -1012,7 +1075,10 @@ impl NoiseKVClient {
             self.tx_coordinator.write().add_op_to_cur_tx(op);
             Ok(())
         } else {
-            match self.send_message(device_ids, &Operation::to_string(&op).unwrap()).await {
+            match self
+                .send_message(device_ids, &Operation::to_string(&op).unwrap())
+                .await
+            {
                 Ok(_) => Ok(()),
                 Err(err) => Err(Error::SendFailed(err.to_string())),
             }

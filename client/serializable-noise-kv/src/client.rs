@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::{thread, time};
 use thiserror::Error;
 
-use noise_core::core::{Core, CoreClient};
+use noise_core::core::{Core, CoreClient, SequenceNumber};
 
 use crate::data::{BasicData, NoiseData};
 use crate::devices::Device;
@@ -43,6 +43,14 @@ pub enum Error {
     SendFailed(String),
     #[error("Invalid transaction status")]
     BadTransactionError,
+    #[error("Transaction conflicts")]
+    TransactionConflictsError,
+    #[error("not an error")]
+    SendToAll, //FIXME::not an error but here for now, make enum
+    #[error("also not an error")]
+    NOOP,
+    #[error("Tx not found locall")]
+    TxNotFound,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -71,8 +79,8 @@ enum Operation {
     Test(String),
     //need to make sure these dont recurse
     TxStart(String, Transaction),
-    TxCommit(String, u64),
-    TxAbort(String, u64),
+    TxCommit(String, SequenceNumber),
+    TxAbort(String, SequenceNumber),
 }
 
 impl Operation {
@@ -91,8 +99,8 @@ struct Transaction {
     recipients: Vec<String>,
     num_recipients: Option<usize>,
     ops: Vec<Operation>,
-    seq_num: Option<u64>,
-    prev_seq_num: Option<u64>,
+    sequence_number: Option<SequenceNumber>,
+    prev_seq_number: SequenceNumber,
 }
 
 impl Transaction {
@@ -100,14 +108,15 @@ impl Transaction {
         device_id: String,
         recipients: Vec<String>,
         ops: Vec<Operation>,
+        prev_seq_number: SequenceNumber,
     ) -> Transaction {
         Transaction {
             coordinator: device_id,
             recipients: recipients.clone(),
             num_recipients: Some(recipients.len()),
             ops,
-            seq_num: None,
-            prev_seq_num: None,
+            sequence_number: None,
+            prev_seq_number,
         }
     }
 
@@ -121,13 +130,13 @@ impl Transaction {
 }
 
 pub struct TxCoordinator {
-    seq_number: u64,
+    seq_number: SequenceNumber,
     /* transactions managed by me */
-    local_pending_tx: HashMap<u64, (Vec<String>, Transaction)>,
+    local_pending_tx: HashMap<SequenceNumber, (Vec<String>, Transaction)>,
     /* transactions managed by others awaiting commit message */
-    remote_pending_tx: HashMap<u64, Transaction>,
+    remote_pending_tx: HashMap<SequenceNumber, Transaction>,
     /* transactions committed (may be unecessary) */
-    committed_tx: Vec<(u64, Transaction)>,
+    committed_tx: Vec<(SequenceNumber, Transaction)>,
 
     tx_state: bool,
     /* true if currently within transaction */
@@ -161,39 +170,64 @@ impl TxCoordinator {
         return self.tx_state;
     }
 
-    fn exit_tx(&mut self) -> Vec<Operation> {
+    fn exit_tx(&mut self) -> (Vec<Operation>, SequenceNumber) {
         let ops = self.temp_tx_ops.clone();
         self.temp_tx_ops = Vec::new();
         self.tx_state = false;
-        return ops;
+        return (ops, self.seq_number);
     }
 
     fn add_op_to_cur_tx(&mut self, msg: Operation) {
         self.temp_tx_ops.push(msg);
     }
 
-    fn start_message(&mut self, sender: String, tx: Transaction) {
-        //TODO  pass client id
-        let my_device_id = "id";
-        //TODO pass in sequencer number;
-        let tx_id: u64 = 1;
+    fn get_transaction(
+        &self,
+        tx_id: SequenceNumber,
+    ) -> Result<&Transaction, Error> {
+        if self.local_pending_tx.contains_key(&tx_id) {
+            return Ok(&self.local_pending_tx.get(&tx_id).unwrap().1);
+        } else if self.remote_pending_tx.contains_key(&tx_id) {
+            return Ok(&self.remote_pending_tx.get(&tx_id).unwrap());
+        }
+        return Err(Error::TxNotFound);
+    }
+
+    fn start_message(
+        &mut self,
+        my_device_id: String,
+        sender: String,
+        tx_id: SequenceNumber,
+        unsequenced_tx: Transaction,
+    ) -> Result<(), Error> {
+        let mut tx = unsequenced_tx.clone();
+        tx.sequence_number = Some(tx_id);
 
         if sender == my_device_id {
-            self.local_pending_tx.insert(tx_id, (Vec::new(), tx));
+            self.local_pending_tx
+                .insert(tx_id, (Vec::new(), tx.clone()));
         } else {
-            self.remote_pending_tx.insert(tx_id, tx);
+            self.remote_pending_tx.insert(tx_id, tx.clone());
+        }
+
+        let res = self.detect_conflict(&tx);
+        if res {
+            return Ok(());
+        } else {
+            return Err(Error::TransactionConflictsError);
         }
     }
 
-    fn commit_message(&mut self, sender: String, tx_id: &u64) {
-        //TODO  pass client id
-        let my_device_id = "id";
-
+    fn commit_message(
+        &mut self,
+        my_device_id: String,
+        sender: String,
+        tx_id: &SequenceNumber,
+    ) -> Result<(), Error> {
         // committing a tx i coordinated
         if sender == my_device_id {
             let q = &mut self.local_pending_tx;
             let tx = q[tx_id].1.clone();
-            //TODO: call apply locally
             q.remove(tx_id);
             self.committed_tx.push((*tx_id, tx));
 
@@ -205,27 +239,34 @@ impl TxCoordinator {
 
             self.local_pending_tx.insert(*tx_id, new_tuple);
             if tuple.0.len() == tuple.1.num_recipients.unwrap() {
-                //TODO: send commit to all recipients including me
-                return;
+                return Err(Error::SendToAll);
             }
+
+            return Err(Error::NOOP);
 
         // commit message for a remote transaction
         } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
             == sender
         {
-            //TODO: call apply locally
             let tx = self.remote_pending_tx.remove(tx_id).unwrap();
             self.committed_tx.push((*tx_id, tx));
         }
+
+        self.seq_number = *tx_id;
+        Ok(())
     }
 
-    fn abort_message(&mut self, sender: String, tx_id: &u64) {
-        //TODO  pass client id
-        let my_device_id = "id";
-
-        if sender == my_device_id {
+    fn abort_message(
+        &mut self,
+        my_device_id: String,
+        sender: String,
+        tx_id: &SequenceNumber,
+    ) -> Result<(), Error> {
+        // this client sent this abort message to all recipients
+        if sender == my_device_id && self.local_pending_tx.contains_key(tx_id) {
             self.local_pending_tx.remove(tx_id);
-            return;
+        // this client got an abort message from a recipient
+        // for a tx this client is coordinating
         } else if self.local_pending_tx.contains_key(tx_id) {
             assert!(self
                 .remote_pending_tx
@@ -233,7 +274,9 @@ impl TxCoordinator {
                 .unwrap()
                 .recipients
                 .contains(&sender));
-            //send abort message to all recipients including me
+            return Err(Error::SendToAll);
+        // a coordinator for a remote transaction is telling this client to
+        // abort
         } else if self.remote_pending_tx.contains_key(tx_id) {
             assert_eq!(
                 self.remote_pending_tx.get(tx_id).unwrap().coordinator,
@@ -241,6 +284,7 @@ impl TxCoordinator {
             );
             self.remote_pending_tx.remove(tx_id);
         }
+        Ok(())
     }
 
     fn detect_conflict(&self, msg: &Transaction) -> bool {
@@ -276,7 +320,7 @@ impl TxCoordinator {
         for tx in self.committed_tx.clone().into_iter() {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
-            if tx.1.seq_num > msg.prev_seq_num {
+            if tx.1.sequence_number.unwrap() > msg.prev_seq_number {
                 for op in tx.1.ops.clone().into_iter() {
                     if let Operation::UpdateData(data_id, _) = op {
                         if tx_keys.contains(&data_id) {
@@ -302,7 +346,12 @@ pub struct NoiseKVClient {
 
 #[async_trait]
 impl CoreClient for NoiseKVClient {
-    async fn client_callback(&self, sender: String, message: String) {
+    async fn client_callback(
+        &self,
+        seq: SequenceNumber,
+        sender: String,
+        message: String,
+    ) {
         if self.sec_wait_to_apply.is_some() {
             thread::sleep(time::Duration::from_secs(
                 self.sec_wait_to_apply.unwrap(),
@@ -314,7 +363,7 @@ impl CoreClient for NoiseKVClient {
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
-                            match self.demux(operation).await {
+                            match self.demux(seq, operation).await {
                                 Ok(_) => {}
                                 Err(err) => panic!("Error in demux: {:?}", err),
                             }
@@ -448,20 +497,75 @@ impl NoiseKVClient {
         return recipients;
     }
 
-    async fn apply_locally(msg: &Transaction) -> Result<(), Error> {
-        for op in msg.ops.clone().into_iter() {
+    async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
+        let coord_guard = self.tx_coordinator.read();
+        let tx = coord_guard.get_transaction(tx_id).unwrap();
+        for op in tx.ops.clone().into_iter() {
             //call into data store to apply
+            // TODO: handle errors
+            self.demux(tx_id.clone(), op);
         }
         Ok(())
     }
 
-    fn initiate_transaction(&mut self, device_id: String, ops: Vec<Operation>) {
+    fn initiate_transaction(
+        &self,
+        device_id: String,
+        ops: Vec<Operation>,
+        prev_seq_number: SequenceNumber,
+    ) {
         let recipients = self.collect_recipients(ops.clone());
-        let transaction =
-            Transaction::new(device_id.clone(), recipients.clone(), ops);
+        let transaction = Transaction::new(
+            device_id.clone(),
+            recipients.clone(),
+            ops,
+            prev_seq_number,
+        );
         self.send_message(
             recipients,
             &Operation::to_string(&Operation::TxStart(device_id, transaction))
+                .unwrap(),
+        );
+    }
+
+    fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
+        let recipients = vec![self.idkey(), sender];
+        self.send_message(
+            recipients,
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
+                .unwrap(),
+        );
+    }
+
+    fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
+        let binding = self.tx_coordinator.read();
+        let tx = binding.get_transaction(tx_id).unwrap().clone();
+        self.send_message(
+            tx.recipients,
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
+                .unwrap(),
+        );
+    }
+
+    fn send_commit_to_coordinator(
+        &self,
+        sender: String,
+        tx_id: SequenceNumber,
+    ) {
+        let recipients = vec![self.idkey(), sender];
+        self.send_message(
+            recipients,
+            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
+                .unwrap(),
+        );
+    }
+
+    fn send_commit_as_coordinator(&self, tx_id: SequenceNumber) {
+        let binding = self.tx_coordinator.read();
+        let tx = binding.get_transaction(tx_id).unwrap().clone();
+        self.send_message(
+            tx.recipients,
+            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
                 .unwrap(),
         );
     }
@@ -516,7 +620,11 @@ impl NoiseKVClient {
         }
     }
 
-    async fn demux(&self, operation: Operation) -> Result<(), Error> {
+    async fn demux(
+        &self,
+        seq: SequenceNumber,
+        operation: Operation,
+    ) -> Result<(), Error> {
         match operation {
             Operation::UpdateLinked(
                 sender,
@@ -659,15 +767,41 @@ impl NoiseKVClient {
                 .map_err(Error::from),
             Operation::Test(_) => Ok(()),
             Operation::TxStart(sender, tx) => {
-                self.tx_coordinator.write().start_message(sender, tx);
+                let res = self.tx_coordinator.write().start_message(
+                    self.idkey(),
+                    sender.clone(),
+                    seq,
+                    tx,
+                );
+                if res == Err(Error::TransactionConflictsError) {
+                    self.send_abort_to_coordinator(sender, seq);
+                } else if sender != self.idkey() {
+                    self.send_commit_to_coordinator(sender, seq);
+                }
                 Ok(()) //FIX return something more meaningful
             }
             Operation::TxCommit(sender, tx_id) => {
-                self.tx_coordinator.write().commit_message(sender, &tx_id);
+                let resp = self.tx_coordinator.write().commit_message(
+                    self.idkey(),
+                    sender,
+                    &tx_id,
+                );
+                if resp == Err(Error::SendToAll) {
+                    self.send_commit_as_coordinator(tx_id);
+                } else if resp == Ok(()) {
+                    self.apply_locally(tx_id).await;
+                }
                 Ok(())
             }
             Operation::TxAbort(sender, tx_id) => {
-                self.tx_coordinator.write().abort_message(sender, &tx_id);
+                let resp = self.tx_coordinator.write().abort_message(
+                    self.idkey(),
+                    sender,
+                    &tx_id,
+                );
+                if resp == Err(Error::SendToAll) {
+                    self.send_abort_as_coordinator(tx_id);
+                }
                 Ok(())
             }
         }
@@ -1025,8 +1159,8 @@ impl NoiseKVClient {
     }
 
     pub fn end_transaction(&mut self) {
-        let ops = self.tx_coordinator.write().exit_tx();
-        self.initiate_transaction(self.idkey(), ops);
+        let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
+        self.initiate_transaction(self.idkey(), ops, prev_seq_number);
     }
 
     pub async fn set_data(

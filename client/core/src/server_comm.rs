@@ -84,13 +84,18 @@ pub mod attestation {
             hasher.finalize_into((&mut attestation_messages_hash).into());
 
             let mut attestation_data = [0; 48];
-            attestation_data[0..8].copy_from_slice(&u64::to_le_bytes(first_epoch));
-            attestation_data[8..16].copy_from_slice(&u64::to_le_bytes(next_epoch));
+            attestation_data[0..8]
+                .copy_from_slice(&u64::to_le_bytes(first_epoch));
+            attestation_data[8..16]
+                .copy_from_slice(&u64::to_le_bytes(next_epoch));
             attestation_data[16..].copy_from_slice(&attestation_messages_hash);
             AttestationData(attestation_data)
         }
 
-        pub fn attest(&self, attestation_key: &ed25519_dalek::Keypair) -> Attestation {
+        pub fn attest(
+            &self,
+            attestation_key: &ed25519_dalek::Keypair,
+        ) -> Attestation {
             use ed25519_dalek::Signer;
             let signature = attestation_key.sign(&self.0);
 
@@ -114,7 +119,8 @@ pub mod attestation {
             }
 
             // Generate the hash-table to be passed alongside the attestation:
-            let message_hash_table: Vec<_> = Self::message_hash_table(messages.iter()).collect();
+            let message_hash_table: Vec<_> =
+                Self::message_hash_table(messages.iter()).collect();
 
             // Sanity check that the claim we're producing is supported by the
             // passed attestation:
@@ -174,8 +180,8 @@ pub mod attestation {
             public_key: &ed25519_dalek::PublicKey,
         ) -> bool {
             // Two claims support each other when
-            // - one contains a message at a sequence number that the other
-            //   does not (positive + negative claim), or
+            // - one contains a message at a sequence number that the other does
+            //   not (positive + negative claim), or
             // - both contain a message with an identical sequence number but
             //   differing receipients or common payload (positive + positive).
             //
@@ -188,40 +194,50 @@ pub mod attestation {
                 (other, self)
             };
 
-            let (p_idx, claim_p_recipients) = if let Some(p) = &claim_p.message_recipients {
-                p
-            } else {
-                // At least one positive claim required!
-                return false;
-            };
+            let (p_idx, claim_p_recipients) =
+                if let Some(p) = &claim_p.message_recipients {
+                    p
+                } else {
+                    // At least one positive claim required!
+                    return false;
+                };
 
             // Need to handle positive + positive & positive + negative
             // differently:
             if let Some((pn_idx, _recipients)) = &claim_pn.message_recipients {
                 // Positive + positive claim! Compare sequence numbers. If they
                 // match, recipients and payload must be identical.
-                let (p_seqid, p_recipients, p_payload) = claim_p.message_hash_table[*p_idx];
-                let (pn_seqid, pn_recipients, pn_payload) = claim_pn.message_hash_table[*pn_idx];
+                let (p_seqid, p_recipients, p_payload) =
+                    claim_p.message_hash_table[*p_idx];
+                let (pn_seqid, pn_recipients, pn_payload) =
+                    claim_pn.message_hash_table[*pn_idx];
 
-                if p_seqid != pn_seqid || (p_recipients == pn_recipients && p_payload == pn_payload)
+                if p_seqid != pn_seqid
+                    || (p_recipients == pn_recipients
+                        && p_payload == pn_payload)
                 {
                     return false;
                 }
 
-            // Claims support each other, but individual claims not verified yet!
+            // Claims support each other, but individual claims not
+            // verified yet!
             } else {
                 // Positive + negative claim! The positive claim can only be
                 // supported by the negative claim if the offending message's
                 // sequence number is contained within the negative claim's
                 // sequence space, so verify that.
-                let (p_seqid, p_recipients, _p_payload) = claim_p.message_hash_table[*p_idx];
+                let (p_seqid, p_recipients, _p_payload) =
+                    claim_p.message_hash_table[*p_idx];
 
                 // Is there a better way to do this which doesn't involve
                 // bitshifting & casting?
                 let [e0, e1, e2, e3, e4, e5, e6, e7, _, _, _, _, _, _, _, _] =
                     u128::to_be_bytes(p_seqid);
-                let p_epoch = u64::from_be_bytes([e0, e1, e2, e3, e4, e5, e6, e7]);
-                if p_epoch < claim_pn.first_epoch || p_epoch >= claim_pn.next_epoch {
+                let p_epoch =
+                    u64::from_be_bytes([e0, e1, e2, e3, e4, e5, e6, e7]);
+                if p_epoch < claim_pn.first_epoch
+                    || p_epoch >= claim_pn.next_epoch
+                {
                     return false;
                 }
 
@@ -276,7 +292,8 @@ pub mod attestation {
                     return false;
                 }
 
-                // Claims support each other, but individual claims not verified yet!
+                // Claims support each other, but individual claims not
+                // verified yet!
             }
 
             // Verify each of the invidual claim's cryptographic validity. If
@@ -336,15 +353,15 @@ pub mod attestation {
 
         pub fn first_epoch(&self) -> u64 {
             u64::from_le_bytes([
-                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6],
-                self.0[7],
+                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4],
+                self.0[5], self.0[6], self.0[7],
             ])
         }
 
         pub fn next_epoch(&self) -> u64 {
             u64::from_le_bytes([
-                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12], self.0[13], self.0[14],
-                self.0[15],
+                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12],
+                self.0[13], self.0[14], self.0[15],
             ])
         }
 
@@ -356,9 +373,13 @@ pub mod attestation {
             data.0 == self.0[0..48] && self.verify_trusted(public_key)
         }
 
-        pub fn verify_trusted(&self, public_key: &ed25519_dalek::PublicKey) -> bool {
+        pub fn verify_trusted(
+            &self,
+            public_key: &ed25519_dalek::PublicKey,
+        ) -> bool {
             use ed25519_dalek::Verifier;
-            let signature = ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
+            let signature =
+                ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
             public_key.verify(&self.0[..48], &signature).is_ok()
         }
     }
@@ -487,18 +508,18 @@ impl<C: CoreClient> ServerComm<C> {
         let client = reqwest::Client::new();
         let base_url = Url::parse(
 	    &client
-		.get(format!("{}/shard", BOOTSTRAP_SERVER_URL))
-		.header(
+                .get(format!("{}/shard", BOOTSTRAP_SERVER_URL))
+                .header(
                     "Authorization",
                     &format!("Bearer {}", &idkey),
-		)
-		.send()
-		.await
-		.expect("Failed to contact the bootstrap server shard")
-		.text()
-		.await
-		.expect("Failed to retrieve response from the bootstrap server shard")
-	).expect("Failed to construct home-shard base url from response");
+                )
+                .send()
+                .await
+                .expect("Failed to contact the bootstrap server shard")
+                .text()
+                .await
+                .expect("Failed to retrieve response from the bootstrap server shard")
+        ).expect("Failed to construct home-shard base url from response");
 
         let server_attestation_pubkey = {
             use base64::{engine::general_purpose, Engine as _};
@@ -587,10 +608,10 @@ impl<C: CoreClient> ServerComm<C> {
                                             assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
                                             assert!(attestation.next_epoch() == emb.epoch_id + 1, "Attestation claims to cover unreceived epochs");
                                             let attestation_data =
-						attestation::AttestationData::from_inbox_epochs(
-						    &task_idkey,
-					    attestation.first_epoch(), attestation.next_epoch(),
-					    emb.messages.iter());
+                                                attestation::AttestationData::from_inbox_epochs(
+                                                    &task_idkey,
+                                            attestation.first_epoch(), attestation.next_epoch(),
+                                            emb.messages.iter());
                                             assert!(attestation.verify(&attestation_data, &server_attestation_pubkey), "Attestation verification failed");
                                             next_epoch =
                                                 attestation.next_epoch();

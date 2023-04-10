@@ -300,8 +300,6 @@ impl MetadataStore {
             }
             None => {
                 // create new group
-                println!("CREATING NEW GROUP");
-                println!("new_members: {:?}", new_members.clone());
                 let new_group = Group::new(
                     group_id_opt,
                     Some(vec![perm_id.to_string()]),
@@ -379,8 +377,6 @@ impl MetadataStore {
             Some(perm_val) => {
                 match perm_val.owners() {
                     Some(owner_group) => {
-                        println!("group_id: {:?}", group_id);
-                        println!("owner_group: {:?}", owner_group);
                         self.is_group_member(group_id, owner_group, &new_group)
                     }
                     None => false,
@@ -415,19 +411,7 @@ impl MetadataStore {
         to_modify_group_val: Group,
     ) -> bool {
         let perm_ids = to_modify_group_val.perm_ids();
-        println!("-----");
-        println!("does the modifying_group have enough permissions to set to_modify_group?");
-        println!("-----");
-        println!(
-            "modifying_group_val: {:?}",
-            self.get_group(modifying_group_id)
-        );
-        // FIXME doesn't exist in store yet
-        println!("to_modify_group_val: {:?}", to_modify_group_val.clone());
         for perm_id in perm_ids {
-            println!("");
-            println!("perm_id: {:?}", perm_id.clone());
-            println!("perm_val: {:?}", self.get_perm(perm_id));
             if self.has_metadata_mod_permissions(
                 modifying_group_id,
                 perm_id,
@@ -752,8 +736,6 @@ impl MetadataStore {
 
         while !to_visit.is_empty() {
             let cur_id = to_visit.pop().unwrap();
-            println!("cur_group_id: {:?}", cur_id);
-            println!("cur_group_val: {:?}", self.get_group(cur_id));
 
             if visited.get(cur_id).is_some() {
                 continue;
@@ -763,7 +745,6 @@ impl MetadataStore {
                 return true;
             }
 
-            println!("cur_id: {:?}", cur_id.clone());
             visited.insert(cur_id);
             match &self.get_group(cur_id) {
                 Some(cur_group) => {

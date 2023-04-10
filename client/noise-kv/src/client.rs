@@ -106,8 +106,6 @@ impl CoreClient for NoiseKVClient {
 
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
-                println!("");
-                println!("OPERATION: {:?}", operation);
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
@@ -135,8 +133,8 @@ impl CoreClient for NoiseKVClient {
 
         let mut ctr = self.ctr.lock();
         if *ctr != 0 {
-            println!("cb_ctr: {:?}", *ctr);
-            println!("");
+            //println!("cb_ctr: {:?}", *ctr);
+            //println!("");
             *ctr -= 1;
             self.ctr_cv.notify_all();
         }
@@ -275,7 +273,10 @@ impl NoiseKVClient {
             }
             /* Need metadata-mod permissions */
             Operation::SetPerm(perm_id, perm_val) => {
-                // if permissions set with this id already exists, error
+                // if permissions set with this id already exists, return error
+                // this prevents malicious clients from replacing an existing
+                // permissions object with one of their choosing, giving them
+                // access to whatever data was pointed to
                 if self
                     .device
                     .read()
@@ -291,6 +292,8 @@ impl NoiseKVClient {
                 Ok(())
             }
             Operation::AddPermMembers(perm_id, group_id_opt, new_members) => {
+                // must have valid permissions given existing permissions
+                // object
                 if !self
                     .device
                     .read()
@@ -309,6 +312,11 @@ impl NoiseKVClient {
             }
             /* Need metadata-mod permissions (via perm-backpointer) */
             Operation::SetGroup(group_id, group_val) => {
+                // group can have any perm_id; if the perm object with perm_id
+                // exists, then it is valid given the above checks run before
+                // setting/modifying it and the sender thus must have the
+                // required permissions; if the perm object does
+                // not exist, false is returned
                 if !self
                     .device
                     .read()
@@ -325,6 +333,8 @@ impl NoiseKVClient {
                 }
                 Ok(())
             }
+            // FIXME groups may need to be sent in a particular order in order
+            // for the above check to work in a loop
             Operation::SetGroups(groups) => Ok(()),
             //Operation::LinkGroups(parent_id, child_id) => Ok(()),
             //Operation::DeleteGroup(group_id) => Ok(()),
@@ -1020,8 +1030,6 @@ impl NoiseKVClient {
 
                 // add owner group into perms
                 perm_val.set_owners(group_val.group_id());
-
-                println!("perm_val: {:?}", perm_val.clone());
 
                 let idkeys = device_guard
                     .as_ref()

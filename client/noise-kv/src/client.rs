@@ -298,7 +298,7 @@ impl NoiseKVClient {
                     .unwrap()
                     .meta_store
                     .read()
-                    .has_metadata_mod_permissions(sender, perm_id)
+                    .has_metadata_mod_permissions(sender, perm_id, None)
                 {
                     return Err(Error::InsufficientPermissions(
                         sender.to_string(),
@@ -309,21 +309,20 @@ impl NoiseKVClient {
             }
             /* Need metadata-mod permissions (via perm-backpointer) */
             Operation::SetGroup(group_id, group_val) => {
-                // FIXME think more about what kind of check is useful
-                //if !self
-                //    .device
-                //    .read()
-                //    .as_ref()
-                //    .unwrap()
-                //    .meta_store
-                //    .read()
-                //    .find_metadata_mod_permissions(sender, group_val.clone())
-                //{
-                //    return Err(Error::InsufficientPermissions(
-                //        sender.to_string(),
-                //        group_id.to_string(), // FIXME use diff error
-                //    ));
-                //}
+                if !self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .find_metadata_mod_permissions(sender, group_val.clone())
+                {
+                    return Err(Error::InsufficientPermissions(
+                        sender.to_string(),
+                        group_id.to_string(),
+                    ));
+                }
                 Ok(())
             }
             Operation::SetGroups(groups) => Ok(()),
@@ -740,7 +739,7 @@ impl NoiseKVClient {
             .unwrap()
             .meta_store
             .read()
-            .is_group_member(&contact_idkey, &linked_name)
+            .is_group_member(&contact_idkey, &linked_name, &None)
         {
             return Err(Error::SelfIsInvalidContact);
         }

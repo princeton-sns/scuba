@@ -350,14 +350,14 @@ impl MetadataStore {
                 // check if writer or above
                 let is_owner = match perm_val.owners() {
                     Some(owner_group) => {
-                        self.is_group_member(group_id, owner_group)
+                        self.is_group_member(group_id, owner_group, &None)
                     }
                     None => false,
                 };
                 // TODO check admins
                 let is_writer = match perm_val.writers() {
                     Some(writer_group) => {
-                        self.is_group_member(group_id, writer_group)
+                        self.is_group_member(group_id, writer_group, &None)
                     }
                     None => false,
                 };
@@ -371,6 +371,7 @@ impl MetadataStore {
         &self,
         group_id: &String,
         perm_id: &String,
+        new_group: Option<Group>,
     ) -> bool {
         let perm_opt = self.get_perm(perm_id);
         match perm_opt {
@@ -380,7 +381,7 @@ impl MetadataStore {
                     Some(owner_group) => {
                         println!("group_id: {:?}", group_id);
                         println!("owner_group: {:?}", owner_group);
-                        self.is_group_member(group_id, owner_group)
+                        self.is_group_member(group_id, owner_group, &new_group)
                     }
                     None => false,
                 }
@@ -400,7 +401,7 @@ impl MetadataStore {
             // check if owner
             Some(perm_val) => match perm_val.owners() {
                 Some(owner_group) => {
-                    self.is_group_member(group_id, owner_group)
+                    self.is_group_member(group_id, owner_group, &None)
                 }
                 None => false,
             },
@@ -414,6 +415,9 @@ impl MetadataStore {
         to_modify_group_val: Group,
     ) -> bool {
         let perm_ids = to_modify_group_val.perm_ids();
+        println!("-----");
+        println!("does the modifying_group have enough permissions to set to_modify_group?");
+        println!("-----");
         println!(
             "modifying_group_val: {:?}",
             self.get_group(modifying_group_id)
@@ -424,7 +428,11 @@ impl MetadataStore {
             println!("");
             println!("perm_id: {:?}", perm_id.clone());
             println!("perm_val: {:?}", self.get_perm(perm_id));
-            if self.has_metadata_mod_permissions(modifying_group_id, perm_id) {
+            if self.has_metadata_mod_permissions(
+                modifying_group_id,
+                perm_id,
+                Some(to_modify_group_val.clone()),
+            ) {
                 return true;
             }
         }
@@ -736,6 +744,7 @@ impl MetadataStore {
         &'a self,
         is_member_id: &'a String,
         group_id: &'a String,
+        new_group_opt: &Option<Group>,
     ) -> bool {
         let mut visited = HashSet::<&String>::new();
         let mut to_visit = Vec::<&String>::new();
@@ -754,11 +763,28 @@ impl MetadataStore {
                 return true;
             }
 
+            println!("cur_id: {:?}", cur_id.clone());
             visited.insert(cur_id);
-            if let Some(children) = &self.get_group(cur_id).unwrap().children {
-                for child in children {
-                    to_visit.push(&child);
+            match &self.get_group(cur_id) {
+                Some(cur_group) => {
+                    if let Some(children) = &cur_group.children {
+                        for child in children {
+                            to_visit.push(&child);
+                        }
+                    }
                 }
+                None => match new_group_opt {
+                    Some(new_group) => {
+                        if let Some(children) = &new_group.children {
+                            // children should exist in hashmap since (for now)
+                            // we're only adding one group at a time
+                            for child in children {
+                                to_visit.push(&child);
+                            }
+                        }
+                    }
+                    None => panic!("group does not exist"),
+                },
             }
         }
 

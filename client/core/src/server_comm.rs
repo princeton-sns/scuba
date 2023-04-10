@@ -11,6 +11,10 @@ use urlencoding::encode;
 
 pub mod attestation {
     use super::EncryptedInboxMessage;
+    use std::borrow::Borrow;
+
+    // -------------------------------------------------------------------------
+    // Attestation payload layout
 
     #[derive(Clone, Debug)]
     // Format:
@@ -20,50 +24,73 @@ pub mod attestation {
     pub struct AttestationData([u8; 48]);
 
     impl AttestationData {
-        pub fn from_inbox_epochs<'a>(
+        fn message_hash_table<T: Borrow<EncryptedInboxMessage>>(
+            messages: impl Iterator<Item = T>,
+        ) -> impl Iterator<Item = (u128, [u8; 32], [u8; 32])> {
+            use sha2::{Digest, Sha256};
+
+            let mut hasher = Sha256::new();
+
+            messages.map(move |message| {
+                for r in message.borrow().recipients.iter() {
+                    hasher.update(r.as_bytes());
+                    hasher.update(b";");
+                }
+                let mut recipients_digest = [0; 32];
+                hasher.finalize_into_reset((&mut recipients_digest).into());
+
+                let mut payload_digest = [0; 32];
+                hasher.update(message.borrow().enc_common.0.as_bytes());
+                hasher.finalize_into_reset((&mut payload_digest).into());
+
+                (message.borrow().seq_id, recipients_digest, payload_digest)
+            })
+        }
+
+        pub fn from_inbox_epochs<T: Borrow<EncryptedInboxMessage>>(
+            client_id: &str,
             first_epoch: u64,
             next_epoch: u64,
-            messages: impl Iterator<Item = &'a EncryptedInboxMessage>,
+            messages: impl Iterator<Item = T>,
+        ) -> AttestationData {
+            Self::from_inbox_epochs_int(
+                client_id,
+                first_epoch,
+                next_epoch,
+                Self::message_hash_table(messages),
+            )
+        }
+
+        fn from_inbox_epochs_int<T: Borrow<(u128, [u8; 32], [u8; 32])>>(
+            client_id: &str,
+            first_epoch: u64,
+            next_epoch: u64,
+            message_hash_table: impl Iterator<Item = T>,
         ) -> AttestationData {
             use sha2::{Digest, Sha256};
 
-            let mut message_hasher = Sha256::new();
-            let mut attestation_messages_hasher = Sha256::new();
+            let mut hasher = Sha256::new();
 
-            for message in messages {
-                for r in message.recipients.iter() {
-                    message_hasher.update(r.as_bytes());
-                    message_hasher.update(b";");
-                }
-                let mut recipients_digest = [0; 32];
-                message_hasher
-                    .finalize_into_reset((&mut recipients_digest).into());
-                attestation_messages_hasher.update(&recipients_digest);
+            hasher.update(client_id.as_bytes());
 
-                let mut payload_digest = [0; 32];
-                message_hasher.update(message.enc_common.0.as_bytes());
-                message_hasher
-                    .finalize_into_reset((&mut payload_digest).into());
-                attestation_messages_hasher.update(&recipients_digest);
-            }
+            message_hash_table.for_each(|b| {
+                let (epoch_id, recipients_digest, payload_digest) = b.borrow();
+                hasher.update(&u128::to_le_bytes(*epoch_id));
+                hasher.update(&recipients_digest);
+                hasher.update(&payload_digest);
+            });
 
             let mut attestation_messages_hash = [0; 32];
-            attestation_messages_hasher
-                .finalize_into((&mut attestation_messages_hash).into());
+            hasher.finalize_into((&mut attestation_messages_hash).into());
 
             let mut attestation_data = [0; 48];
-            attestation_data[0..8]
-                .copy_from_slice(&u64::to_le_bytes(first_epoch));
-            attestation_data[8..16]
-                .copy_from_slice(&u64::to_le_bytes(next_epoch));
+            attestation_data[0..8].copy_from_slice(&u64::to_le_bytes(first_epoch));
+            attestation_data[8..16].copy_from_slice(&u64::to_le_bytes(next_epoch));
             attestation_data[16..].copy_from_slice(&attestation_messages_hash);
             AttestationData(attestation_data)
         }
 
-        pub fn attest(
-            &self,
-            attestation_key: &ed25519_dalek::Keypair,
-        ) -> Attestation {
+        pub fn attest(&self, attestation_key: &ed25519_dalek::Keypair) -> Attestation {
             use ed25519_dalek::Signer;
             let signature = attestation_key.sign(&self.0);
 
@@ -71,6 +98,196 @@ pub mod attestation {
             attestation[0..48].copy_from_slice(&self.0);
             attestation[48..].copy_from_slice(&signature.to_bytes());
             Attestation(attestation)
+        }
+
+        pub fn produce_claim(
+            &self,
+            client_id: String,
+            first_epoch: u64,
+            next_epoch: u64,
+            messages: Vec<EncryptedInboxMessage>,
+            claim_message_idx: Option<usize>,
+            attestation: Attestation,
+        ) -> AttestationClaim {
+            if let Some(idx) = claim_message_idx {
+                assert!(idx < messages.len());
+            }
+
+            // Generate the hash-table to be passed alongside the attestation:
+            let message_hash_table: Vec<_> = Self::message_hash_table(messages.iter()).collect();
+
+            // Sanity check that the claim we're producing is supported by the
+            // passed attestation:
+            let attestation_data = Self::from_inbox_epochs_int(
+                &client_id,
+                first_epoch,
+                next_epoch,
+                message_hash_table.iter(),
+            );
+            assert!(attestation_data.0[..] == attestation.0[..48]);
+
+            // Extract the server signature from the attestation:
+            let mut signature = [0; 64];
+            signature.copy_from_slice(&attestation.0[48..]);
+
+            AttestationClaim {
+                client_id,
+                first_epoch,
+                next_epoch,
+                message_hash_table,
+                message_recipients: claim_message_idx.map(|idx| {
+                    // Need to clone, can't move out of Vec
+                    (idx, messages[idx].recipients.clone())
+                }),
+                attestation: signature,
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct AttestationClaim {
+        pub client_id: String,
+        pub first_epoch: u64,
+        pub next_epoch: u64,
+        pub message_hash_table: Vec<(u128, [u8; 32], [u8; 32])>,
+        pub message_recipients: Option<(usize, Vec<String>)>,
+        pub attestation: [u8; 64],
+    }
+
+    impl AttestationClaim {
+        pub fn attestation(&self) -> Attestation {
+            let attestation_data = AttestationData::from_inbox_epochs_int(
+                &self.client_id,
+                self.first_epoch,
+                self.next_epoch,
+                self.message_hash_table.iter(),
+            );
+            let mut attestation_buf = [0; 48 + 64];
+            attestation_buf[..48].copy_from_slice(&attestation_data.0);
+            attestation_buf[48..].copy_from_slice(&self.attestation);
+            Attestation(attestation_buf)
+        }
+
+        pub fn supports(
+            &self,
+            other: &AttestationClaim,
+            public_key: &ed25519_dalek::PublicKey,
+        ) -> bool {
+            // Two claims support each other when
+            // - one contains a message at a sequence number that the other
+            //   does not (positive + negative claim), or
+            // - both contain a message with an identical sequence number but
+            //   differing receipients or common payload (positive + positive).
+            //
+            // For simpler handling, "sort" the two claims by whichever contains
+            // a potentially conflicting message reference. It's invalid for
+            // neither of them to point to a message:
+            let (claim_p, claim_pn) = if self.message_recipients.is_some() {
+                (self, other)
+            } else {
+                (other, self)
+            };
+
+            let (p_idx, claim_p_recipients) = if let Some(p) = &claim_p.message_recipients {
+                p
+            } else {
+                // At least one positive claim required!
+                return false;
+            };
+
+            // Need to handle positive + positive & positive + negative
+            // differently:
+            if let Some((pn_idx, _recipients)) = &claim_pn.message_recipients {
+                // Positive + positive claim! Compare sequence numbers. If they
+                // match, recipients and payload must be identical.
+                let (p_seqid, p_recipients, p_payload) = claim_p.message_hash_table[*p_idx];
+                let (pn_seqid, pn_recipients, pn_payload) = claim_pn.message_hash_table[*pn_idx];
+
+                if p_seqid != pn_seqid || (p_recipients == pn_recipients && p_payload == pn_payload)
+                {
+                    return false;
+                }
+
+            // Claims support each other, but individual claims not verified yet!
+            } else {
+                // Positive + negative claim! The positive claim can only be
+                // supported by the negative claim if the offending message's
+                // sequence number is contained within the negative claim's
+                // sequence space, so verify that.
+                let (p_seqid, p_recipients, _p_payload) = claim_p.message_hash_table[*p_idx];
+
+                // Is there a better way to do this which doesn't involve
+                // bitshifting & casting?
+                let [e0, e1, e2, e3, e4, e5, e6, e7, _, _, _, _, _, _, _, _] =
+                    u128::to_be_bytes(p_seqid);
+                let p_epoch = u64::from_be_bytes([e0, e1, e2, e3, e4, e5, e6, e7]);
+                if p_epoch < claim_pn.first_epoch || p_epoch >= claim_pn.next_epoch {
+                    return false;
+                }
+
+                // claim_p's message lies in claim_pn's sequence space, now we
+                // need to verify that claim_p should indeed have been received
+                // by claim_pn. We can do this by ensuring that claim_pn's
+                // client_id is in the recipients of claim_p's message.
+                //
+                // For this, we first have to validate that the
+                // message_hash_table entry's recipients hash corresponds to the
+                // recipients vec part of the claim, and then check that
+                // claim_pn's client id is an element in that vec:
+                let claim_p_recipients_digest = {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    for r in claim_p_recipients {
+                        hasher.update(r.as_bytes());
+                        hasher.update(b";");
+                    }
+                    let mut recipients_digest = [0; 32];
+                    hasher.finalize_into_reset((&mut recipients_digest).into());
+                    recipients_digest
+                };
+
+                if p_recipients != claim_p_recipients_digest {
+                    // Can't reproduce the hash-table entry of the recipients of
+                    // claim_p's message.
+                    return false;
+                }
+
+                // p_recipients indeed corresponds to claim_p's
+                // claim_p_recipients entry:
+                if claim_p_recipients
+                    .iter()
+                    .find(|r| **r == claim_pn.client_id)
+                    .is_none()
+                {
+                    // claim_pn's client_id isn't in the recipients list, so the
+                    // negative claim can't be used here.
+                    return false;
+                }
+
+                // Now, loop over claim_pn's message to ensure that it indeed
+                // does not contain a message with the offending sequence
+                // number:
+                if claim_pn
+                    .message_hash_table
+                    .iter()
+                    .find(|(seqid, _, _)| *seqid == p_seqid)
+                    .is_some()
+                {
+                    return false;
+                }
+
+                // Claims support each other, but individual claims not verified yet!
+            }
+
+            // Verify each of the invidual claim's cryptographic validity. If
+            // they are both valid, we hold evidence that the server has behaved
+            // incorrectly.
+            //
+            // It is fine to use verify_trusted here, as we're trusting the
+            // attestation payload hash which is constructed based on the claim
+            // data by `attestation()`.
+            claim_p.attestation().verify_trusted(public_key)
+                && claim_pn.attestation().verify_trusted(public_key)
         }
     }
 
@@ -119,15 +336,15 @@ pub mod attestation {
 
         pub fn first_epoch(&self) -> u64 {
             u64::from_le_bytes([
-                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4],
-                self.0[5], self.0[6], self.0[7],
+                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6],
+                self.0[7],
             ])
         }
 
         pub fn next_epoch(&self) -> u64 {
             u64::from_le_bytes([
-                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12],
-                self.0[13], self.0[14], self.0[15],
+                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12], self.0[13], self.0[14],
+                self.0[15],
             ])
         }
 
@@ -136,12 +353,13 @@ pub mod attestation {
             data: &AttestationData,
             public_key: &ed25519_dalek::PublicKey,
         ) -> bool {
-            use ed25519_dalek::Verifier;
+            data.0 == self.0[0..48] && self.verify_trusted(public_key)
+        }
 
-            let signature =
-                ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
-            data.0 == self.0[0..48]
-                && public_key.verify(&data.0, &signature).is_ok()
+        pub fn verify_trusted(&self, public_key: &ed25519_dalek::PublicKey) -> bool {
+            use ed25519_dalek::Verifier;
+            let signature = ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
+            public_key.verify(&self.0[..48], &signature).is_ok()
         }
     }
 }
@@ -369,7 +587,8 @@ impl<C: CoreClient> ServerComm<C> {
                                             assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
                                             assert!(attestation.next_epoch() == emb.epoch_id + 1, "Attestation claims to cover unreceived epochs");
                                             let attestation_data =
-					attestation::AttestationData::from_inbox_epochs(
+						attestation::AttestationData::from_inbox_epochs(
+						    &task_idkey,
 					    attestation.first_epoch(), attestation.next_epoch(),
 					    emb.messages.iter());
                                             assert!(attestation.verify(&attestation_data, &server_attestation_pubkey), "Attestation verification failed");

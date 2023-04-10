@@ -135,8 +135,7 @@ pub struct TxCoordinator {
     local_pending_tx: HashMap<SequenceNumber, (Vec<String>, Transaction)>,
     /* transactions managed by others awaiting commit message */
     remote_pending_tx: HashMap<SequenceNumber, Transaction>,
-    /* transactions committed (may be unecessary) */
-    committed_tx: Vec<(SequenceNumber, Transaction)>,
+    committed_tx: Vec<((SequenceNumber, SequenceNumber), Transaction)>,
 
     tx_state: bool,
     /* true if currently within transaction */
@@ -223,13 +222,15 @@ impl TxCoordinator {
         my_device_id: String,
         sender: String,
         tx_id: &SequenceNumber,
+        seq: SequenceNumber //use seq number of commit message when committing
     ) -> Result<(), Error> {
         // committing a tx i coordinated
         if sender == my_device_id {
             let q = &mut self.local_pending_tx;
-            let tx = q[tx_id].1.clone();
+            let mut tx = q[tx_id].1.clone();
+            tx.sequence_number = Some(seq);
             q.remove(tx_id);
-            self.committed_tx.push((*tx_id, tx));
+            self.committed_tx.push(((*tx_id, seq), tx));
 
         //coordinating commit messages from not me
         } else if self.local_pending_tx.contains_key(tx_id) {
@@ -248,8 +249,9 @@ impl TxCoordinator {
         } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
             == sender
         {
-            let tx = self.remote_pending_tx.remove(tx_id).unwrap();
-            self.committed_tx.push((*tx_id, tx));
+            let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
+            tx.sequence_number = Some(seq);
+            self.committed_tx.push(((*tx_id, seq), tx));
         }
 
         self.seq_number = *tx_id;
@@ -785,6 +787,7 @@ impl NoiseKVClient {
                     self.idkey(),
                     sender,
                     &tx_id,
+                    seq,
                 );
                 if resp == Err(Error::SendToAll) {
                     self.send_commit_as_coordinator(tx_id);

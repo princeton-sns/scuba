@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::borrow::Cow;
 
 pub type DeviceId = String;
 pub type Hash = [u8; 32];
@@ -18,8 +19,8 @@ pub enum Error {
 fn hash_message(
     prev_digest: Option<&Hash>,
     // TODO impl Sorted/Ord?
-    recipients: &mut Vec<DeviceId>,
-    message: Message,
+    recipients: &Vec<DeviceId>,
+    message_or_digest: &[u8],
 ) -> Hash {
     use sha2::Digest;
 
@@ -38,7 +39,7 @@ fn hash_message(
     }
 
     hasher.update(b"message");
-    hasher.update(message);
+    hasher.update(message_or_digest);
 
     let mut digest: Hash = [0; 32];
     hasher.finalize_into_reset((&mut digest).into());
@@ -123,7 +124,7 @@ impl ValidationPayload {
         mut recipients: Vec<DeviceId>,
         message: Message,
     ) -> ValidationPayload {
-        let hash = hash_message(None, &mut recipients, message);
+        let hash = hash_message(None, &mut recipients, message.as_bytes());
         ValidationPayload {
             consistency_loopback: false,
             validation_seq: Some(78),
@@ -237,7 +238,7 @@ impl HashVectors {
         let message_hash_entry = hash_message(
             Some(self.pending_messages.back().unwrap()),
             &mut recipients,
-            message,
+            message.as_bytes(),
         );
 
         self.pending_messages.push_back(message_hash_entry);
@@ -320,7 +321,7 @@ impl HashVectors {
                 .ok_or(Error::OwnMessageInvalidReordered)?;
 
             let calculated_hash =
-                hash_message(Some(base_hash), &mut recipients, message.clone());
+                hash_message(Some(base_hash), &mut recipients, message.as_bytes());
 
             if *expected_hash != calculated_hash {
                 return Err(Error::OwnMessageInvalidReordered);
@@ -334,6 +335,19 @@ impl HashVectors {
         let local_seq = self.local_seq;
         self.local_seq += 1;
 
+	// If the message is beyond twice the hash size, hash it once
+	// to reduce its effective size:
+	let mut message_digest = [0; 32];
+	let message_or_hash = if message.len() > 64 {
+	    use sha2::Digest;
+	    let mut hasher = sha2::Sha256::new();
+	    hasher.update(&message);
+	    hasher.finalize_into_reset((&mut message_digest).into());
+	    &message_digest
+	} else {
+	    message.as_bytes()
+	};
+
         // Hash the message in the context of all its recipients'
         // pairwise hash vectors
         for recipient in recipients_iter.filter(|r| **r != self.own_device) {
@@ -345,7 +359,7 @@ impl HashVectors {
             let message_hash_entry = hash_message(
                 vector.vector.back().map(|entry| &entry.digest),
                 &mut recipients,
-                message.clone(),
+                message_or_hash,
             );
 
             vector
@@ -512,7 +526,7 @@ mod test {
         let hashed_message = hash_message(
             Some(hash_vectors.pending_messages.back().unwrap()),
             &mut recipients,
-            message.clone(),
+            message.as_bytes(),
         );
         hash_vectors.register_message(recipients.clone(), message);
         let pending_messages =
@@ -531,7 +545,7 @@ mod test {
         let hashed_message = hash_message(
             Some(hash_vectors.pending_messages.back().unwrap()),
             &mut recipients,
-            message.clone(),
+            message.as_bytes(),
         );
         hash_vectors.register_message(recipients.clone(), message);
         let pending_messages =
@@ -670,7 +684,7 @@ mod test {
                 let message_hash_entry = hash_message(
                     Some(&Hash::default()),
                     &mut recipients,
-                    message,
+                    message.as_bytes(),
                 );
                 let pending_messages = VecDeque::from(vec![message_hash_entry]);
                 assert_eq!(hash_vectors.pending_messages, pending_messages);
@@ -711,7 +725,7 @@ mod test {
                 let pending_hash_entry = hash_message(
                     Some(&Hash::default()),
                     &mut recipients,
-                    message.clone(),
+                    message.as_bytes(),
                 );
                 let pending_messages = VecDeque::from(vec![pending_hash_entry]);
                 assert_eq!(hash_vectors_0.pending_messages, pending_messages);
@@ -723,7 +737,7 @@ mod test {
                     .or_insert_with(|| DeviceState::default());
 
                 let vector_hash_entry =
-                    hash_message(None, &mut recipients, message.clone());
+                    hash_message(None, &mut recipients, message.as_bytes());
                 assert_eq!(
                     vector_hash_entry,
                     vector.vector.back().unwrap().digest
@@ -752,7 +766,7 @@ mod test {
                     .or_insert_with(|| DeviceState::default());
 
                 let vector_hash_entry =
-                    hash_message(None, &mut recipients, message.clone());
+                    hash_message(None, &mut recipients, message.as_bytes());
                 assert_eq!(
                     vector_hash_entry,
                     vector.vector.back().unwrap().digest
@@ -788,7 +802,7 @@ mod test {
                 let message_hash_entry = hash_message(
                     Some(&Hash::default()),
                     &mut loopback_recipients,
-                    message.clone(),
+                    message.as_bytes(),
                 );
                 let pending_messages = VecDeque::from(vec![message_hash_entry]);
                 assert_eq!(hash_vectors_0.pending_messages, pending_messages);
@@ -802,7 +816,7 @@ mod test {
                 let vector_hash_entry = hash_message(
                     None,
                     &mut loopback_recipients,
-                    message.clone(),
+                    message.as_bytes(),
                 );
                 assert_eq!(
                     vector_hash_entry,
@@ -834,7 +848,7 @@ mod test {
                 let vector_hash_entry = hash_message(
                     None,
                     &mut loopback_recipients,
-                    message.clone(),
+                    message.as_bytes(),
                 );
                 assert_eq!(
                     vector_hash_entry,

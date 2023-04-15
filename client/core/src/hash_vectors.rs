@@ -246,7 +246,7 @@ impl HashVectors {
 
     pub fn parse_message(
         &mut self,
-        sender: &DeviceId,
+        sender: &str,
         common_payload: CommonPayload,
         recipient_payload: &ValidationPayload,
     ) -> Result<Option<(usize, Message)>, Error> {
@@ -258,7 +258,7 @@ impl HashVectors {
         match self.insert_message(
             sender,
             common_payload.recipients,
-            common_payload.message.clone(),
+            &common_payload.message,
         ) {
             Ok(local_seq) => {
                 let validation_payload = match (
@@ -291,9 +291,9 @@ impl HashVectors {
 
     fn insert_message(
         &mut self,
-        sender: &DeviceId,
+        sender: &str,
         mut recipients: Vec<DeviceId>,
-        message: Message,
+        message: &str,
     ) -> Result<usize, Error> {
         if recipients.len() < 1 {
             return Err(Error::TooFewRecipients);
@@ -372,7 +372,7 @@ impl HashVectors {
 
     fn get_validation_payload(
         &self,
-        recipient: &DeviceId,
+        recipient: &str,
     ) -> Option<(usize, Hash)> {
         let recipient_vector = self.vectors.get(recipient)?;
         Some((
@@ -383,7 +383,7 @@ impl HashVectors {
 
     fn validate_vector(
         &mut self,
-        validation_sender: &DeviceId,
+        validation_sender: &str,
         validation_payload: Option<(usize, Hash)>,
     ) -> Result<(), Error> {
         // We never send validation payloads to ourselves and hence
@@ -465,7 +465,7 @@ impl HashVectors {
 
     fn validate_trim_vector(
         &mut self,
-        validation_sender: &DeviceId,
+        validation_sender: &str,
         validation_payload: Option<(usize, Hash)>,
     ) -> Result<usize, Error> {
         // Validate if validation payload should be accepted
@@ -488,6 +488,129 @@ impl HashVectors {
         } else {
             Ok(0)
         }
+    }
+}
+
+pub mod sync_bench {
+    use test;
+    use std::collections::HashMap;
+    use std::cell::RefCell;
+
+    struct BenchEnvironment<'a>(HashMap<String, &'a NoiseClient>);
+
+    impl<'a> BenchEnvironment<'a> {
+	pub fn from_clients(clients: &[&'a NoiseClient]) -> Self {
+	    let mut hmap = HashMap::new();
+	    for c in clients {
+		hmap.insert(c.device_id.clone(), *c);
+	    }
+	    BenchEnvironment(hmap)
+	}
+    }
+
+    struct NoiseClient {
+	device_id: String,
+	hash_vectors: RefCell<super::HashVectors>,
+	enable_debug: bool,
+    }
+
+    impl NoiseClient {
+	pub fn new(device_id: String, enable_debug: bool) -> Self {
+	    NoiseClient {
+		device_id: device_id.clone(),
+		hash_vectors: RefCell::new(super::HashVectors::new(device_id)),
+		enable_debug,
+	    }
+	}
+
+	fn debug(&self, f: impl FnOnce() -> String) {
+	    if self.enable_debug {
+		println!("DEBUG[{}]: {}", self.device_id, f());
+	    }
+	}
+
+	pub fn receive_message(&self, sender_id: &str, message: super::CommonPayload, val_pload: super::ValidationPayload) {
+	    self.debug(|| format!("Received message {:?} from {}", message, sender_id));
+	    self.hash_vectors.borrow_mut().parse_message(sender_id, message, &val_pload).unwrap();
+	}
+
+	pub fn send_message(&self, bench_env: &BenchEnvironment, recipients: Vec<String>, message: String) {
+	    self.debug(|| format!("Sending message {} to {} recipients", message, recipients.len()));
+
+	    let (common_payload, validation_payloads) = self.hash_vectors.borrow_mut().prepare_message(
+		recipients, message);
+
+	    for (rcpt, val_pload) in validation_payloads.into_iter() {
+		bench_env.0.get(&rcpt).unwrap().receive_message(&self.device_id, common_payload.clone(), val_pload);
+	    }
+	}
+    }
+
+    fn measure(count: usize, message_len: usize, unidirectional: bool) -> (usize, usize, u128) {
+	use rand::{Rng, SeedableRng};
+	use rand::rngs::SmallRng;
+	use rand::distributions::Alphanumeric;
+	use std::time::{Duration, Instant};
+
+	let client_a = NoiseClient::new("a".to_string(), false);
+	let client_b = NoiseClient::new("b".to_string(), false);
+	let client_c = NoiseClient::new("c".to_string(), false);
+	let bench_env = BenchEnvironment::from_clients(&[&client_a, &client_b, &client_c]);
+
+
+	let mut small_rng = SmallRng::seed_from_u64(42);
+	let message: String = small_rng.sample_iter(&Alphanumeric).take(message_len).map(char::from).collect();
+
+	let start_time = Instant::now();
+	let mut exchanged_messages: usize = 0;
+
+	for i in 0..count {
+	    client_a.send_message(&bench_env, vec!["b".to_string(), "c".to_string()], message.clone());
+
+	    if !unidirectional {
+		client_b.send_message(&bench_env, vec!["a".to_string(), "c".to_string()], message.clone());
+		exchanged_messages += 2;
+	    } else {
+		exchanged_messages += 1;
+	    }
+	}
+
+	let end_time = Instant::now();
+	let duration_ms = end_time.duration_since(start_time).as_millis();
+
+	println!("Exchanging {} ({} byte) messages took {}ms", exchanged_messages, message_len, duration_ms);
+	println!("Duration per message: {}us", duration_ms * 1000 / (exchanged_messages as u128));
+
+	(exchanged_messages, message_len, duration_ms)
+    }
+
+    fn interpret_results(mut res: (usize, usize, u128), constRes: (usize, usize, u128)) {
+	res.2 = res.2 - constRes.2;
+	println!("Overhead per byte: {}ns", res.2 * 1000000 / (res.0 as u128) / (res.1 as u128));
+    }
+
+    pub fn bench() {
+	let count = 100000;
+
+	// Warmup
+	measure(count, 1024, false);
+
+	let res0b_b = measure(count, 0, false);
+
+	let res1k_b = measure(count, 1024, false);
+	interpret_results(res1k_b, res0b_b);
+
+	let res2k_b = measure(count, 2048, false);
+	interpret_results(res2k_b, res0b_b);
+
+	let res4k_b = measure(count, 4096, false);
+	interpret_results(res4k_b, res0b_b);
+
+	let res8k_b = measure(count, 8192, false);
+	interpret_results(res8k_b, res0b_b);
+
+	// let res512k_b = measure(count, 1024 * , false);
+	// interpret_results(res512k_b, res0b_b);
     }
 }
 
@@ -674,7 +797,7 @@ mod test {
         match hash_vectors.insert_message(
             &idkey,
             recipients.clone(),
-            message.clone(),
+            &message,
         ) {
             Ok(seq) => {
                 // check seq num
@@ -715,7 +838,7 @@ mod test {
         match hash_vectors_0.insert_message(
             &idkey_0,
             recipients.clone(),
-            message.clone(),
+            &message,
         ) {
             Ok(seq) => {
                 // check seq num
@@ -749,7 +872,7 @@ mod test {
         match hash_vectors_1.insert_message(
             &idkey_0,
             recipients.clone(),
-            message.clone(),
+            &message,
         ) {
             Ok(seq) => {
                 // check seq num
@@ -792,7 +915,7 @@ mod test {
         match hash_vectors_0.insert_message(
             &idkey_0,
             loopback_recipients.clone(),
-            message.clone(),
+            &message,
         ) {
             Ok(seq) => {
                 // check seq num
@@ -829,7 +952,7 @@ mod test {
         match hash_vectors_1.insert_message(
             &idkey_0,
             loopback_recipients.clone(),
-            message.clone(),
+            &message,
         ) {
             Ok(seq) => {
                 // check seq num
@@ -989,7 +1112,7 @@ mod test {
             .unwrap();
         assert_eq!(trimmed, 0);
         hash_vectors_1
-            .insert_message(&idkey_0, recipients.clone(), message_1.clone())
+            .insert_message(&idkey_0, recipients.clone(), &message_1)
             .unwrap();
 
         // 0 receives own message
@@ -1009,14 +1132,14 @@ mod test {
             .unwrap();
         assert_eq!(trimmed, 0);
         hash_vectors_0
-            .insert_message(&idkey_0, recipients.clone(), message_1.clone())
+            .insert_message(&idkey_0, recipients.clone(), &message_1)
             .unwrap();
 
         // 1 -> 0
         let message_2_vp =
             hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
         assert_eq!(message_2_vp.0, 0);
-        hash_vectors_1.prepare_message(recipients.clone(), message_2.clone());
+        hash_vectors_1.prepare_message(recipients.clone(), message_2);
 
         // 1 receives own message
         let trimmed = hash_vectors_1
@@ -1024,7 +1147,7 @@ mod test {
             .unwrap();
         assert_eq!(trimmed, 0);
         hash_vectors_1
-            .insert_message(&idkey_1, recipients.clone(), message_2.clone())
+            .insert_message(&idkey_1, recipients.clone(), &message_2)
             .unwrap();
 
         // 0 receives message from 1
@@ -1033,7 +1156,7 @@ mod test {
             .unwrap();
         assert_eq!(trimmed, 0);
         hash_vectors_0
-            .insert_message(&idkey_1, recipients.clone(), message_2)
+            .insert_message(&idkey_1, recipients.clone(), &message_2)
             .unwrap();
 
         // 0 -> 1
@@ -1048,7 +1171,7 @@ mod test {
             .unwrap();
         assert_eq!(trimmed, 0);
         hash_vectors_0
-            .insert_message(&idkey_0, recipients.clone(), message_3.clone())
+            .insert_message(&idkey_0, recipients.clone(), &message_3)
             .unwrap();
 
         // 1 receives message from 0
@@ -1060,7 +1183,7 @@ mod test {
             .unwrap();
         assert_eq!(trimmed, 1);
         hash_vectors_1
-            .insert_message(&idkey_0, recipients.clone(), message_3)
+            .insert_message(&idkey_0, recipients.clone(), &message_3)
             .unwrap();
     }
 
@@ -1272,3 +1395,4 @@ mod test {
         println!("hash_vecs_1: {:?}", hash_vectors_1.vectors);
     }
 }
+

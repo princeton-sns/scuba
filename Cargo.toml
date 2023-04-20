@@ -4,4 +4,5 @@ members = [
     "client/sequential-noise-kv",
     "client/serializable-noise-kv",
     "apps/cmdline-lightswitch",
+    "apps/cmdline-period-tracking",
 ]

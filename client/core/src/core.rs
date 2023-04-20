@@ -19,6 +19,8 @@ pub struct PerRecipientPayload {
     iv: [u8; 16],
 }
 
+pub type SequenceNumber = u128;
+
 impl PerRecipientPayload {
     pub fn new(
         val_payload: ValidationPayload,
@@ -60,7 +62,12 @@ impl PerRecipientPayload {
 
 #[async_trait]
 pub trait CoreClient: Sync + Send + 'static {
-    async fn client_callback(&self, sender: String, message: String);
+    async fn client_callback(
+        &self,
+        seq: SequenceNumber,
+        sender: String,
+        message: String,
+    );
 }
 
 pub struct Core<C: CoreClient> {
@@ -388,7 +395,11 @@ impl<C: CoreClient> Core<C> {
                             .await
                             .as_ref()
                             .unwrap()
-                            .client_callback(msg.sender.clone(), message)
+                            .client_callback(
+                                seq as SequenceNumber,
+                                msg.sender.clone(),
+                                message,
+                            )
                             .await;
 
                         // TODO allow client to determine when to send these
@@ -447,7 +458,12 @@ pub mod stream_client {
 
     #[async_trait]
     impl CoreClient for StreamClient {
-        async fn client_callback(&self, sender: String, message: String) {
+        async fn client_callback(
+            &self,
+            seq: crate::core::SequenceNumber,
+            sender: String,
+            message: String,
+        ) {
             use futures::SinkExt;
             self.sender
                 .lock()

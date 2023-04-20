@@ -9,7 +9,7 @@ edition = "2021"
 async-trait = "0.1.64"
 futures = "0.3.26"
 itertools = "0.10.5"
-noise-kv = { path = "../../client/noise-kv" }
+noise-kv = { path = "../../client/sequential-noise-kv" }
 parking_lot = "0.12.1"
 reedline-repl-rs = { version = "1.0.3", features = ["async"] }
 reqwest = "0.11.14"

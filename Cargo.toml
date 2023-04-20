@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "client/core",
-    "client/noise-kv",
+    "client/sequential-noise-kv",
+    "client/serializable-noise-kv",
     "apps/cmdline-lightswitch",
 ]

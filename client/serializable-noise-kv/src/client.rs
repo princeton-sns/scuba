@@ -94,8 +94,10 @@ impl Operation {
 
     fn get_data_id(operation: &Operation) -> String {
         match operation {
-            Operation::UpdateData(data_id, data_val) => data_id,
-            Operation::DeleteData(data_id) => data_id,
+            Operation::UpdateData(data_id, data_val) => data_id.to_string(),
+            Operation::DeleteData(data_id) => data_id.to_string(),
+            // TODO confirm this is never used
+            _ => "".to_string(),
         }
     }
 }
@@ -296,13 +298,13 @@ impl TxCoordinator {
         let mut tx_keys = Vec::new();
 
         for op in msg.ops.clone().into_iter() {
-            tx_keys.push(Operation::get_data_id(op));
+            tx_keys.push(Operation::get_data_id(&op));
         }
 
         //impl for all enums -> move to func over two txs
         for tx in self.local_pending_tx.clone().into_iter() {
             for op in tx.1 .1.ops.clone().into_iter() {
-                let data_id = Operation::get_data_id(op);
+                let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
                 }
@@ -311,7 +313,7 @@ impl TxCoordinator {
 
         for tx in self.remote_pending_tx.clone().into_iter() {
             for op in tx.1.ops.clone().into_iter() {
-                let data_id = Operation::get_data_id(op);
+                let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
                 }
@@ -323,7 +325,7 @@ impl TxCoordinator {
             // after the prev txn accepted by the original client
             if tx.1.sequence_number.unwrap() > msg.prev_seq_number {
                 for op in tx.1.ops.clone().into_iter() {
-                    let data_id = Operation::get_data_id(op);
+                    let data_id = Operation::get_data_id(&op);
                     if tx_keys.contains(&data_id) {
                         return true;
                     }

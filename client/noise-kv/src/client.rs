@@ -97,7 +97,7 @@ pub struct NoiseKVClient {
 
 #[async_trait]
 impl CoreClient for NoiseKVClient {
-    async fn client_callback(&self, sender: String, message: String) {
+    async fn client_callback(&self, _seq: noise_core::core::SequenceNumber, sender: String, message: String) {
         if self.sec_wait_to_apply.is_some() {
             thread::sleep(time::Duration::from_secs(
                 self.sec_wait_to_apply.unwrap(),

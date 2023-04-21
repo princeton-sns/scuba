@@ -18,7 +18,7 @@ pub struct Core<C: CoreClient> {
 }
 
 impl<C: CoreClient> Core<C> {
-    pub async fn new<'a>(
+    pub fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         //turn_encryption_off: bool,

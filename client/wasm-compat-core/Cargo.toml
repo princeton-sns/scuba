@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.64"
-reqwest = { version = "0.11.16", features = ["json"] }
 tokio = { version = "1.23.0", features = ["macros", "sync"] }
 url = "2.3.1"
 

@@ -6,9 +6,20 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const FLOW_PREFIX: &str = "flow";
-const SYMPTOMS_PREFIX: &str = "symptom";
-const FLOW_VAL: &str = r#"{ "flow": medium }"#;
-const SYMPTOMS_VAL: &str = r#"{ "symptoms": [bloating] }"#;
+const LIGHT_FLOW: &str = r#"{ "flow": "light" }"#;
+const MOD_FLOW: &str = r#"{ "flow": "moderate" }"#;
+const HEAVY_FLOW: &str = r#"{ "flow": "heavy" }"#;
+
+const SYMPTOMS_PREFIX: &str = "symptoms";
+const SYMPTOMS_VAL: &str = r#"{ "symptoms": [] }"#;
+
+const CRAMPS: &str = "cramps";
+const BLOATING: &str = "bloating";
+const LOWER_BK_PAIN: &str = "lower back pain";
+const ACNE: &str = "acne";
+const HEADACHE: &str = "headache";
+const IRR: &str = "irritability";
+const SLEEP_CHANGES: &str = "sleep changes";
 
 #[derive(Clone)]
 struct PeriodTrackingApp {
@@ -267,6 +278,8 @@ impl PeriodTrackingApp {
     }
 
     pub async fn add_flow(
+        args: ArgMatches,
+        flow_str: &str,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -275,11 +288,15 @@ impl PeriodTrackingApp {
             )));
         }
 
-        let mut id: String = FLOW_PREFIX.to_owned();
-        id.push_str("/");
-        id.push_str(&Uuid::new_v4().to_string());
-        // TODO
-        let json_val = FLOW_VAL.to_string();
+        let mut id: String;
+        if let Some(arg_id) = args.get_one::<String>("flow_id") {
+            id = arg_id.to_string();
+        } else {
+            id = FLOW_PREFIX.to_owned();
+            id.push_str("/");
+            id.push_str(&Uuid::new_v4().to_string());
+        }
+        let json_val = flow_str.to_string();
         match context
             .client
             .set_data(id.clone(), FLOW_PREFIX.to_string(), json_val, None)
@@ -489,11 +506,32 @@ async fn main() -> ReplResult<()> {
                 .arg(Arg::new("symptoms_id").required(true)),
             PeriodTrackingApp::get_symptoms_state,
         )
-        .with_command_async(Command::new("add_flow"), |_, context| {
-            Box::pin(PeriodTrackingApp::add_flow(context))
-        })
+        .with_command_async(
+            Command::new("add_light_flow")
+                .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
+                .arg(Arg::new("flow_id").long("flowid").short('i').required(false)), 
+            |args, context| {
+                Box::pin(PeriodTrackingApp::add_flow(args, LIGHT_FLOW, context))
+            }
+        )
+        .with_command_async(
+            Command::new("add_mod_flow")
+                .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
+                .arg(Arg::new("flow_id").long("flowid").short('i').required(false)), 
+            |args, context| {
+                Box::pin(PeriodTrackingApp::add_flow(args, MOD_FLOW, context))
+            }
+        )
+        .with_command_async(
+            Command::new("add_heavy_flow")
+                .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
+                .arg(Arg::new("flow_id").long("flowid").short('i').required(false)), 
+            |args, context| {
+                Box::pin(PeriodTrackingApp::add_flow(args, HEAVY_FLOW, context))
+            }
+        )
         .with_command_async(Command::new("add_symptoms"), |_, context| {
-            Box::pin(PeriodTrackingApp::add_flow(context))
+            Box::pin(PeriodTrackingApp::add_symptoms(context))
         })
         .with_command_async(
             Command::new("add_readers_to_flow")

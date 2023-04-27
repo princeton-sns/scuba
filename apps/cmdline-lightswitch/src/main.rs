@@ -80,7 +80,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn create_lightbulb_device(
+    pub async fn create_lightbulb(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
@@ -100,7 +100,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn create_lightswitch_device(
+    pub async fn create_lightswitch(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
@@ -120,7 +120,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn link_device(
+    pub async fn create_linked_lightswitch(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -280,7 +280,7 @@ impl LightswitchApp {
         Ok(Some(itertools::join(groups, "\n")))
     }
 
-    pub fn get_lightbulb_state(
+    pub fn get_state(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -290,7 +290,7 @@ impl LightswitchApp {
             )));
         }
 
-        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
+        let id = args.get_one::<String>("id").unwrap().to_string();
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let val_opt = data_store_guard.get_data(&id);
@@ -298,7 +298,7 @@ impl LightswitchApp {
         match val_opt {
             Some(val) => Ok(Some(String::from(format!("{}", val)))),
             None => Ok(Some(String::from(format!(
-                "Lightbulb with id {} does not exist.",
+                "Datum with id {} does not exist.",
                 id,
             )))),
         }
@@ -333,8 +333,9 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn add_readers_to_lightbulb(
+    pub async fn set_state(
         args: ArgMatches,
+        bulb_state_str: &str,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -343,79 +344,25 @@ impl LightswitchApp {
             )));
         }
 
-        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        let names = args
-            .get_many::<String>("names")
-            .unwrap()
-            .collect::<Vec<&String>>();
-        match context.client.add_readers(id.clone(), names.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Adding the
-         following readers to lightbulb (id {}): \n{}",
-                id,
-                itertools::join(names, "\n")
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not add readers to lightbulb: {}",
-                err.to_string()
-            )))),
-        }
-    }
-
-    pub async fn add_writers_to_lightbulb(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        let names = args
-            .get_many::<String>("names")
-            .unwrap()
-            .collect::<Vec<&String>>();
-        match context.client.add_writers(id.clone(), names.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Adding the following writers to lightbulb (id {}): \n{}",
-                id,
-                itertools::join(names, "\n")
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not add writers to lightbulb: {}",
-                err.to_string()
-            )))),
-        }
-    }
-
-    pub async fn turn_on(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        let json_val = LB_ON_VAL.to_string();
+        let id = args.get_one::<String>("id").unwrap().to_string();
+        let json_val = bulb_state_str.to_string();
         match context
             .client
-            .set_data(id, LB_PREFIX.to_string(), json_val, None)
+            .set_data(id.clone(), LB_PREFIX.to_string(), json_val, None)
             .await
         {
-            Ok(_) => Ok(Some(String::from("Turned light on"))),
+            Ok(_) => Ok(Some(String::from(format!(
+                "Set state for bulb with id {}",
+                id
+            )))),
             Err(err) => Ok(Some(String::from(format!(
-                "Could not turn on lightbulb: {}",
+                "Could not set bulb state: {}",
                 err.to_string()
             )))),
         }
     }
 
-    pub async fn turn_off(
+    pub async fn share(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -425,19 +372,40 @@ impl LightswitchApp {
             )));
         }
 
-        let id = args.get_one::<String>("lightbulb_id").unwrap().to_string();
-        let json_val = LB_OFF_VAL.to_string();
-        match context
-            .client
-            .set_data(id, LB_PREFIX.to_string(), json_val, None)
-            .await
-        {
-            Ok(_) => Ok(Some(String::from("Turned light off"))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not turn on lightbulb: {}",
-                err.to_string()
-            )))),
+        let id = args.get_one::<String>("id").unwrap().to_string();
+
+        if let Some(arg_readers) = args.get_many::<String>("readers") {
+            let readers = arg_readers.collect::<Vec<&String>>();
+            let res = context
+                .client
+                .add_readers(id.clone(), readers.clone())
+                .await;
+            if res.is_err() {
+                return Ok(Some(String::from(format!(
+                    "Error adding readers to datum: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
         }
+
+        if let Some(arg_writers) = args.get_many::<String>("writers") {
+            let writers = arg_writers.collect::<Vec<&String>>();
+            let res = context
+                .client
+                .add_writers(id.clone(), writers.clone())
+                .await;
+            if res.is_err() {
+                return Ok(Some(String::from(format!(
+                    "Error adding writers to datum: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
+        }
+
+        Ok(Some(String::from(format!(
+            "Successfully shared datum {}",
+            id
+        ))))
     }
 }
 
@@ -449,22 +417,19 @@ async fn main() -> ReplResult<()> {
         .with_name("Lightswitch App")
         .with_version("v0.1.0")
         .with_description("Noise lightswitch app")
+        .with_command_async(Command::new("create_lightbulb"), |_, context| {
+            Box::pin(LightswitchApp::create_lightbulb(context))
+        })
+        .with_command_async(Command::new("create_lightswitch"), |_, context| {
+            Box::pin(LightswitchApp::create_lightswitch(context))
+        })
         .with_command_async(
-            Command::new("create_lightbulb_device"),
-            |_, context| {
-                Box::pin(LightswitchApp::create_lightbulb_device(context))
-            },
-        )
-        .with_command_async(
-            Command::new("create_lightswitch_device"),
-            |_, context| {
-                Box::pin(LightswitchApp::create_lightswitch_device(context))
-            },
-        )
-        .with_command_async(
-            Command::new("link_device").arg(Arg::new("idkey").required(true)),
+            Command::new("create_linked_lightswitch")
+                .arg(Arg::new("idkey").required(true)),
             |args, context| {
-                Box::pin(LightswitchApp::link_device(args, context))
+                Box::pin(LightswitchApp::create_linked_lightswitch(
+                    args, context,
+                ))
             },
         )
         .with_command(
@@ -473,6 +438,12 @@ async fn main() -> ReplResult<()> {
         )
         .with_command(Command::new("get_name"), LightswitchApp::get_name)
         .with_command(Command::new("get_idkey"), LightswitchApp::get_idkey)
+        .with_command_async(
+            Command::new("add_contact").arg(Arg::new("idkey").required(true)),
+            |args, context| {
+                Box::pin(LightswitchApp::add_contact(args, context))
+            },
+        )
         .with_command(
             Command::new("get_contacts"),
             LightswitchApp::get_contacts,
@@ -485,70 +456,42 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_perms"), LightswitchApp::get_perms)
         .with_command(Command::new("get_groups"), LightswitchApp::get_groups)
         .with_command(
-            Command::new("get_lightbulb_state")
-                .arg(Arg::new("lightbulb_id").required(true)),
-            LightswitchApp::get_lightbulb_state,
+            Command::new("get_state").arg(Arg::new("id").required(true)),
+            LightswitchApp::get_state,
         )
         .with_command_async(Command::new("add_lightbulb"), |_, context| {
             Box::pin(LightswitchApp::add_lightbulb(context))
         })
         .with_command_async(
-            Command::new("add_readers_to_lightbulb")
+            Command::new("share")
+                .arg(Arg::new("id").required(true).long("id").short('i'))
                 .arg(
-                    Arg::new("lightbulb_id")
+                    Arg::new("readers")
                         .required(true)
-                        .long("id")
-                        .short('i'),
+                        .long("readers")
+                        .short('r')
+                        .action(ArgAction::Append),
                 )
                 .arg(
-                    Arg::new("names")
+                    Arg::new("writers")
                         .required(true)
-                        .long("name")
-                        .short('n')
+                        .long("writers")
+                        .short('w')
                         .action(ArgAction::Append),
                 ),
+            |args, context| Box::pin(LightswitchApp::share(args, context)),
+        )
+        .with_command_async(
+            Command::new("turn_on").arg(Arg::new("id").required(true)),
             |args, context| {
-                Box::pin(LightswitchApp::add_readers_to_lightbulb(
-                    args, context,
-                ))
+                Box::pin(LightswitchApp::set_state(args, LB_ON_VAL, context))
             },
         )
         .with_command_async(
-            Command::new("add_writers_to_lightbulb")
-                .arg(
-                    Arg::new("lightbulb_id")
-                        .required(true)
-                        .long("id")
-                        .short('i'),
-                )
-                .arg(
-                    Arg::new("names")
-                        .required(true)
-                        .long("name")
-                        .short('n')
-                        .action(ArgAction::Append),
-                ),
+            Command::new("turn_off").arg(Arg::new("id").required(true)),
             |args, context| {
-                Box::pin(LightswitchApp::add_writers_to_lightbulb(
-                    args, context,
-                ))
+                Box::pin(LightswitchApp::set_state(args, LB_OFF_VAL, context))
             },
-        )
-        .with_command_async(
-            Command::new("add_contact").arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(LightswitchApp::add_contact(args, context))
-            },
-        )
-        .with_command_async(
-            Command::new("turn_on")
-                .arg(Arg::new("lightbulb_id").required(true)),
-            |args, context| Box::pin(LightswitchApp::turn_on(args, context)),
-        )
-        .with_command_async(
-            Command::new("turn_off")
-                .arg(Arg::new("lightbulb_id").required(true)),
-            |args, context| Box::pin(LightswitchApp::turn_off(args, context)),
         );
 
     repl.run_async().await

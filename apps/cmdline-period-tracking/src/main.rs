@@ -229,7 +229,7 @@ impl PeriodTrackingApp {
         Ok(Some(itertools::join(groups, "\n")))
     }
 
-    pub fn get_flow_state(
+    pub fn get_state(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -239,7 +239,7 @@ impl PeriodTrackingApp {
             )));
         }
 
-        let id = args.get_one::<String>("flow_id").unwrap().to_string();
+        let id = args.get_one::<String>("id").unwrap().to_string();
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let val_opt = data_store_guard.get_data(&id);
@@ -247,31 +247,7 @@ impl PeriodTrackingApp {
         match val_opt {
             Some(val) => Ok(Some(String::from(format!("{}", val)))),
             None => Ok(Some(String::from(format!(
-                "Flow datum with id {} does not exist.",
-                id,
-            )))),
-        }
-    }
-
-    pub fn get_symptoms_state(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let id = args.get_one::<String>("symptoms_id").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let val_opt = data_store_guard.get_data(&id);
-
-        match val_opt {
-            Some(val) => Ok(Some(String::from(format!("{}", val)))),
-            None => Ok(Some(String::from(format!(
-                "Symptoms datum with id {} does not exist.",
+                "Datum with id {} does not exist.",
                 id,
             )))),
         }
@@ -341,7 +317,7 @@ impl PeriodTrackingApp {
         }
     }
 
-    pub async fn add_readers_to_flow(
+    pub async fn share(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -351,106 +327,40 @@ impl PeriodTrackingApp {
             )));
         }
 
-        let id = args.get_one::<String>("flow_id").unwrap().to_string();
-        let names = args
-            .get_many::<String>("names")
-            .unwrap()
-            .collect::<Vec<&String>>();
-        match context.client.add_readers(id.clone(), names.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Adding below readers to flow datum with id {}: \n{}",
-                id,
-                itertools::join(names, "\n")
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding readers to flow datum: {}",
-                err.to_string()
-            )))),
-        }
-    }
+        let id = args.get_one::<String>("id").unwrap().to_string();
 
-    pub async fn add_readers_to_symptoms(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
+        if let Some(arg_readers) = args.get_many::<String>("readers") {
+            let readers = arg_readers.collect::<Vec<&String>>();
+            let res = context
+                .client
+                .add_readers(id.clone(), readers.clone())
+                .await;
+            if res.is_err() {
+                return Ok(Some(String::from(format!(
+                    "Error adding readers to datum: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
         }
 
-        let id = args.get_one::<String>("symptoms_id").unwrap().to_string();
-        let names = args
-            .get_many::<String>("names")
-            .unwrap()
-            .collect::<Vec<&String>>();
-        match context.client.add_readers(id.clone(), names.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Adding below readers to symptoms datum with id {}: \n{}",
-                id,
-                itertools::join(names, "\n")
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding readers to symptoms datum: {}",
-                err.to_string()
-            )))),
-        }
-    }
-
-    pub async fn add_writers_to_flow(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
+        if let Some(arg_writers) = args.get_many::<String>("writers") {
+            let writers = arg_writers.collect::<Vec<&String>>();
+            let res = context
+                .client
+                .add_writers(id.clone(), writers.clone())
+                .await;
+            if res.is_err() {
+                return Ok(Some(String::from(format!(
+                    "Error adding writers to datum: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
         }
 
-        let id = args.get_one::<String>("flow_id").unwrap().to_string();
-        let names = args
-            .get_many::<String>("names")
-            .unwrap()
-            .collect::<Vec<&String>>();
-        match context.client.add_writers(id.clone(), names.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Adding below writers to flow datum with id {}: \n{}",
-                id,
-                itertools::join(names, "\n")
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding writers to flow datum: {}",
-                err.to_string()
-            )))),
-        }
-    }
-
-    pub async fn add_writers_to_symptoms(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let id = args.get_one::<String>("symptoms_id").unwrap().to_string();
-        let names = args
-            .get_many::<String>("names")
-            .unwrap()
-            .collect::<Vec<&String>>();
-        match context.client.add_writers(id.clone(), names.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Adding below writers to symptoms datum with id {}: \n{}",
-                id,
-                itertools::join(names, "\n")
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding writers to symptoms datum: {}",
-                err.to_string()
-            )))),
-        }
+        Ok(Some(String::from(format!(
+            "Successfully shared datum {}",
+            id
+        ))))
     }
 }
 
@@ -497,19 +407,14 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_perms"), PeriodTrackingApp::get_perms)
         .with_command(Command::new("get_groups"), PeriodTrackingApp::get_groups)
         .with_command(
-            Command::new("get_flow_state")
-                .arg(Arg::new("flow_id").required(true)),
-            PeriodTrackingApp::get_flow_state,
-        )
-        .with_command(
-            Command::new("get_symptoms_state")
-                .arg(Arg::new("symptoms_id").required(true)),
-            PeriodTrackingApp::get_symptoms_state,
+            Command::new("get_state")
+                .arg(Arg::new("id").required(true)),
+            PeriodTrackingApp::get_state,
         )
         .with_command_async(
             Command::new("add_light_flow")
                 .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
-                .arg(Arg::new("flow_id").long("flowid").short('i').required(false)), 
+                .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
             |args, context| {
                 Box::pin(PeriodTrackingApp::add_flow(args, LIGHT_FLOW, context))
             }
@@ -517,7 +422,7 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("add_mod_flow")
                 .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
-                .arg(Arg::new("flow_id").long("flowid").short('i').required(false)), 
+                .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
             |args, context| {
                 Box::pin(PeriodTrackingApp::add_flow(args, MOD_FLOW, context))
             }
@@ -525,7 +430,7 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("add_heavy_flow")
                 .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
-                .arg(Arg::new("flow_id").long("flowid").short('i').required(false)), 
+                .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
             |args, context| {
                 Box::pin(PeriodTrackingApp::add_flow(args, HEAVY_FLOW, context))
             }
@@ -534,31 +439,24 @@ async fn main() -> ReplResult<()> {
             Box::pin(PeriodTrackingApp::add_symptoms(context))
         })
         .with_command_async(
-            Command::new("add_readers_to_flow")
-                .arg(Arg::new("flow_id").required(true).long("id").short('i'))
+            Command::new("share")
+                .arg(Arg::new("id").required(true).long("id").short('i'))
                 .arg(
-                    Arg::new("names")
-                        .required(true)
-                        .long("name")
-                        .short('n')
+                    Arg::new("readers")
+                        .required(false)
+                        .long("readers")
+                        .short('r')
+                        .action(ArgAction::Append),
+                )
+                .arg(
+                    Arg::new("writers")
+                        .required(false)
+                        .long("writers")
+                        .short('w')
                         .action(ArgAction::Append),
                 ),
             |args, context| {
-                Box::pin(PeriodTrackingApp::add_readers_to_flow(args, context))
-            },
-        )
-        .with_command_async(
-            Command::new("add_writers_to_flow")
-                .arg(Arg::new("flow_id").required(true).long("id").short('i'))
-                .arg(
-                    Arg::new("names")
-                        .required(true)
-                        .long("name")
-                        .short('n')
-                        .action(ArgAction::Append),
-                ),
-            |args, context| {
-                Box::pin(PeriodTrackingApp::add_writers_to_flow(args, context))
+                Box::pin(PeriodTrackingApp::share(args, context))
             },
         );
 

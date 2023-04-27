@@ -111,6 +111,7 @@ impl CoreClient for NoiseKVClient {
 
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
+                println!("operation: {:?}", operation.clone());
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
@@ -1033,6 +1034,9 @@ impl NoiseKVClient {
                     Some(Some(vec![self.linked_name().to_string()])),
                 );
 
+                // TODO add the new groups id as another parent of linked group
+                // and send this update to all linked group members
+
                 // add owner group into perms
                 perm_val.set_owners(group_val.group_id());
 
@@ -1357,6 +1361,7 @@ impl NoiseKVClient {
                 core::mem::drop(meta_store_guard);
 
                 // first send SetPerm for existing, unmodified perm_set
+                // TODO remove this device from the idkeys for this op only
                 let mut res = self
                     .send_message(
                         metadata_reader_idkeys.clone(),

@@ -86,10 +86,10 @@ impl LightswitchApp {
         context.client.create_standalone_device();
 
         let id: String = DEVICE_PREFIX.to_owned();
-        let json_val = LB_DEVICE_VAL.to_string();
+        let json_string = LB_DEVICE_VAL.to_string();
         match context
             .client
-            .set_data(id.clone(), DEVICE_PREFIX.to_string(), json_val, None)
+            .set_data(id.clone(), DEVICE_PREFIX.to_string(), json_string, None)
             .await
         {
             Ok(_) => Ok(Some(String::from("Lightbulb device created!"))),
@@ -106,10 +106,10 @@ impl LightswitchApp {
         context.client.create_standalone_device();
 
         let id: String = DEVICE_PREFIX.to_owned();
-        let json_val = LS_DEVICE_VAL.to_string();
+        let json_string = LS_DEVICE_VAL.to_string();
         match context
             .client
-            .set_data(id.clone(), DEVICE_PREFIX.to_string(), json_val, None)
+            .set_data(id.clone(), DEVICE_PREFIX.to_string(), json_string, None)
             .await
         {
             Ok(_) => Ok(Some(String::from("Lightswitch device created!"))),
@@ -316,10 +316,10 @@ impl LightswitchApp {
         let mut id: String = LB_PREFIX.to_owned();
         id.push_str("/");
         id.push_str(&Uuid::new_v4().to_string());
-        let json_val = LB_OFF_VAL.to_string();
+        let json_string = LB_OFF_VAL.to_string();
         match context
             .client
-            .set_data(id.clone(), LB_PREFIX.to_string(), json_val, None)
+            .set_data(id.clone(), LB_PREFIX.to_string(), json_string, None)
             .await
         {
             Ok(_) => Ok(Some(String::from(format!(
@@ -345,10 +345,10 @@ impl LightswitchApp {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
-        let json_val = bulb_state_str.to_string();
+        let json_string = bulb_state_str.to_string();
         match context
             .client
-            .set_data(id.clone(), LB_PREFIX.to_string(), json_val, None)
+            .set_data(id.clone(), LB_PREFIX.to_string(), json_string, None)
             .await
         {
             Ok(_) => Ok(Some(String::from(format!(

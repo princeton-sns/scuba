@@ -1,4 +1,5 @@
 use noise_kv::client::NoiseKVClient;
+use noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
@@ -11,15 +12,7 @@ const MOD_FLOW: &str = r#"{ "flow": "moderate" }"#;
 const HEAVY_FLOW: &str = r#"{ "flow": "heavy" }"#;
 
 const SYMPTOMS_PREFIX: &str = "symptoms";
-const SYMPTOMS_VAL: &str = r#"{ "symptoms": [] }"#;
-
-const CRAMPS: &str = "cramps";
-const BLOATING: &str = "bloating";
-const LOWER_BK_PAIN: &str = "lower back pain";
-const ACNE: &str = "acne";
-const HEADACHE: &str = "headache";
-const IRR: &str = "irritability";
-const SLEEP_CHANGES: &str = "sleep changes";
+const EMPTY_SYMPTOMS_VAL: &str = r#"{ "symptoms": [] }"#;
 
 #[derive(Clone)]
 struct PeriodTrackingApp {
@@ -272,10 +265,11 @@ impl PeriodTrackingApp {
             id.push_str("/");
             id.push_str(&Uuid::new_v4().to_string());
         }
-        let json_val = flow_str.to_string();
+        let json_string = flow_str.to_string();
+
         match context
             .client
-            .set_data(id.clone(), FLOW_PREFIX.to_string(), json_val, None)
+            .set_data(id.clone(), FLOW_PREFIX.to_string(), json_string, None)
             .await
         {
             Ok(_) => {
@@ -289,6 +283,7 @@ impl PeriodTrackingApp {
     }
 
     pub async fn add_symptoms(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -297,14 +292,73 @@ impl PeriodTrackingApp {
             )));
         }
 
-        let mut id: String = SYMPTOMS_PREFIX.to_owned();
-        id.push_str("/");
-        id.push_str(&Uuid::new_v4().to_string());
-        // TODO
-        let json_val = SYMPTOMS_VAL.to_string();
+        let mut id: String;
+        let json_string: String;
+        // modify existing datum
+        if let Some(arg_id) = args.get_one::<String>("symptoms_id") {
+            id = arg_id.to_string();
+
+            // get existing data, if it exists
+            let device_guard = context.client.device.read();
+            let data_store_guard =
+                device_guard.as_ref().unwrap().data_store.read();
+            let val_opt = data_store_guard.get_data(&id);
+
+            if val_opt.is_none() {
+                return Ok(Some(String::from(format!(
+                    "Datum with id {} does not exist.",
+                    id,
+                ))));
+            }
+
+            let existing_val = val_opt.unwrap();
+
+            if let Some(arg_symptoms) = args.get_many::<String>("symptoms_list")
+            {
+                let mut new_symptoms_obj =
+                    serde_json::json!(arg_symptoms.collect::<Vec<&String>>());
+                let mut new_symptoms = new_symptoms_obj.as_array_mut().unwrap();
+                let mut existing_symptoms_obj: serde_json::Value =
+                    serde_json::from_str(existing_val.data_val()).unwrap();
+                let existing_symptoms = &mut existing_symptoms_obj["symptoms"]
+                    .as_array_mut()
+                    .unwrap();
+                existing_symptoms.append(&mut new_symptoms);
+
+                let json_val = serde_json::json!({
+                    "symptoms": existing_symptoms,
+                });
+                json_string = serde_json::to_string(&json_val).unwrap();
+            } else {
+                // use existing data so it is not overwritten
+                json_string = existing_val.data_val().to_string();
+            }
+        // create new datum
+        } else {
+            id = SYMPTOMS_PREFIX.to_owned();
+            id.push_str("/");
+            id.push_str(&Uuid::new_v4().to_string());
+
+            if let Some(arg_symptoms) = args.get_many::<String>("symptoms_list")
+            {
+                let symptoms = arg_symptoms.collect::<Vec<&String>>();
+                let json_val = serde_json::json!({
+                    "symptoms": symptoms,
+                });
+                json_string = serde_json::to_string(&json_val).unwrap();
+            } else {
+                json_string = EMPTY_SYMPTOMS_VAL.to_string();
+            }
+        }
+
         match context
             .client
-            .set_data(id.clone(), SYMPTOMS_PREFIX.to_string(), json_val, None)
+            .set_data(
+                id.clone(),
+                SYMPTOMS_PREFIX.to_string(),
+                json_string,
+                None,
+            )
             .await
         {
             Ok(_) => {
@@ -413,7 +467,7 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("add_light_flow")
-                .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
+                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
                 .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
             |args, context| {
                 Box::pin(PeriodTrackingApp::add_flow(args, LIGHT_FLOW, context))
@@ -421,7 +475,7 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("add_mod_flow")
-                .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
+                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
                 .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
             |args, context| {
                 Box::pin(PeriodTrackingApp::add_flow(args, MOD_FLOW, context))
@@ -429,15 +483,21 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("add_heavy_flow")
-                .about("Creates new datum if 'flow_id' is omitted, else modifies existing datum")
+                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
                 .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
             |args, context| {
                 Box::pin(PeriodTrackingApp::add_flow(args, HEAVY_FLOW, context))
             }
         )
-        .with_command_async(Command::new("add_symptoms"), |_, context| {
-            Box::pin(PeriodTrackingApp::add_symptoms(context))
-        })
+        .with_command_async(
+            Command::new("add_symptoms")
+                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
+                .arg(Arg::new("symptoms_id").long("id").short('i').required(false))
+                .arg(Arg::new("symptoms_list").long("symptoms").short('s').required(false).action(ArgAction::Append)),
+            |args, context| {
+                Box::pin(PeriodTrackingApp::add_symptoms(args, context))
+            }
+        )
         .with_command_async(
             Command::new("share")
                 .arg(Arg::new("id").required(true).long("id").short('i'))

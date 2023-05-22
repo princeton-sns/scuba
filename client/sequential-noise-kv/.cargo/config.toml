@@ -1,0 +1,3 @@
+[env]
+OPENSSL_DIR = "/usr/lib/ssl"
+ANDROID_NDK = "~/Android/Sdk/ndk-bundle"

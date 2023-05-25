@@ -237,7 +237,6 @@ impl SkeletonApp {
     }
 
     pub async fn add_datum(
-        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -246,32 +245,10 @@ impl SkeletonApp {
             )));
         }
 
-        let mut id: String;
-        let json_string: String;
-        if let Some(arg_id) = args.get_one::<String>("id") {
-            id = arg_id.to_string();
-
-            // get existing data, if it exists
-            let device_guard = context.client.device.read();
-            let data_store_guard =
-                device_guard.as_ref().unwrap().data_store.read();
-            let val_opt = data_store_guard.get_data(&id);
-
-            if val_opt.is_none() {
-                return Ok(Some(String::from(format!(
-                    "Datum with id {} does not exist.",
-                    id,
-                ))));
-            }
-
-            let existing_val = val_opt.unwrap();
-            json_string = existing_val.data_val().to_string();
-        } else {
-            id = DATA_PREFIX.to_owned();
-            id.push_str("/");
-            id.push_str(&Uuid::new_v4().to_string());
-            json_string = EMPTY_DATUM.to_string();
-        }
+        let mut id = DATA_PREFIX.to_owned();
+        id.push_str("/");
+        id.push_str(&Uuid::new_v4().to_string());
+        let json_string = EMPTY_DATUM.to_string();
 
         match context
             .client
@@ -386,6 +363,11 @@ async fn main() -> ReplResult<()> {
             Command::new("get_state")
                 .arg(Arg::new("id").required(true)),
             SkeletonApp::get_state,
+        )
+        .with_command_async(
+            Command::new("add_datum"), |_, context| {
+                Box::pin(SkeletonApp::add_datum(context))
+            }
         )
         .with_command_async(
             Command::new("share")

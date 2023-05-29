@@ -409,6 +409,7 @@ impl ChessApp {
     }
 
     pub async fn create_game(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -417,23 +418,35 @@ impl ChessApp {
             )));
         }
 
-        let mut id = GAME_PREFIX.to_owned();
-        id.push_str("/");
-        id.push_str(&Uuid::new_v4().to_string());
+        let opponent_id = args.get_one::<String>("opponent").unwrap().to_string();
+
+        let mut game_id = GAME_PREFIX.to_owned();
+        game_id.push_str("/");
+        game_id.push_str(&Uuid::new_v4().to_string());
         let json_string = serde_json::to_string(&Game::new()).unwrap();
 
-        match context
+        let res = context
             .client
-            .set_data(id.clone(), GAME_PREFIX.to_string(), json_string, None)
-            .await
-        {
-            Ok(_) => {
-                Ok(Some(String::from(format!("Added game with id {}", id))))
-            }
-            Err(err) => Ok(Some(String::from(format!(
+            .set_data(game_id.clone(), GAME_PREFIX.to_string(), json_string, None)
+            .await;
+
+        if res.is_err() {
+            return Ok(Some(String::from(format!(
                 "Error adding game: {}",
-                err.to_string()
-            )))),
+                res.err().unwrap()
+            ))));
+        }
+
+        match context.client.add_writers(game_id.clone(), vec![&opponent_id.clone()]).await {
+            Ok(_) => {
+                Ok(Some(String::from(format!("Created game with id {}", game_id))))
+            }
+            Err(err) => {
+                Ok(Some(String::from(format!(
+                    "Error adding opponent: {}",
+                    err
+                ))))
+            }
         }
     }
 
@@ -458,20 +471,6 @@ impl ChessApp {
             if res.is_err() {
                 return Ok(Some(String::from(format!(
                     "Error adding readers to datum: {}",
-                    res.err().unwrap().to_string()
-                ))));
-            }
-        }
-
-        if let Some(arg_writers) = args.get_many::<String>("writers") {
-            let writers = arg_writers.collect::<Vec<&String>>();
-            let res = context
-                .client
-                .add_writers(id.clone(), writers.clone())
-                .await;
-            if res.is_err() {
-                return Ok(Some(String::from(format!(
-                    "Error adding writers to datum: {}",
                     res.err().unwrap().to_string()
                 ))));
             }
@@ -522,9 +521,12 @@ async fn main() -> ReplResult<()> {
             Command::new("get_state").arg(Arg::new("id").required(true)),
             ChessApp::get_state,
         )
-        .with_command_async(Command::new("create_game"), |_, context| {
-            Box::pin(ChessApp::create_game(context))
-        })
+        .with_command_async(
+            Command::new("create_game").arg(Arg::new("opponent").required(true)),
+            |args, context| {
+                Box::pin(ChessApp::create_game(args, context))
+            }
+        )
         .with_command_async(
             Command::new("share")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
@@ -534,14 +536,8 @@ async fn main() -> ReplResult<()> {
                         .long("readers")
                         .short('r')
                         .action(ArgAction::Append),
-                )
-                .arg(
-                    Arg::new("writers")
-                        .required(false)
-                        .long("writers")
-                        .short('w')
-                        .action(ArgAction::Append),
                 ),
+                // TODO can add data-only readers, too
             |args, context| Box::pin(ChessApp::share(args, context)),
         );
 

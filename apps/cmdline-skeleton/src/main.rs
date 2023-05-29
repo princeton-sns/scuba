@@ -16,10 +16,7 @@ struct SkeletonApp {
 
 impl SkeletonApp {
     pub async fn new() -> SkeletonApp {
-        let client = NoiseKVClient::new(
-            None, None, false, None, None,
-        )
-        .await;
+        let client = NoiseKVClient::new(None, None, false, None, None).await;
         Self { client }
     }
 
@@ -252,12 +249,7 @@ impl SkeletonApp {
 
         match context
             .client
-            .set_data(
-                id.clone(),
-                DATA_PREFIX.to_string(),
-                json_string,
-                None,
-            )
+            .set_data(id.clone(), DATA_PREFIX.to_string(), json_string, None)
             .await
         {
             Ok(_) => {
@@ -336,21 +328,13 @@ async fn main() -> ReplResult<()> {
                 Box::pin(SkeletonApp::create_linked_device(args, context))
             },
         )
-        .with_command(
-            Command::new("check_device"),
-            SkeletonApp::check_device,
-        )
+        .with_command(Command::new("check_device"), SkeletonApp::check_device)
         .with_command(Command::new("get_name"), SkeletonApp::get_name)
         .with_command(Command::new("get_idkey"), SkeletonApp::get_idkey)
-        .with_command(
-            Command::new("get_contacts"),
-            SkeletonApp::get_contacts,
-        )
+        .with_command(Command::new("get_contacts"), SkeletonApp::get_contacts)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(SkeletonApp::add_contact(args, context))
-            },
+            |args, context| Box::pin(SkeletonApp::add_contact(args, context)),
         )
         .with_command(
             Command::new("get_linked_devices"),
@@ -360,15 +344,12 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_perms"), SkeletonApp::get_perms)
         .with_command(Command::new("get_groups"), SkeletonApp::get_groups)
         .with_command(
-            Command::new("get_state")
-                .arg(Arg::new("id").required(true)),
+            Command::new("get_state").arg(Arg::new("id").required(true)),
             SkeletonApp::get_state,
         )
-        .with_command_async(
-            Command::new("add_datum"), |_, context| {
-                Box::pin(SkeletonApp::add_datum(context))
-            }
-        )
+        .with_command_async(Command::new("add_datum"), |_, context| {
+            Box::pin(SkeletonApp::add_datum(context))
+        })
         .with_command_async(
             Command::new("share")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
@@ -386,9 +367,7 @@ async fn main() -> ReplResult<()> {
                         .short('w')
                         .action(ArgAction::Append),
                 ),
-            |args, context| {
-                Box::pin(SkeletonApp::share(args, context))
-            },
+            |args, context| Box::pin(SkeletonApp::share(args, context)),
         );
 
     repl.run_async().await

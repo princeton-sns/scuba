@@ -6,6 +6,184 @@ use reedline_repl_rs::Result as ReplResult;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use serde::{Deserialize, Serialize};
+use std::collections::LinkedList;
+
+const GAME_PREFIX: &str = "game";
+const BLACK: &str = "b";
+const WHITE: &str = "w";
+const TIE: &str = "tie";
+const IN_PROGRESS: &str = "in progress";
+
+// TODO Piece enum?
+
+// 32 total
+const EMPTY: &str = "";
+// 8 per team (16 total)
+const B_PAWN: &str = "b_pawn";
+const W_PAWN: &str = "w_pawn";
+// 2 per team (4 total)
+const B_ROOK: &str = "b_rook";
+const W_ROOK: &str = "w_rook";
+// 2 per team (4 total)
+const B_KNIGHT: &str = "b_knight";
+const W_KNIGHT: &str = "w_knight";
+// 2 per team (4 total)
+const B_BISHOP: &str = "b_bishop";
+const W_BISHOP: &str = "w_bishop";
+// 1 per team (2 total)
+const B_QUEEN: &str = "b_queen";
+const W_QUEEN: &str = "w_queen";
+// 1 per team (2 total)
+const B_KING: &str = "b_king";
+const W_KING: &str = "w_king";
+
+// TODO Use refinement types for the coordinates
+// https://docs.rs/refinement/latest/refinement/struct.Refinement.html
+#[derive(Serialize, Deserialize)]
+struct Move<'a> {
+    piece: &'a str,
+    start_x: usize, // 0-7
+    start_y: usize, // 0-7
+    end_x: usize,   // 0-7
+    end_y: usize,   // 0-7
+}
+
+impl<'a> Move<'a> {
+    pub fn new(
+        piece: &'a str,
+        start_x: usize,
+        start_y: usize,
+        end_x: usize,
+        end_y: usize,
+    ) -> Move {
+        Self {
+            piece,
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Board {
+    board: [[String; 8]; 8],
+}
+
+impl Board {
+    pub fn new() -> Board {
+        let board = [
+            [
+                B_ROOK.to_string(),
+                B_KNIGHT.to_string(),
+                B_BISHOP.to_string(),
+                B_QUEEN.to_string(),
+                B_KING.to_string(),
+                B_BISHOP.to_string(),
+                B_KNIGHT.to_string(),
+                B_ROOK.to_string(),
+            ],
+            [
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+            ],
+            [
+                W_ROOK.to_string(),
+                W_KNIGHT.to_string(),
+                W_BISHOP.to_string(),
+                W_QUEEN.to_string(),
+                W_KING.to_string(),
+                W_BISHOP.to_string(),
+                W_KNIGHT.to_string(),
+                W_ROOK.to_string(),
+            ],
+        ];
+        Self { board }
+    }
+
+    pub fn other(&mut self) {}
+}
+
+#[derive(Serialize, Deserialize)]
+struct Game<'a> {
+    turn: &'a str,
+    board: Board,
+    b_move_history: LinkedList<Move<'a>>,
+    w_move_history: LinkedList<Move<'a>>,
+    winner: &'a str,
+    //TODO timer: Timer,
+}
+
+impl<'a> Game<'a> {
+    pub fn new() -> Game<'a> {
+        Self {
+            turn: WHITE,
+            board: Board::new(),
+            b_move_history: LinkedList::<Move>::new(),
+            w_move_history: LinkedList::<Move>::new(),
+            winner: IN_PROGRESS,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ChessApp {
     client: NoiseKVClient,
@@ -13,10 +191,7 @@ struct ChessApp {
 
 impl ChessApp {
     pub async fn new() -> ChessApp {
-        let client = NoiseKVClient::new(
-            None, None, false, None, None,
-        )
-        .await;
+        let client = NoiseKVClient::new(None, None, false, None, None).await;
         Self { client }
     }
 
@@ -233,6 +408,35 @@ impl ChessApp {
         }
     }
 
+    pub async fn create_game(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let mut id = GAME_PREFIX.to_owned();
+        id.push_str("/");
+        id.push_str(&Uuid::new_v4().to_string());
+        let json_string = serde_json::to_string(&Game::new()).unwrap();
+
+        match context
+            .client
+            .set_data(id.clone(), GAME_PREFIX.to_string(), json_string, None)
+            .await
+        {
+            Ok(_) => {
+                Ok(Some(String::from(format!("Added game with id {}", id))))
+            }
+            Err(err) => Ok(Some(String::from(format!(
+                "Error adding game: {}",
+                err.to_string()
+            )))),
+        }
+    }
+
     pub async fn share(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -299,21 +503,13 @@ async fn main() -> ReplResult<()> {
                 Box::pin(ChessApp::create_linked_device(args, context))
             },
         )
-        .with_command(
-            Command::new("check_device"),
-            ChessApp::check_device,
-        )
+        .with_command(Command::new("check_device"), ChessApp::check_device)
         .with_command(Command::new("get_name"), ChessApp::get_name)
         .with_command(Command::new("get_idkey"), ChessApp::get_idkey)
-        .with_command(
-            Command::new("get_contacts"),
-            ChessApp::get_contacts,
-        )
+        .with_command(Command::new("get_contacts"), ChessApp::get_contacts)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(ChessApp::add_contact(args, context))
-            },
+            |args, context| Box::pin(ChessApp::add_contact(args, context)),
         )
         .with_command(
             Command::new("get_linked_devices"),
@@ -323,10 +519,12 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_perms"), ChessApp::get_perms)
         .with_command(Command::new("get_groups"), ChessApp::get_groups)
         .with_command(
-            Command::new("get_state")
-                .arg(Arg::new("id").required(true)),
+            Command::new("get_state").arg(Arg::new("id").required(true)),
             ChessApp::get_state,
         )
+        .with_command_async(Command::new("create_game"), |_, context| {
+            Box::pin(ChessApp::create_game(context))
+        })
         .with_command_async(
             Command::new("share")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
@@ -344,9 +542,7 @@ async fn main() -> ReplResult<()> {
                         .short('w')
                         .action(ArgAction::Append),
                 ),
-            |args, context| {
-                Box::pin(ChessApp::share(args, context))
-            },
+            |args, context| Box::pin(ChessApp::share(args, context)),
         );
 
     repl.run_async().await

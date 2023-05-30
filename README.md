@@ -6,7 +6,7 @@ This repository consists of the Noise [core client library](https://github.com/p
 
 A compatible Noise server (found [here](https://github.com/princeton-sns/sharded-noise-server)) routes and orders all encrypted operations in the system, enabling offline communication and client validation of a host of consistency models.
 
-The core client library establishes end-to-end encryption, server communication, and mechanisms for detecting consistency violations in a Byzantine setting. Notably, the core library is entirely application-agnostic, and applications can either communicate with it directly or through a relevant data abstraction layer.
+The core client library establishes end-to-end [double ratchet](https://signal.org/docs/specifications/doubleratchet/) encryption, server communication, and mechanisms for detecting consistency violations in a Byzantine setting. Notably, the core library is entirely application-agnostic, and applications can either communicate with it directly or through a relevant data abstraction layer.
 
 The data abstraction layers provide various consistency, data model, and access control abstractions to applications, illustrating how the Noise can support a variety of application needs.
 

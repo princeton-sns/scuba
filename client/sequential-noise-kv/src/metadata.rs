@@ -25,9 +25,6 @@ pub struct Group {
     group_id: String,
     // backpointer to perm for checking if a group has certain permissions
     perm_ids: Vec<String>,
-    // FIXME not sure is_contact_name is useful anymore, and kind of defeats
-    // the purpose of our "flexible" group structure -> should remove
-    pub is_contact_name: bool,
     parents: HashSet<String>,
     children: Option<HashSet<String>>,
 }
@@ -36,10 +33,9 @@ impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, perm_ids: {}, is_contact_name: {}, parents: {}, children: {}",
+            "group_id: {}, perm_ids: {}, parents: {}, children: {}",
             self.group_id,
             itertools::join(self.perm_ids.clone(), ", "),
-            self.is_contact_name,
             itertools::join(self.parents.clone(), ", "),
             self.children.as_ref().map_or_else(
                 || "None".to_string(),
@@ -52,11 +48,14 @@ impl fmt::Display for Group {
 impl Group {
     pub fn new(
         group_id: Option<String>,
+        // FIXME when would perm_ids be None (legally)?
         perm_ids: Option<Vec<String>>,
-        is_contact_name: bool,
         // first option specifies whether this is a "node" group (if Some)
         // or a "leaf" group (if None), and the second option specifies
-        // if there are any children to add upon creation FIXME this is gross
+        // if there are any children to add upon creation 
+        // FIXME this ^ is gross/confusing, split into two args or have something
+        // more natural like: 
+        // (None = leaf, Some([]) = empty node, Some([...]) = nonempty node)
         children_arg: Option<Option<Vec<String>>>,
     ) -> Group {
         let init_group_id: String;
@@ -86,7 +85,6 @@ impl Group {
         Self {
             group_id: init_group_id,
             perm_ids: init_perm_ids,
-            is_contact_name,
             parents: HashSet::<String>::new(),
             children,
         }
@@ -303,7 +301,6 @@ impl MetadataStore {
                 let new_group = Group::new(
                     group_id_opt,
                     Some(vec![perm_id.to_string()]),
-                    false,
                     Some(Some(new_members.clone())),
                 );
                 self.set_group(

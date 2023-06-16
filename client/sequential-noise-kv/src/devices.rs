@@ -46,7 +46,6 @@ impl<T: NoiseData> Device<T> {
             Group::new(
                 Some(linked_name.clone()),
                 Some(vec![linked_perm_set.perm_id().to_string()]),
-                false,
                 Some(None),
             ),
         );
@@ -56,7 +55,6 @@ impl<T: NoiseData> Device<T> {
             Group::new(
                 Some(idkey.clone()),
                 Some(vec![linked_perm_set.perm_id().to_string()]),
-                false,
                 None,
             ),
         );
@@ -196,39 +194,39 @@ impl<T: NoiseData> Device<T> {
         Ok(())
     }
 
-    pub fn get_contacts(&self) -> HashSet<String> {
-        let mut contacts = HashSet::<String>::new();
-        for (id, val) in self.meta_store.read().get_all_groups().iter() {
-            if val.is_contact_name {
-                contacts.insert(id.to_string());
-            }
-        }
-        contacts
-    }
+    //pub fn get_contacts(&self) -> HashSet<String> {
+    //    let mut contacts = HashSet::<String>::new();
+    //    for (id, val) in self.meta_store.read().get_all_groups().iter() {
+    //        if val.is_contact_name {
+    //            contacts.insert(id.to_string());
+    //        }
+    //    }
+    //    contacts
+    //}
 
     // TODO get_pending_contacts
 
-    pub fn add_contact(
-        &self,
-        contact_name: String,
-        mut contact_devices: HashMap<String, Group>,
-    ) -> Result<(), Error> {
-        // TODO is_contact_name will (maybe) be used to add the contact
-        // info of clients that we end up communicating with even though
-        // they are not directly contacts of ours (necessary for data
-        // consistency)
+    //pub fn add_contact(
+    //    &self,
+    //    contact_name: String,
+    //    mut contact_devices: HashMap<String, Group>,
+    //) -> Result<(), Error> {
+    //    // TODO is_contact_name will (maybe) be used to add the contact
+    //    // info of clients that we end up communicating with even though
+    //    // they are not directly contacts of ours (necessary for data
+    //    // consistency)
 
-        // for the group whose id == contact_name, set is_contact_name
-        // to true
-        contact_devices.iter_mut().for_each(|(id, val)| {
-            if *id == contact_name {
-                val.is_contact_name = true;
-            }
-            self.meta_store.write().set_group(id.clone(), val.clone());
-        });
+    //    // for the group whose id == contact_name, set is_contact_name
+    //    // to true
+    //    contact_devices.iter_mut().for_each(|(id, val)| {
+    //        if *id == contact_name {
+    //            val.is_contact_name = true;
+    //        }
+    //        self.meta_store.write().set_group(id.clone(), val.clone());
+    //    });
 
-        Ok(())
-    }
+    //    Ok(())
+    //}
 
     // TODO remove_contact
 
@@ -278,7 +276,7 @@ mod tests {
         let meta_store = device.meta_store.read();
         let linked_group = meta_store.get_group(&linked_name).unwrap();
         assert_eq!(linked_group.group_id(), &linked_name);
-        assert_eq!(linked_group.is_contact_name, false);
+        //assert_eq!(linked_group.is_contact_name, false);
         assert_ne!(linked_group.parents(), &HashSet::<String>::new());
         assert_eq!(
             linked_group.children(),
@@ -287,7 +285,7 @@ mod tests {
 
         let idkey_group = meta_store.get_group(&idkey).unwrap();
         assert_eq!(idkey_group.group_id(), &idkey);
-        assert_eq!(idkey_group.is_contact_name, false);
+        //assert_eq!(idkey_group.is_contact_name, false);
         assert_eq!(
             idkey_group.parents(),
             &HashSet::<String>::from([linked_name.clone()])

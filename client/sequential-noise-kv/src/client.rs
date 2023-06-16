@@ -13,6 +13,8 @@ use crate::data::{BasicData, NoiseData};
 use crate::devices::Device;
 use crate::metadata::{Group, PermType, PermissionSet};
 
+const CONTACTS: &str = "CONTACTS";
+
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
     #[error("Device does not exist.")]
@@ -26,10 +28,11 @@ pub enum Error {
     PendingIdkeyMismatch(String, String),
     #[error("Permission set with id {0} already exists; cannot use SetPerm")]
     PermAlreadyExists(String),
-    #[error("{0} is not a valid contact.")]
-    InvalidContactName(String),
-    #[error("Cannot add own device as contact.")]
-    SelfIsInvalidContact,
+    //#[error("{0} is not a valid contact.")]
+    //InvalidContactName(String),
+    // TODO add this check as an invariant on the contact group
+    //#[error("Cannot add own device as contact.")]
+    //SelfIsInvalidContact,
     #[error("Data with id {0} does not exist.")]
     NonexistentData(String),
     #[error("Cannot convert {0} to string.")]
@@ -56,8 +59,8 @@ enum Operation {
         HashMap<String, Group>,
         HashMap<String, BasicData>,
     ),
-    AddContact(String, String, HashMap<String, Group>),
-    ConfirmAddContact(String, HashMap<String, Group>),
+    //AddContact(String, String, HashMap<String, Group>),
+    //ConfirmAddContact(String, HashMap<String, Group>),
     SetPerm(String, PermissionSet),
     AddPermMembers(String, Option<String>, PermType),
     // TODO RemovePermMember
@@ -443,18 +446,18 @@ impl NoiseKVClient {
                     new_data,
                 )
                 .map_err(Error::from),
-            Operation::AddContact(sender, contact_name, contact_devices) => {
-                self.add_contact_response(sender, contact_name, contact_devices)
-                    .await
-                    .map_err(Error::from)
-            }
-            Operation::ConfirmAddContact(contact_name, contact_devices) => self
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .add_contact(contact_name, contact_devices)
-                .map_err(Error::from),
+            //Operation::AddContact(sender, contact_name, contact_devices) => {
+            //    self.add_contact_response(sender, contact_name, contact_devices)
+            //        .await
+            //        .map_err(Error::from)
+            //}
+            //Operation::ConfirmAddContact(contact_name, contact_devices) => self
+            //    .device
+            //    .read()
+            //    .as_ref()
+            //    .unwrap()
+            //    .add_contact(contact_name, contact_devices)
+            //    .map_err(Error::from),
             Operation::SetPerm(perm_id, perm_val) => {
                 self.device
                     .read()
@@ -601,6 +604,7 @@ impl NoiseKVClient {
 
     // TODO if no linked devices, linked_name can just == idkey
     // only create linked_group if link devices
+    // FIXME add flag for initializing contacts group?
     pub fn create_standalone_device(&self) {
         *self.device.write() =
             Some(Device::new(self.core.as_ref().unwrap().idkey(), None, None));
@@ -710,9 +714,31 @@ impl NoiseKVClient {
     }
 
     /*
-     * Contacts
+     * Contacts/Group handles
      */
 
+    // FIXME
+    // Would be really cool to only allow each contact to modify their specific
+    // devices list within the overarching "contacts" group - so, how can we do this?
+    //pub fn create_contacts(&self) {
+    //    // FIXME contacts should be a data object
+
+    //    // create new perms for this group
+    //    let mut perm_val = PermissionSet::new(None, None, None, None);
+    //    let perm_id = perm_val.perm_id().to_string();
+
+    //    // create the group itself
+    //    let group_val = Group::new(
+    //        Some(CONTACTS.to_string()),
+    //        Some(vec![perm_id.to_string()]),
+    //        Some(None), // empty node
+    //    );
+
+    //    // add owner group into perms
+    //    perm_val.set_owners(group_val.group_id());
+    //}
+
+    /*
     // FIXME breaks once share data; should probably be either app-level
     // or impl differently
     pub fn get_contacts(&self) -> HashSet<String> {
@@ -831,7 +857,7 @@ impl NoiseKVClient {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::SendFailed(err.to_string())),
         }
-    }
+    }*/
 
     /*
      * Deleting devices
@@ -1030,7 +1056,6 @@ impl NoiseKVClient {
                 let group_val = Group::new(
                     None,
                     Some(vec![perm_id.to_string()]),
-                    false,
                     Some(Some(vec![self.linked_name().to_string()])),
                 );
 
@@ -1343,7 +1368,6 @@ impl NoiseKVClient {
                             let new_group = Group::new(
                                 Some(new_group_id.clone()),
                                 Some(vec![perm_val.perm_id().to_string()]),
-                                false,
                                 Some(Some(new_members_vec.clone())),
                             );
                             assoc_groups.insert(new_group_id, new_group);
@@ -1876,6 +1900,7 @@ mod tests {
 
     // TODO test adding multiple contacts
 
+    /*
     #[tokio::test]
     async fn test_get_all_contacts() {
         let mut client_0 =
@@ -1911,6 +1936,7 @@ mod tests {
         assert_eq!(client_0.get_contacts().len(), 1);
         assert_eq!(client_1.get_contacts().len(), 1);
     }
+    */
 
     /*
     #[tokio::test]
@@ -2126,6 +2152,7 @@ mod tests {
         //let perm_id = data_val.perm_id();
     }
 
+    /*
     #[tokio::test]
     async fn test_add_writers() {
         let mut client_0 =
@@ -2136,6 +2163,7 @@ mod tests {
         client_0.create_standalone_device();
         client_1.create_standalone_device();
 
+        // FIXME no more contacts
         let mut res = client_0.add_contact(client_1.idkey()).await;
         if res.is_err() {
             panic!("send failed");
@@ -2425,6 +2453,7 @@ mod tests {
         client_0.create_standalone_device();
         client_1.create_standalone_device();
 
+        // FIXME no more contacts
         let mut res = client_0.add_contact(client_1.idkey()).await;
         if res.is_err() {
             panic!("send failed");
@@ -2846,4 +2875,5 @@ mod tests {
         println!("client_1.idkey: {:?}", client_1.idkey());
         println!("client_1.linked_name: {:?}", client_1.linked_name());
     }
+    */
 }

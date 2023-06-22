@@ -116,6 +116,14 @@ its information with "B", and "B" may see the same about "C". This is where thin
 start to look a bit different from a "normal" group. A new permission type may
 fix this, where the list of readers is not propagated but everything else is.
 
+Assuming the above issue is solved, if two devices, each from distinct linked groups, 
+do not have a contact relationship, they should not have any knowledge about the
+others linked groups. Once those devices do have a contact relationship, they
+cannot modify the others linked group membership in any meaningful way, because 
+the permissions checks on all devices that will receive those operations will fail.
+A corrupted device may circumvent those permissions checks locally, but it cannot
+force the remaining devices to circumvent their own local permissions checks. Thus
+a malicious device cannot corrupt the state on other, non-malicious devices.
 
 
 

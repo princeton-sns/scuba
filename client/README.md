@@ -46,8 +46,8 @@ both device "A1" and "A2". "A" has "admin" access to "devices", "A", "A1", and
 TODO does every node need to have its own permissions object? Or can permissions
 trickle down the tree? Or is there a mix -> trickling down unless one is specified
 at a particular point? If trickling down or mixing, only one permissions object is 
-needed at this point (w - ["A"], r - ["A"]). Otherwise, three identical permissions
-objects are needed for each node in the current tree.
+needed at this point (a - ["A"], w - ["A"], r - ["A"]). Otherwise, three identical 
+permissions objects are needed for each node in the current tree.
 
 If the user associated with "A" wants to add a third device, it must do so via
 in existing device, i.e. either "A1" or "A2". The third device, let's assign it

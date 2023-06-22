@@ -112,9 +112,9 @@ which sends "A"s linked group to "B" and also any future updates to it.
 
 However, imagine now that another user "C" wants to add "A" as a contact. By adding
 "C" as a reader to "A"s linked group, "C" may be able to see that "A" has shared
-its information with "B", and "B" may see the same about "C". This is where things
-start to look a bit different from a "normal" group. A new permission type may
-fix this, where the list of readers is not propagated but everything else is.
+its information with "B", and "B" may see the same about "C". A new permission type 
+may fix this (we could call it a "reader-mod-readers" permissions level for now), 
+where the list of readers is not propagated but everything else is.
 
 Assuming the above issue is solved, if two devices, each from distinct linked groups, 
 do not have a contact relationship, they should not have any knowledge about the
@@ -125,5 +125,23 @@ A corrupted device may circumvent those permissions checks locally, but it canno
 force the remaining devices to circumvent their own local permissions checks. Thus
 a malicious device cannot corrupt the state on other, non-malicious devices.
 
+### Application-level API
 
+Although a special "add-contact" method in the library was a bit redundant, it 
+exposed an intuitive application-level API. Making "contacts" just like any other
+group _could_ be confusing, but let's walk through how it would look to the app
+and revisit this question again afterwards.
 
+Let's assume that the current device maps to "A1" under the hood, that the linked
+group id is "A", that the linked group also contains "A2" and "A3", and that we
+currently have no "contacts" added. Another linked device set, "B" with devices
+"B1" and "B2", also has no "contacts" added.
+
+If the current device wants to add all of "B" as a contact, it first needs to send
+a request to "B1". As mentioned above, this "request" can be sent by giving "B1"
+"reader-mod-readers" permission, which will propagate "A"s linked subtree and the
+associated permissions (modulo the "readers") to "B1". However, at this point, 
+_only_ "B1" has been given access to "A"'s linked subtree, so it's state has now
+diverged from the rest of its linked devices (in this case, "B2"). So simply
+granting access in this way initially is not enough for discovering all of "B"'s
+devices.

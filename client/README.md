@@ -144,4 +144,48 @@ associated permissions (modulo the "readers") to "B1". However, at this point,
 _only_ "B1" has been given access to "A"'s linked subtree, so it's state has now
 diverged from the rest of its linked devices (in this case, "B2"). So simply
 granting access in this way initially is not enough for discovering all of "B"'s
-devices.
+devices. "A" needs to know of all "B"s devices _before_ it gives _"B"_ "reader-mod-readers"
+permission on its linked subtree in order to keep all of "B"'s devices in sync. 
+Initially, NoiseKV essentially relied on this step _to_ discover the rest of "B"'s
+devices, but if we want to leverage economy of mechanism and trigger contact additions
+by merely "sharing" linked subtree data, an additional contact-discovery mechanism
+is needed before this step is performed.
+
+### Contact discovery
+
+NoiseKV could implement its own simple form of contact discovery once _one_ device's
+id (from a distinct linked subtree) is known. NoiseKV does not solve that yet, and
+assumes that devices "just know" one device id from a linked subtree that they want
+to connect with. 
+
+With this assumption in mind, NoiseKV currently naively just "asks" "B1" for all of
+its linked devices on "A1"'s behalf, and then creates its own copy of "B"'s linked
+group on each of "A"'s devices (and vice versa), via it's special "add-contact"
+method. However, this is what forces NoiseKV to implement additional, redundant logic
+when a device's linked subtree is updated - since it is a copy, and not a shared
+object, NoiseKV must track and propagate changes to all contacts explicitly when a 
+device's linked subtree changes, through a different mechanism than that of shared 
+objects (which we are now trying to use).
+
+Repurposing the initial step of "ask"ing "B1" for all its linked device information
+on "A1"'s behalf, and then "sharing" "A"'s linked subtree with all "B" should work.
+But we are still operating under the assumption that "A1" knows one of "B"'s device
+ids, which doesn't seem trivial. How do other contact discovery mechanisms bootstrap
+this process?
+
+#### [Signal contact discovery](https://signal.org/blog/private-contact-discovery/)
+
+The first thing to notice about Signal's contact discovery mechanism is that it
+uses the preexisting social graph of phone numbers in a user's address book. This
+is unlike the setting that Noise operates in, since device public keys will be
+newly assigned to any device entering the system. Ideally, Noise will not be limited
+by any existing social graphs, although it may want to leverage them. (This does
+start to sound like federated identity servers, e.g. Matrix - below).
+
+#### [Matrix identity server](https://matrix.org/docs/legacy/faq/)
+
+Uses email addresses or phone numbers (e.g. "third-party identifiers" or 
+[3PIDs](https://spec.matrix.org/unstable/identity-service-api/)).
+Identity links this 3PID to user's id (forming "matrix identifiers" or MXIDs).
+However, it is still unclear which parts of this identity are required vs optional,
+and thus which ones are ultimately used for contact discovery.

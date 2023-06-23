@@ -173,6 +173,13 @@ But we are still operating under the assumption that "A1" knows one of "B"'s dev
 ids, which doesn't seem trivial. How do other contact discovery mechanisms bootstrap
 this process?
 
+Based on the below, it seems like ultimately public keys need to be associated 
+with some other third-party identifier (email, phone number, social media, etc),
+at which point some private contact discovery mechanism can compute an overlap
+of identifiers that are registered with the system and return those to the user's
+device(s). Thus, our initial assumption that a device knows one of the ids of another 
+device it wants to contact would, indeed, be realistic.
+
 #### [Signal contact discovery](https://signal.org/blog/private-contact-discovery/)
 
 The first thing to notice about Signal's contact discovery mechanism is that it
@@ -189,3 +196,14 @@ Uses email addresses or phone numbers (e.g. "third-party identifiers" or
 Identity links this 3PID to user's id (forming "matrix identifiers" or MXIDs).
 However, it is still unclear which parts of this identity are required vs optional,
 and thus which ones are ultimately used for contact discovery.
+
+[This](https://spec.matrix.org/latest/#identity) seems to say that 3PIDs are
+optional, and that at the bare minimum a user can just have a Matrix user ID
+(to which they can later link other 3PIDs). If a user just has a Matrix user ID,
+though, how would that user contact any other user?
+
+Note that identity servers seem to be the ones that track this "linking" of IDs,
+and are thus responsible for looking up users via 3PIDs. But can users be looked
+up via MXIDs? Although not explicity, my impression is that the ethod is similar
+to that of Signal's contact discovery, i.e. leveraging pre-existing social
+networks rather than creating entirely new ones.

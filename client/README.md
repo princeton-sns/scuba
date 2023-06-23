@@ -209,3 +209,26 @@ and are thus responsible for looking up users via 3PIDs. But can users be looked
 up via MXIDs? Although not explicity, my impression is that the ethod is similar
 to that of Signal's contact discovery, i.e. leveraging pre-existing social
 networks rather than creating entirely new ones.
+
+### Application-level API cont.
+
+Initially, because we had a special "add-contact" method, "A1" would send a request
+to "B1" rather than all of "B"'s devices. "B1" would then orchestrate synchronization
+across its other linked devices, respond to "A1", and "A1" would also orchestrate
+synchronization across its linked devices (i.e. via a special contacts control path).
+But, because contact discovery should give "A1" _all_ of "B"'s linked subtree,
+effectively, "A1" should send the request to _all_ of "B", at which only one of
+"B"'s devices needs to confirm/deny the request.
+
+We mentioned previously that this "request" may just look like device "A1" adding 
+"B" as a "reader-mod-readers" of "A"'s linked subtree. But how can this sharing
+then be confirmed or denied? This property is unlike other kinds of sharing, because
+the protocol asks the sharee for information as well (it is an exchange), unlike
+only giving the sharee some information (adding them to a group, after which point
+the sharee can continuously decide which information it wants to share or not, e.g.
+by messaging in the group or not).
+
+So, not only does sharing need to be prefaced by contact discovery, but also by
+a unique operation that allows the sharee to accept or deny the potential contact
+connection. Once that is accepted, then the associated devices should be free to
+simply share their linked subtrees with one another.

@@ -178,7 +178,9 @@ with some other third-party identifier (email, phone number, social media, etc),
 at which point some private contact discovery mechanism can compute an overlap
 of identifiers that are registered with the system and return those to the user's
 device(s). Thus, our initial assumption that a device knows one of the ids of another 
-device it wants to contact would, indeed, be realistic.
+device it wants to contact would, indeed, be realistic. The current device would
+just ask for the Noise-public key of another user whose email or phone they have,
+and then proceed with future operations using that public key.
 
 #### [Signal contact discovery](https://signal.org/blog/private-contact-discovery/)
 

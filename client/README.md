@@ -232,3 +232,72 @@ So, not only does sharing need to be prefaced by contact discovery, but also by
 a unique operation that allows the sharee to accept or deny the potential contact
 connection. Once that is accepted, then the associated devices should be free to
 simply share their linked subtrees with one another.
+
+To avoid implementing contact discovery for now, we can continue to use the initial
+mechanism that we have been using: "A1" just knows "B1"'s public key, then "A1" 
+sends its own linked subtree to "B1" as a "trade" via a special operation that first
+requires "B1" to confirm/deny the trade. If "B1" denies, nothing changes. If "B1"
+confirms, it updates its own store with "A"'s linked subtree, then adds "A" as
+a "reader-mod-readers" to its own "B" linked subtree (at which point all of "B"'s
+devices should have "A" added, "A" has all of "B"'s linked subtree added).
+
+At this point, "A" still needs to add "B" to its linked subtree (it initially only
+sent "B" a copy, such that "B" knew how to add "A"). Because "B" just shared its
+linked subtree with "A", "A" can just give "A" "reader-mod-readers" permissions 
+on its linked subtree, and be done. But this adds a bit of redundancy, still, 
+since "A" essentially sent its linked subtree twice. I may have tried to pre-optimize
+with the piggybacking, so let's simplify the data exchange without trying to
+minimize the number of round trips first.o
+
+Upon writing out the overly simple version, I realized that the first "send"
+of the linked subtree is essentially the replacement of _contact discovery_, and
+the second is what happens during _contact addition_. So the redundancy here only
+exists because we are running a version of contact discovery within the contact
+addition workflow.
+
+#### Naive contact addition protocol (with contact discovery workaround)
+
+**Two** operations for a DENY and **eight** operations for a CONFIRM.
+
+1. "A1" sends "B1" a request to become contacts.
+
+1. "B1" either confirms or denies (via reply to "A1").
+
+1. If "A1" receives confirmation, "A1" asks "B1" for linked subtree.
+
+1. "B1" sends "B" subtree to "A1".
+
+1. "A1" stores "B" subtree and adds "B" as a "reader-mod-readers" on its linked 
+subtree.
+
+1. "A1" then sends another message to "B" saying "B" should also add "A".
+(TODO to decide: does "A1" adding "B" here propagate to all of "A"'s devices?)
+
+1. "B" stores "A" subtree and also receives the following special message, triggering
+"B" to add "A" as "reader-mod-readers" on its linked subtree.
+
+1. "A" receives "B" linked subtree (TODO if "B" subtree was initially propagated
+to all of "A"'s devices, then nothing happens, otherwise it gets propagated here).
+
+#### Slightly optimized contact addition protocol (with contact discovery workaround)
+
+**Two** operations for a DENY and **six** operations for a CONFIRM.
+
+1. "A1" sends "B1" a request to become contacts, with its "A" linked subtree 
+piggybacked.
+
+1. "B1" either confirms or denies. If "B1" denies the request, it can simply
+ignore it or reply back to "A1".
+
+1. If "B1" confirms, it first adds "A" as "reader-mod-readers" to its "B" subtree.
+
+1. Then "B1" sends a message to "A" saying "A" should also add "B".
+(TODO to decide: does "B1" adding "A" here propagate to all of "B"'s devices?)
+
+1. "A" stores "B"'s linked subtree and receives the following special message, 
+triggering "A" to add "B" as "reader-mod-readers" on its linked subtree.
+
+1. "B" receives "A" linked subtree (TODO if "A" subtree was initially propagated
+to all of "B"'s devices, then nothing happens, otherwise it gets propagated here).
+
+### Summary

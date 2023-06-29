@@ -255,7 +255,7 @@ the second is what happens during _contact addition_. So the redundancy here onl
 exists because we are running a version of contact discovery within the contact
 addition workflow.
 
-#### Naive contact addition protocol (with contact discovery workaround)
+#### Naive contact addition protocol [_with contact discovery workaround_]
 
 **Two** operations for a DENY and **eight** operations for a CONFIRM.
 
@@ -263,9 +263,9 @@ addition workflow.
 
 1. "B1" either confirms or denies (via reply to "A1").
 
-1. If "A1" receives confirmation, "A1" asks "B1" for linked subtree.
+1. If "A1" receives confirmation, [_"A1" asks "B1" for linked subtree_].
 
-1. "B1" sends "B" subtree to "A1".
+1. [_"B1" sends "B" subtree to "A1"_].
 
 1. "A1" stores "B" subtree and adds "B" as a "reader-mod-readers" on its linked 
 subtree.
@@ -276,15 +276,15 @@ subtree.
 1. "B" stores "A" subtree and also receives the following special message, triggering
 "B" to add "A" as "reader-mod-readers" on its linked subtree.
 
-1. "A" receives "B" linked subtree (TODO if "B" subtree was initially propagated
+1. "A" receives "B" shared linked subtree (TODO if "B" subtree was initially propagated
 to all of "A"'s devices, then nothing happens, otherwise it gets propagated here).
 
-#### Slightly optimized contact addition protocol (with contact discovery workaround)
+#### Slightly optimized contact addition protocol [_with contact discovery workaround_]
 
 **Two** operations for a DENY and **six** operations for a CONFIRM.
 
-1. "A1" sends "B1" a request to become contacts, with its "A" linked subtree 
-piggybacked.
+1. "A1" sends "B1" a request to become contacts, [_with its "A" linked subtree 
+piggybacked_].
 
 1. "B1" either confirms or denies. If "B1" denies the request, it can simply
 ignore it or reply back to "A1".
@@ -294,7 +294,7 @@ ignore it or reply back to "A1".
 1. Then "B1" sends a message to "A" saying "A" should also add "B".
 (TODO to decide: does "B1" adding "A" here propagate to all of "B"'s devices?)
 
-1. "A" stores "B"'s linked subtree and receives the following special message, 
+1. "A" stores "B"'s shared linked subtree and receives the following special message, 
 triggering "A" to add "B" as "reader-mod-readers" on its linked subtree.
 
 1. "B" receives "A" linked subtree (TODO if "A" subtree was initially propagated

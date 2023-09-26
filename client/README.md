@@ -239,15 +239,15 @@ sends its own linked subtree to "B1" as a "trade" via a special operation that f
 requires "B1" to confirm/deny the trade. If "B1" denies, nothing changes. If "B1"
 confirms, it updates its own store with "A"'s linked subtree, then adds "A" as
 a "reader-mod-readers" to its own "B" linked subtree (at which point all of "B"'s
-devices should have "A" added, "A" has all of "B"'s linked subtree added).
+devices should have "A" added, and "A" has all of "B"'s linked subtree stored).
 
 At this point, "A" still needs to add "B" to its linked subtree (it initially only
 sent "B" a copy, such that "B" knew how to add "A"). Because "B" just shared its
-linked subtree with "A", "A" can just give "A" "reader-mod-readers" permissions 
-on its linked subtree, and be done. But this adds a bit of redundancy, still, 
+linked subtree with "A", "A" can just give "B" "reader-mod-readers" permissions 
+on its linked subtree, and be done. But this is still redundant,
 since "A" essentially sent its linked subtree twice. I may have tried to pre-optimize
 with the piggybacking, so let's simplify the data exchange without trying to
-minimize the number of round trips first.o
+minimize the number of round trips first.
 
 Upon writing out the overly simple version, I realized that the first "send"
 of the linked subtree is essentially the replacement of _contact discovery_, and
@@ -269,14 +269,16 @@ addition workflow.
 
 1. "A1" stores "B" subtree and adds "B" as a "reader-mod-readers" on its linked 
 subtree.
+(TODO to decide: does "A1" storing/adding the "B" group here propagate to all of "A"'s devices?)
 
 1. "A1" then sends another message to "B" saying "B" should also add "A".
-(TODO to decide: does "A1" adding "B" here propagate to all of "A"'s devices?)
 
 1. "B" stores "A" subtree and also receives the following special message, triggering
-"B" to add "A" as "reader-mod-readers" on its linked subtree.
+"B" to add "A" as "reader-mod-readers" on its linked subtree. 
+(TODO receiving a linked device group could automatically trigger the permissions change, but this
+would require labeling the linked device group in a particular way).
 
-1. "A" receives "B" shared linked subtree (TODO if "B" subtree was initially propagated
+1. "A" receives "B"'s shared linked subtree. (TODO if "B" subtree was initially propagated
 to all of "A"'s devices, then nothing happens, otherwise it gets propagated here).
 
 #### Slightly optimized contact addition protocol [_with contact discovery workaround_]
@@ -290,14 +292,33 @@ piggybacked_].
 ignore it or reply back to "A1".
 
 1. If "B1" confirms, it first adds "A" as "reader-mod-readers" to its "B" subtree.
+(TODO to decide: does "B1" storing/adding the "A" group here propagate to all of "B"'s devices?)
 
 1. Then "B1" sends a message to "A" saying "A" should also add "B".
-(TODO to decide: does "B1" adding "A" here propagate to all of "B"'s devices?)
 
 1. "A" stores "B"'s shared linked subtree and receives the following special message, 
 triggering "A" to add "B" as "reader-mod-readers" on its linked subtree.
+(TODO receiving a linked device group could automatically trigger the permissions change, but this
+would require labeling the linked device group in a particular way).
 
-1. "B" receives "A" linked subtree (TODO if "A" subtree was initially propagated
+1. "B" receives "A" linked subtree. (TODO if "A" subtree was initially propagated
 to all of "B"'s devices, then nothing happens, otherwise it gets propagated here).
 
 ### Summary
+
+### TODOs
+
+#### Top-level "devices" group
+
+Rename top-level "devices" group -> "device_root" or even just "root"
+
+Why does it need to start with a single pointer? Other groups are not referenced
+here, they are just stored as data (if I remember correctly). One benefit of
+isolating device groups from the rest of groups is to reduce the search space
+when one needs to resolve a device group, but this hinges on the fact that the
+library knows whether a group is a group of devices or not, an additional field
+that bloats storage. Is it worth it?
+
+Devices could just be stored as groups, with the exception of the linked group
+(a device must know which devices are theirs vs others -- although isn't this
+handled by permissions?)

@@ -6,30 +6,192 @@ use reedline_repl_rs::Result as ReplResult;
 use std::sync::Arc;
 use uuid::Uuid;
 
-const FLOW_PREFIX: &str = "flow";
-const LIGHT_FLOW: &str = r#"{ "flow": "light" }"#;
-const MOD_FLOW: &str = r#"{ "flow": "moderate" }"#;
-const HEAVY_FLOW: &str = r#"{ "flow": "heavy" }"#;
+use serde::{Deserialize, Serialize};
+use std::collections::LinkedList;
 
-const SYMPTOMS_PREFIX: &str = "symptoms";
-const EMPTY_SYMPTOMS_VAL: &str = r#"{ "symptoms": [] }"#;
+const GAME_PREFIX: &str = "game";
+const BLACK: &str = "b";
+const WHITE: &str = "w";
+const TIE: &str = "tie";
+const IN_PROGRESS: &str = "in progress";
+
+// TODO Piece enum?
+
+// 32 total
+const EMPTY: &str = "";
+// 8 per team (16 total)
+const B_PAWN: &str = "b_pawn";
+const W_PAWN: &str = "w_pawn";
+// 2 per team (4 total)
+const B_ROOK: &str = "b_rook";
+const W_ROOK: &str = "w_rook";
+// 2 per team (4 total)
+const B_KNIGHT: &str = "b_knight";
+const W_KNIGHT: &str = "w_knight";
+// 2 per team (4 total)
+const B_BISHOP: &str = "b_bishop";
+const W_BISHOP: &str = "w_bishop";
+// 1 per team (2 total)
+const B_QUEEN: &str = "b_queen";
+const W_QUEEN: &str = "w_queen";
+// 1 per team (2 total)
+const B_KING: &str = "b_king";
+const W_KING: &str = "w_king";
+
+// TODO Use refinement types for the coordinates
+// https://docs.rs/refinement/latest/refinement/struct.Refinement.html
+#[derive(Serialize, Deserialize)]
+struct Move<'a> {
+    piece: &'a str,
+    start_x: usize, // 0-7
+    start_y: usize, // 0-7
+    end_x: usize,   // 0-7
+    end_y: usize,   // 0-7
+}
+
+impl<'a> Move<'a> {
+    pub fn new(
+        piece: &'a str,
+        start_x: usize,
+        start_y: usize,
+        end_x: usize,
+        end_y: usize,
+    ) -> Move {
+        Self {
+            piece,
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Board {
+    board: [[String; 8]; 8],
+}
+
+impl Board {
+    pub fn new() -> Board {
+        let board = [
+            [
+                B_ROOK.to_string(),
+                B_KNIGHT.to_string(),
+                B_BISHOP.to_string(),
+                B_QUEEN.to_string(),
+                B_KING.to_string(),
+                B_BISHOP.to_string(),
+                B_KNIGHT.to_string(),
+                B_ROOK.to_string(),
+            ],
+            [
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+                B_PAWN.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+                EMPTY.to_string(),
+            ],
+            [
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+                W_PAWN.to_string(),
+            ],
+            [
+                W_ROOK.to_string(),
+                W_KNIGHT.to_string(),
+                W_BISHOP.to_string(),
+                W_QUEEN.to_string(),
+                W_KING.to_string(),
+                W_BISHOP.to_string(),
+                W_KNIGHT.to_string(),
+                W_ROOK.to_string(),
+            ],
+        ];
+        Self { board }
+    }
+
+    pub fn other(&mut self) {}
+}
+
+#[derive(Serialize, Deserialize)]
+struct Game<'a> {
+    turn: &'a str,
+    board: Board,
+    b_move_history: LinkedList<Move<'a>>,
+    w_move_history: LinkedList<Move<'a>>,
+    winner: &'a str,
+    //TODO timer: Timer,
+}
+
+impl<'a> Game<'a> {
+    pub fn new() -> Game<'a> {
+        Self {
+            turn: WHITE,
+            board: Board::new(),
+            b_move_history: LinkedList::<Move>::new(),
+            w_move_history: LinkedList::<Move>::new(),
+            winner: IN_PROGRESS,
+        }
+    }
+}
 
 #[derive(Clone)]
-struct PeriodTrackingApp {
+struct ChessApp {
     client: NoiseKVClient,
 }
 
-impl PeriodTrackingApp {
-    pub async fn new() -> PeriodTrackingApp {
-        let client = NoiseKVClient::new(
-            None, None,
-            //Some("sns26.cs.princeton.edu"),
-            //Some("8080"),
-            // FIXME something isn't working anymore w the sns server
-            // specifically
-            false, None, None, //Some(1),
-        )
-        .await;
+impl ChessApp {
+    pub async fn new() -> ChessApp {
+        let client = NoiseKVClient::new(None, None, false, None, None).await;
         Self { client }
     }
 
@@ -246,43 +408,7 @@ impl PeriodTrackingApp {
         }
     }
 
-    pub async fn add_flow(
-        args: ArgMatches,
-        flow_str: &str,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let mut id: String;
-        if let Some(arg_id) = args.get_one::<String>("flow_id") {
-            id = arg_id.to_string();
-        } else {
-            id = FLOW_PREFIX.to_owned();
-            id.push_str("/");
-            id.push_str(&Uuid::new_v4().to_string());
-        }
-        let json_string = flow_str.to_string();
-
-        match context
-            .client
-            .set_data(id.clone(), FLOW_PREFIX.to_string(), json_string, None)
-            .await
-        {
-            Ok(_) => {
-                Ok(Some(String::from(format!("Added flow with id {}", id))))
-            }
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding flow: {}",
-                err.to_string()
-            )))),
-        }
-    }
-
-    pub async fn add_symptoms(
+    pub async fn create_game(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -292,83 +418,35 @@ impl PeriodTrackingApp {
             )));
         }
 
-        let mut id: String;
-        let json_string: String;
-        // modify existing datum
-        if let Some(arg_id) = args.get_one::<String>("symptoms_id") {
-            id = arg_id.to_string();
+        let opponent_id = args.get_one::<String>("opponent").unwrap().to_string();
 
-            // get existing data, if it exists
-            let device_guard = context.client.device.read();
-            let data_store_guard =
-                device_guard.as_ref().unwrap().data_store.read();
-            let val_opt = data_store_guard.get_data(&id);
+        let mut game_id = GAME_PREFIX.to_owned();
+        game_id.push_str("/");
+        game_id.push_str(&Uuid::new_v4().to_string());
+        let json_string = serde_json::to_string(&Game::new()).unwrap();
 
-            if val_opt.is_none() {
-                return Ok(Some(String::from(format!(
-                    "Datum with id {} does not exist.",
-                    id,
-                ))));
-            }
+        let res = context
+            .client
+            .set_data(game_id.clone(), GAME_PREFIX.to_string(), json_string, None)
+            .await;
 
-            let existing_val = val_opt.unwrap();
-
-            if let Some(arg_symptoms) = args.get_many::<String>("symptoms_list")
-            {
-                // append new symptoms to list of old symptoms
-                let mut new_symptoms_obj =
-                    serde_json::json!(arg_symptoms.collect::<Vec<&String>>());
-                let mut new_symptoms = new_symptoms_obj.as_array_mut().unwrap();
-                let mut existing_symptoms_obj: serde_json::Value =
-                    serde_json::from_str(existing_val.data_val()).unwrap();
-                let existing_symptoms = &mut existing_symptoms_obj["symptoms"]
-                    .as_array_mut()
-                    .unwrap();
-                existing_symptoms.append(&mut new_symptoms);
-
-                let json_val = serde_json::json!({
-                    "symptoms": existing_symptoms,
-                });
-                json_string = serde_json::to_string(&json_val).unwrap();
-            } else {
-                // keep existing data so it is not overwritten
-                json_string = existing_val.data_val().to_string();
-            }
-        // create new datum
-        } else {
-            id = SYMPTOMS_PREFIX.to_owned();
-            id.push_str("/");
-            id.push_str(&Uuid::new_v4().to_string());
-
-            if let Some(arg_symptoms) = args.get_many::<String>("symptoms_list")
-            {
-                let symptoms = arg_symptoms.collect::<Vec<&String>>();
-                let json_val = serde_json::json!({
-                    "symptoms": symptoms,
-                });
-                json_string = serde_json::to_string(&json_val).unwrap();
-            } else {
-                json_string = EMPTY_SYMPTOMS_VAL.to_string();
-            }
+        if res.is_err() {
+            return Ok(Some(String::from(format!(
+                "Error adding game: {}",
+                res.err().unwrap()
+            ))));
         }
 
-        match context
-            .client
-            .set_data(
-                id.clone(),
-                SYMPTOMS_PREFIX.to_string(),
-                json_string,
-                None,
-            )
-            .await
-        {
+        match context.client.add_writers(game_id.clone(), vec![&opponent_id.clone()]).await {
             Ok(_) => {
-                Ok(Some(String::from(format!("Added symptoms with id {}", id))))
+                Ok(Some(String::from(format!("Created game with id {}", game_id))))
             }
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding symptoms: {}",
-                err.to_string()
-            )))),
+            Err(err) => {
+                Ok(Some(String::from(format!(
+                    "Error adding opponent: {}",
+                    err
+                ))))
+            }
         }
     }
 
@@ -398,20 +476,6 @@ impl PeriodTrackingApp {
             }
         }
 
-        if let Some(arg_writers) = args.get_many::<String>("writers") {
-            let writers = arg_writers.collect::<Vec<&String>>();
-            let res = context
-                .client
-                .add_writers(id.clone(), writers.clone())
-                .await;
-            if res.is_err() {
-                return Ok(Some(String::from(format!(
-                    "Error adding writers to datum: {}",
-                    res.err().unwrap().to_string()
-                ))));
-            }
-        }
-
         Ok(Some(String::from(format!(
             "Successfully shared datum {}",
             id
@@ -421,82 +485,46 @@ impl PeriodTrackingApp {
 
 #[tokio::main]
 async fn main() -> ReplResult<()> {
-    let app = Arc::new(PeriodTrackingApp::new().await);
+    let app = Arc::new(ChessApp::new().await);
 
     let mut repl = Repl::new(app.clone())
-        .with_name("PeriodTracking App")
+        .with_name("Chess App")
         .with_version("v0.1.0")
-        .with_description("Noise period tracking app")
+        .with_description("Noise chess app")
         .with_command(
             Command::new("create_new_device"),
-            PeriodTrackingApp::create_new_device,
+            ChessApp::create_new_device,
         )
         .with_command_async(
             Command::new("create_linked_device")
                 .arg(Arg::new("idkey").required(true)),
             |args, context| {
-                Box::pin(PeriodTrackingApp::create_linked_device(args, context))
+                Box::pin(ChessApp::create_linked_device(args, context))
             },
         )
-        .with_command(
-            Command::new("check_device"),
-            PeriodTrackingApp::check_device,
-        )
-        .with_command(Command::new("get_name"), PeriodTrackingApp::get_name)
-        .with_command(Command::new("get_idkey"), PeriodTrackingApp::get_idkey)
-        .with_command(
-            Command::new("get_contacts"),
-            PeriodTrackingApp::get_contacts,
-        )
+        .with_command(Command::new("check_device"), ChessApp::check_device)
+        .with_command(Command::new("get_name"), ChessApp::get_name)
+        .with_command(Command::new("get_idkey"), ChessApp::get_idkey)
+        .with_command(Command::new("get_contacts"), ChessApp::get_contacts)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(PeriodTrackingApp::add_contact(args, context))
-            },
+            |args, context| Box::pin(ChessApp::add_contact(args, context)),
         )
         .with_command(
             Command::new("get_linked_devices"),
-            PeriodTrackingApp::get_linked_devices,
+            ChessApp::get_linked_devices,
         )
-        .with_command(Command::new("get_data"), PeriodTrackingApp::get_data)
-        .with_command(Command::new("get_perms"), PeriodTrackingApp::get_perms)
-        .with_command(Command::new("get_groups"), PeriodTrackingApp::get_groups)
+        .with_command(Command::new("get_data"), ChessApp::get_data)
+        .with_command(Command::new("get_perms"), ChessApp::get_perms)
+        .with_command(Command::new("get_groups"), ChessApp::get_groups)
         .with_command(
-            Command::new("get_state")
-                .arg(Arg::new("id").required(true)),
-            PeriodTrackingApp::get_state,
+            Command::new("get_state").arg(Arg::new("id").required(true)),
+            ChessApp::get_state,
         )
         .with_command_async(
-            Command::new("add_light_flow")
-                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
-                .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
+            Command::new("create_game").arg(Arg::new("opponent").required(true)),
             |args, context| {
-                Box::pin(PeriodTrackingApp::add_flow(args, LIGHT_FLOW, context))
-            }
-        )
-        .with_command_async(
-            Command::new("add_mod_flow")
-                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
-                .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
-            |args, context| {
-                Box::pin(PeriodTrackingApp::add_flow(args, MOD_FLOW, context))
-            }
-        )
-        .with_command_async(
-            Command::new("add_heavy_flow")
-                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
-                .arg(Arg::new("flow_id").long("id").short('i').required(false)), 
-            |args, context| {
-                Box::pin(PeriodTrackingApp::add_flow(args, HEAVY_FLOW, context))
-            }
-        )
-        .with_command_async(
-            Command::new("add_symptoms")
-                .about("Creates new datum if 'id' is omitted, else modifies existing datum")
-                .arg(Arg::new("symptoms_id").long("id").short('i').required(false))
-                .arg(Arg::new("symptoms_list").long("symptoms").short('s').required(false).action(ArgAction::Append)),
-            |args, context| {
-                Box::pin(PeriodTrackingApp::add_symptoms(args, context))
+                Box::pin(ChessApp::create_game(args, context))
             }
         )
         .with_command_async(
@@ -508,17 +536,9 @@ async fn main() -> ReplResult<()> {
                         .long("readers")
                         .short('r')
                         .action(ArgAction::Append),
-                )
-                .arg(
-                    Arg::new("writers")
-                        .required(false)
-                        .long("writers")
-                        .short('w')
-                        .action(ArgAction::Append),
                 ),
-            |args, context| {
-                Box::pin(PeriodTrackingApp::share(args, context))
-            },
+                // TODO can add data-only readers, too
+            |args, context| Box::pin(ChessApp::share(args, context)),
         );
 
     repl.run_async().await

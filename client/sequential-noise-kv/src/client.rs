@@ -65,7 +65,7 @@ enum Operation {
     SetGroups(HashMap<String, Group>),
     //LinkGroups(String, String),
     //DeleteGroup(String),
-    //AddParent(String, String),
+    AddParent(String, String),
     //RemoveParent(String, String),
     //AddChild(String, String),
     //RemoveChild(String, String),
@@ -344,7 +344,8 @@ impl NoiseKVClient {
             Operation::SetGroups(groups) => Ok(()),
             //Operation::LinkGroups(parent_id, child_id) => Ok(()),
             //Operation::DeleteGroup(group_id) => Ok(()),
-            //Operation::AddParent(group_id, parent_id) => Ok(()),
+            // TODO do permission check
+            Operation::AddParent(group_id, parent_id) => Ok(()),
             //Operation::RemoveParent(group_id, parent_id) => Ok(()),
             //Operation::AddChild(group_id, child_id) => Ok(()),
             /* Need data-mod permissions */
@@ -514,15 +515,15 @@ impl NoiseKVClient {
             //        .delete_group(&group_id);
             //    Ok(())
             //}
-            //Operation::AddParent(group_id, parent_id) => self
-            //    .device
-            //    .read()
-            //    .as_ref()
-            //    .unwrap()
-            //    .meta_store
-            //    .write()
-            //    .add_parent(&group_id, &parent_id)
-            //    .map_err(Error::from),
+            Operation::AddParent(group_id, parent_id) => self
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .write()
+                .add_parent(&group_id, &parent_id)
+                .map_err(Error::from),
             //Operation::RemoveParent(group_id, parent_id) => self
             //    .device
             //    .read()
@@ -1086,6 +1087,24 @@ impl NoiseKVClient {
                         &Operation::to_string(&Operation::SetGroup(
                             group_val.group_id().to_string(),
                             group_val.clone(),
+                        ))
+                        .unwrap(),
+                    )
+                    .await;
+
+                if res.is_err() {
+                    return Err(Error::SendFailed(
+                        res.err().unwrap().to_string(),
+                    ));
+                }
+
+                // add newly created group as a parent of linked_name
+                res = self
+                    .send_message(
+                        idkeys.clone(),
+                        &Operation::to_string(&Operation::AddParent(
+                            self.linked_name().to_string(),
+                            group_val.group_id().to_string(),
                         ))
                         .unwrap(),
                     )
@@ -2031,7 +2050,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_data() {
         let mut client_0 =
-            NoiseKVClient::new(None, None, false, Some(3), None).await;
+            NoiseKVClient::new(None, None, false, Some(4), None).await;
         client_0.create_standalone_device();
 
         let data_type = "type".to_string();
@@ -2123,7 +2142,75 @@ mod tests {
         assert_eq!(*data_val.data_type(), data_type.clone());
         assert_eq!(*data_val.data_val(), json_val.clone());
 
-        //let perm_id = data_val.perm_id();
+        println!("");
+        println!("CHECKING METADATA");
+        println!("");
+
+        println!("client_0.idkey: {:?}", client_0.idkey());
+        println!("client_0.linked_name: {:?}", client_0.linked_name());
+        println!(
+            "client_0.perms: {:?}",
+            client_0
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .read()
+                .get_all_perms()
+        );
+        let groups_0 = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_all_groups()
+            .clone();
+        println!("client_0.groups:");
+        for group in groups_0 {
+            println!("--{:?}", group);
+        }
+        println!(
+            "client_0.data: {:?}",
+            client_0
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .data_store
+                .read()
+                .get_all_data()
+        );
+
+        let new_group_id = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_perm(data_val.perm_id())
+            .unwrap()
+            .owners()
+            .as_ref()
+            .unwrap()
+            .clone();
+
+        let linked_parents_list = client_0
+            .device
+            .read()
+            .as_ref()
+            .unwrap()
+            .meta_store
+            .read()
+            .get_group(&client_0.linked_name())
+            .unwrap()
+            .parents()
+            .clone();
+
+        assert!(linked_parents_list.iter().any(|x| x == &new_group_id));
     }
 
     #[tokio::test]

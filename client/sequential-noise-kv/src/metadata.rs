@@ -405,6 +405,7 @@ impl MetadataStore {
         }
     }
 
+    // TODO rename => exists_metadata_mod_permissions
     pub fn find_metadata_mod_permissions(
         &self,
         modifying_group_id: &String,

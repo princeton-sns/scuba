@@ -10,17 +10,20 @@ use uuid::Uuid;
 
 /*
  * Password Manager
- * - automatically generates strong passwords
- * - TODO external app interaction
+ * - [x] automatically generates strong passwords
+ * - [ ] TODO external app interaction
  *   - for now: copy/paste
- *   - login/logout functionality
- * - stores encrypted passwords for any account across devices
- * - allows users to easily access stored passwords via a single master password/key
- * - safely shares passwords/credentials across multiple users
+ * - [ ] login/logout functionality
+ * - [x] stores encrypted passwords for any account across devices
+ * - [x] allows users to easily access stored passwords
+ * - [x] safely shares passwords/credentials across multiple users
  */
 
 // TODO use the struct name as the type/prefix instead
 // https://users.rust-lang.org/t/how-can-i-convert-a-struct-name-to-a-string/66724/8
+// or
+// #[serde(skip_serializing_if = "path")] on all fields (still cumbersome), calling
+// simple function w bool if only want struct name
 const PASS_PREFIX: &str = "pass";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

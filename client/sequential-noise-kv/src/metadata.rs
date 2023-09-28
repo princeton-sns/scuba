@@ -36,7 +36,7 @@ impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, perm_ids: {}, is_contact_name: {}, parents: {}, children: {}",
+            "group_id: {},\n\tperm_ids: {},\n\tis_contact_name: {},\n\tparents: {},\n\tchildren: {}",
             self.group_id,
             itertools::join(self.perm_ids.clone(), ", "),
             self.is_contact_name,
@@ -154,7 +154,7 @@ impl fmt::Display for PermissionSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "perm_id: {}, owner: {}, writers: {}, readers: {}",
+            "perm_id: {},\n\towner: {},\n\twriters: {},\n\treaders: {}",
             self.perm_id,
             self.owners
                 .as_ref()

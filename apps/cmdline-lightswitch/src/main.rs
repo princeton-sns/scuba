@@ -322,10 +322,9 @@ impl LightswitchApp {
             .set_data(id.clone(), LB_PREFIX.to_string(), json_string, None)
             .await
         {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Created bulb with id {}",
-                id
-            )))),
+            Ok(_) => {
+                Ok(Some(String::from(format!("Created bulb with id {}", id))))
+            }
             Err(err) => Ok(Some(String::from(format!(
                 "Could not add bulb: {}",
                 err.to_string()
@@ -427,9 +426,7 @@ async fn main() -> ReplResult<()> {
             Command::new("create_linked_switch")
                 .arg(Arg::new("idkey").required(true)),
             |args, context| {
-                Box::pin(LightswitchApp::create_linked_switch(
-                    args, context,
-                ))
+                Box::pin(LightswitchApp::create_linked_switch(args, context))
             },
         )
         .with_command(

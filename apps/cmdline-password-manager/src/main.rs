@@ -22,8 +22,8 @@ use uuid::Uuid;
 // TODO use the struct name as the type/prefix instead
 // https://users.rust-lang.org/t/how-can-i-convert-a-struct-name-to-a-string/66724/8
 // or
-// #[serde(skip_serializing_if = "path")] on all fields (still cumbersome), calling
-// simple function w bool if only want struct name
+// #[serde(skip_serializing_if = "path")] on all fields (still cumbersome),
+// calling simple function w bool if only want struct name
 const PASS_PREFIX: &str = "pass";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,13 +35,18 @@ struct PasswordInfo {
 }
 
 impl PasswordInfo {
-   fn new(
-       app_name: String,
-       url: Option<String>,
-       username: String,
-       password: String,
+    fn new(
+        app_name: String,
+        url: Option<String>,
+        username: String,
+        password: String,
     ) -> PasswordInfo {
-        PasswordInfo { app_name, url, username, password }
+        PasswordInfo {
+            app_name,
+            url,
+            username,
+            password,
+        }
     }
 }
 
@@ -66,8 +71,8 @@ impl PasswordManager {
             .spaces(true)
             .exclude_similar_characters(true)
             .strict(true);
-            //.try_iter()
-            //.unwrap();
+        //.try_iter()
+        //.unwrap();
         Self { client, pgi }
     }
 
@@ -277,9 +282,10 @@ impl PasswordManager {
 
         match val_opt {
             Some(val_str) => {
-                let val : PasswordInfo = serde_json::from_str(val_str.data_val()).unwrap();
+                let val: PasswordInfo =
+                    serde_json::from_str(val_str.data_val()).unwrap();
                 Ok(Some(String::from(format!("{}", val.password))))
-            },
+            }
             None => Ok(Some(String::from(format!(
                 "Password with id {} does not exist.",
                 id,
@@ -357,28 +363,36 @@ impl PasswordManager {
                     Some(arg_pass) => password = arg_pass.to_string(),
                     None => {
                         // is this horrible for perf?
-                        password = context.pgi.try_iter().unwrap().next().unwrap();
+                        password =
+                            context.pgi.try_iter().unwrap().next().unwrap();
                     }
                 }
 
-                let mut old_val : PasswordInfo = serde_json::from_str(val_str.data_val()).unwrap();
+                let mut old_val: PasswordInfo =
+                    serde_json::from_str(val_str.data_val()).unwrap();
                 old_val.password = password;
                 let json_string = serde_json::to_string(&old_val).unwrap();
 
                 match context
                     .client
-                    .set_data(id.clone(), PASS_PREFIX.to_string(), json_string, None)
+                    .set_data(
+                        id.clone(),
+                        PASS_PREFIX.to_string(),
+                        json_string,
+                        None,
+                    )
                     .await
                 {
-                    Ok(_) => {
-                        Ok(Some(String::from(format!("Updated password with id {}", id))))
-                    }
+                    Ok(_) => Ok(Some(String::from(format!(
+                        "Updated password with id {}",
+                        id
+                    )))),
                     Err(err) => Ok(Some(String::from(format!(
                         "Error adding password: {}",
                         err.to_string()
                     )))),
                 }
-            },
+            }
             None => Ok(Some(String::from(format!(
                 "Password with id {} does not exist.",
                 id,
@@ -452,13 +466,21 @@ async fn main() -> ReplResult<()> {
                 Box::pin(PasswordManager::init_linked_device(args, context))
             },
         )
-        .with_command(Command::new("check_device"), PasswordManager::check_device)
+        .with_command(
+            Command::new("check_device"),
+            PasswordManager::check_device,
+        )
         .with_command(Command::new("get_name"), PasswordManager::get_name)
         .with_command(Command::new("get_idkey"), PasswordManager::get_idkey)
-        .with_command(Command::new("get_contacts").about("broken - don't use"), PasswordManager::get_contacts)
+        .with_command(
+            Command::new("get_contacts").about("broken - don't use"),
+            PasswordManager::get_contacts,
+        )
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
-            |args, context| Box::pin(PasswordManager::add_contact(args, context)),
+            |args, context| {
+                Box::pin(PasswordManager::add_contact(args, context))
+            },
         )
         .with_command(
             Command::new("get_linked_devices"),
@@ -473,21 +495,41 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("add_password")
-                .arg(Arg::new("app_name").required(true).long("app_name").short('a'))
+                .arg(
+                    Arg::new("app_name")
+                        .required(true)
+                        .long("app_name")
+                        .short('a'),
+                )
                 .arg(Arg::new("url").required(false).long("url").short('u'))
-                .arg(Arg::new("username").required(true).long("username").short('n'))
-                .arg(Arg::new("password").required(false).long("password").short('p')),
+                .arg(
+                    Arg::new("username")
+                        .required(true)
+                        .long("username")
+                        .short('n'),
+                )
+                .arg(
+                    Arg::new("password")
+                        .required(false)
+                        .long("password")
+                        .short('p'),
+                ),
             |args, context| {
                 Box::pin(PasswordManager::add_password(args, context))
-            }
+            },
         )
         .with_command_async(
             Command::new("update_password")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
-                .arg(Arg::new("password").required(false).long("password").short('p')),
+                .arg(
+                    Arg::new("password")
+                        .required(false)
+                        .long("password")
+                        .short('p'),
+                ),
             |args, context| {
                 Box::pin(PasswordManager::update_password(args, context))
-            }
+            },
         )
         .with_command_async(
             Command::new("share")

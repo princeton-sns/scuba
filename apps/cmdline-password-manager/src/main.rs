@@ -12,11 +12,13 @@ use uuid::Uuid;
  * Password Manager
  * - [x] automatically generates strong passwords
  * - [ ] TODO external app interaction
- *   - for now: copy/paste
+ *   - for now: copy/paste passwords
  * - [ ] login/logout functionality
  * - [x] stores encrypted passwords for any account across devices
  * - [x] allows users to easily access stored passwords
  * - [x] safely shares passwords/credentials across multiple users
+ * - [ ] linearizability (real-time constraints for password-updates in
+ *   groups of multiple users)
  */
 
 // TODO use the struct name as the type/prefix instead

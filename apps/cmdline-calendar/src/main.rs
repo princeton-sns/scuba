@@ -746,6 +746,66 @@ impl CalendarApp {
         }
     }
 
+    // TODO helper function called by confirm_appointment
+    async fn update_availability() {}
+
+    // Called by provider
+    pub async fn confirm_appointment(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        // update pending field on appointment
+        let id = args.get_one::<String>("appt_id").unwrap().to_string();
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let appt_opt = data_store_guard.get_data(&id);
+
+        match appt_opt {
+            Some(appt_str) => {
+                let mut appt: AppointmentInfo =
+                    serde_json::from_str(appt_str.data_val()).unwrap();
+
+                appt.pending = false;
+                let json_string = serde_json::to_string(&appt).unwrap();
+
+                match context
+                    .client
+                    .set_data(
+                        id.clone(),
+                        APPT_PREFIX.to_owned(),
+                        json_string,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // TODO update Busy object
+
+                        Ok(Some(String::from(format!(
+                            "Confirmed appointment with id {}",
+                            id
+                        ))))
+                    },
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Could not confirm appointment: {}",
+                        err.to_string()
+                    )))),
+                }
+            },
+            None => Ok(Some(String::from(format!(
+                "Appointment with id {} does not exist.",
+                id,
+            )))),
+        }
+
+    }
+
     // Called by client
     pub async fn edit_appointment(
         args: ArgMatches,
@@ -916,6 +976,13 @@ async fn main() -> ReplResult<()> {
                 ),
             |args, context| {
                 Box::pin(CalendarApp::request_appointment(args, context))
+            },
+        )
+        .with_command_async(
+            Command::new("confirm_appointment")
+                .arg(Arg::new("appt_id").required(true).long("appt_id").short('i')),
+            |args, context| {
+                Box::pin(CalendarApp::confirm_appointment(args, context))
             },
         )
         .with_command_async(

@@ -24,6 +24,8 @@ use uuid::Uuid;
  * - TODO what consistency model is most appropriate?
  */
 
+// FIXME impl more helper methods, a lot of repetitive code
+
 // TODO use the struct name as the type/prefix instead
 // https://users.rust-lang.org/t/how-can-i-convert-a-struct-name-to-a-string/66724/8
 // or
@@ -329,7 +331,7 @@ impl CalendarApp {
 
     // Called by provider only; upon contact addition, provider shares availability
     // object with client
-    pub async fn add_contact(
+    pub async fn add_client(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -344,15 +346,43 @@ impl CalendarApp {
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
         match context.client.add_contact(idkey.clone()).await {
             Ok(_) => {
-                // TODO share availability object
-
                 Ok(Some(String::from(format!(
-                    "Contact with idkey <{}> added",
+                    "Client with idkey <{}> added",
                     idkey
                 ))))
             }
             Err(err) => Ok(Some(String::from(format!(
-                "Could not add contact: {}",
+                "Could not add client: {}",
+                err.to_string()
+            )))),
+        }
+    }
+
+    // Called by provider
+    pub async fn share_availability(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+        
+        let client = args.get_one::<String>("client_name").unwrap().to_string();
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let vec = vec![&client];
+        match context
+            .client
+            .add_readers(AVAIL_PREFIX.to_string(), vec)
+            .await {
+            Ok(_) => Ok(Some(String::from(format!(
+                "Availability shared with client {}",
+                client
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not share availability: {}",
                 err.to_string()
             )))),
         }
@@ -892,9 +922,14 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
         //.with_command(Command::new("get_contacts"), CalendarApp::get_contacts)
         .with_command_async(
-            Command::new("add_contact")
+            Command::new("add_client")
                 .arg(Arg::new("idkey").required(true).short('i')),
-            |args, context| Box::pin(CalendarApp::add_contact(args, context)),
+            |args, context| Box::pin(CalendarApp::add_client(args, context)),
+        )
+        .with_command_async(
+            Command::new("share_availability")
+                .arg(Arg::new("client_name").required(true)),
+            |args, context| Box::pin(CalendarApp::share_availability(args, context)),
         )
         //.with_command_async(
         //    Command::new("add_client").arg(Arg::new("client_idkey").

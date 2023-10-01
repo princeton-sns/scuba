@@ -31,7 +31,7 @@ use uuid::Uuid;
 // calling simple function w bool if only want struct name
 const ROLES_PREFIX: &str = "roles";
 const APPT_PREFIX: &str = "appointment";
-const BUSY_PREFIX: &str = "busy";
+const AVAIL_PREFIX: &str = "availability";
 
 // appointments can only be made in 60-minute intervals
 const DEFAULT_DUR: u32 = 60;
@@ -77,6 +77,7 @@ impl Blocked {
  * is a client, provider, or both.
  */
 
+// TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Provider {
     appointment_ids: Vec<String>,
@@ -92,6 +93,7 @@ impl Provider {
     }
 }
 
+// TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Client {
     appointment_ids: Vec<String>,
@@ -107,6 +109,7 @@ impl Client {
     }
 }
 
+// TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Roles {
     provider: Option<Provider>,
@@ -127,6 +130,7 @@ impl Roles {
  * shared between client and provider
  */
 
+// TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppointmentInfo {
     date: NaiveDate,
@@ -153,20 +157,21 @@ impl AppointmentInfo {
 }
 
 /*
- * The Busy struct info is shared by providers with their clients.
+ * The Availability struct info is shared by providers with their clients.
  * It obfuscates all appointment details or blocked slots and simply
  * shows them all as "busy".
  */
 
+// TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Busy {
-    taken_slots: HashMap<NaiveDateTime, u32>,
+struct Availability {
+    busy_slots: HashMap<NaiveDateTime, u32>,
 }
 
-impl Busy {
+impl Availability {
     fn new() -> Self {
-        Busy {
-            taken_slots: HashMap::new(),
+        Availability {
+            busy_slots: HashMap::new(),
         }
     }
 }
@@ -322,7 +327,7 @@ impl CalendarApp {
     }
     */
 
-    // Called by provider only; upon contact addition, provider shares busy
+    // Called by provider only; upon contact addition, provider shares availability
     // object with client
     pub async fn add_contact(
         args: ArgMatches,
@@ -334,12 +339,12 @@ impl CalendarApp {
             )));
         }
 
-        // TODO check that provider role exists
+        // TODO check that provider role exists (see below commented-out code)
 
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
         match context.client.add_contact(idkey.clone()).await {
             Ok(_) => {
-                // TODO share busy object
+                // TODO share availability object
 
                 Ok(Some(String::from(format!(
                     "Contact with idkey <{}> added",
@@ -406,7 +411,7 @@ impl CalendarApp {
     */
 
     pub fn get_data(
-        _args: ArgMatches,
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -417,9 +422,20 @@ impl CalendarApp {
 
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let data = data_store_guard.get_all_data().values();
-
-        Ok(Some(itertools::join(data, "\n")))
+        if let Some(id) = args.get_one::<String>("id") {
+            match data_store_guard.get_data(id) {
+                Some(data) => Ok(Some(String::from(format!(
+                    "{}", data
+                )))),
+                None => Ok(Some(String::from(format!(
+                    "Data with id {} does not exist",
+                    id
+                )))),
+            }
+        } else {
+            let data = data_store_guard.get_all_data().values();
+            Ok(Some(itertools::join(data, "\n")))
+        }
     }
 
     pub fn get_perms(
@@ -452,9 +468,15 @@ impl CalendarApp {
         let id = args.get_one::<String>("id").unwrap();
         let device_guard = context.client.device.read();
         let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perm = meta_store_guard.get_perm(&id);
+        let perm_opt = meta_store_guard.get_perm(&id);
 
-        Ok(Some(String::from(format!("{:?}", perm))))
+        match perm_opt {
+            Some(perm) => Ok(Some(String::from(format!("{}", perm)))),
+            None => Ok(Some(String::from(format!(
+                "Perm with id {} does not exist",
+                id
+            )))),
+        }
     }
 
     pub fn get_groups(
@@ -487,9 +509,15 @@ impl CalendarApp {
         let id = args.get_one::<String>("id").unwrap();
         let device_guard = context.client.device.read();
         let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let group = meta_store_guard.get_group(&id);
+        let group_opt = meta_store_guard.get_group(&id);
 
-        Ok(Some(String::from(format!("{:?}", group))))
+        match group_opt {
+            Some(group) => Ok(Some(String::from(format!("{}", group)))),
+            None => Ok(Some(String::from(format!(
+                "Group with id {} does not exist",
+                id
+            )))),
+        }
     }
 
     pub fn get_roles(
@@ -512,7 +540,6 @@ impl CalendarApp {
             Some(roles_obj) => {
                 let roles: Roles =
                     serde_json::from_str(roles_obj.data_val()).unwrap();
-                // TODO impl Display for Roles
                 Ok(Some(String::from(format!("{:?}", roles))))
             }
             None => Ok(Some(String::from("No roles found."))),
@@ -561,7 +588,25 @@ impl CalendarApp {
 
                     roles.provider = Some(Provider::new(None));
 
-                    // TODO init busy object
+                    // init Availability object
+                    let avail = Availability::new();
+                    let json_avail = serde_json::to_string(&avail).unwrap();
+
+                    let res = context
+                        .client
+                        .set_data(
+                            AVAIL_PREFIX.to_string(),
+                            AVAIL_PREFIX.to_string(),
+                            json_avail,
+                            None,
+                        )
+                        .await;
+                    if res.is_err() {
+                        return Ok(Some(String::from(format!(
+                            "Error creating availability: {}",
+                            res.err().unwrap().to_string()
+                        ))));
+                    }
                 }
 
                 if init_client {
@@ -642,7 +687,7 @@ impl CalendarApp {
 
     // TODO
     // Called by client
-    pub fn view_availability(
+    pub fn view_provider_availability(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -785,7 +830,7 @@ impl CalendarApp {
                     .await
                 {
                     Ok(_) => {
-                        // TODO update Busy object
+                        // TODO update Availability object
 
                         Ok(Some(String::from(format!(
                             "Confirmed appointment with id {}",
@@ -865,17 +910,21 @@ async fn main() -> ReplResult<()> {
             Command::new("get_linked_devices"),
             CalendarApp::get_linked_devices,
         )
-        .with_command(Command::new("get_data"), CalendarApp::get_data)
+        .with_command(
+            Command::new("get_data")
+                .arg(Arg::new("id").required(false)),
+            CalendarApp::get_data,
+        )
         .with_command(Command::new("get_perms"), CalendarApp::get_perms)
         .with_command(
             Command::new("get_perm")
-                .arg(Arg::new("id").required(true).short('i').long("id")),
+                .arg(Arg::new("id").required(true)),
             CalendarApp::get_perm,
         )
         .with_command(Command::new("get_groups"), CalendarApp::get_groups)
         .with_command(
             Command::new("get_group")
-                .arg(Arg::new("id").required(true).short('i').long("id")),
+                .arg(Arg::new("id").required(true)),
             CalendarApp::get_group,
         )
         .with_command(Command::new("get_roles"), CalendarApp::get_roles)
@@ -941,13 +990,13 @@ async fn main() -> ReplResult<()> {
         //    CalendarApp::get_client_appointments,
         //)
         .with_command(
-            Command::new("view_availability").arg(
+            Command::new("view_provider_availability").arg(
                 Arg::new("provider_id")
                     .required(true)
                     .long("provider_id")
                     .short('p'),
             ),
-            CalendarApp::view_availability,
+            CalendarApp::view_provider_availability,
         )
         .with_command_async(
             Command::new("request_appointment")

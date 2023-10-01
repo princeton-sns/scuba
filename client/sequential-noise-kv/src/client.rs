@@ -976,6 +976,8 @@ impl NoiseKVClient {
     //    }
     //}
 
+    // TODO add facility for setting and sharing data at the same time
+
     pub async fn set_data(
         &self,
         data_id: String,

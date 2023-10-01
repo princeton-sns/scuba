@@ -474,10 +474,10 @@ async fn main() -> ReplResult<()> {
         )
         .with_command(Command::new("get_name"), PasswordManager::get_name)
         .with_command(Command::new("get_idkey"), PasswordManager::get_idkey)
-        .with_command(
-            Command::new("get_contacts").about("broken - don't use"),
-            PasswordManager::get_contacts,
-        )
+        //.with_command(
+        //    Command::new("get_contacts").about("broken - don't use"),
+        //    PasswordManager::get_contacts,
+        //)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| {

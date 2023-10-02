@@ -1,5 +1,5 @@
-use noise_kv::client::NoiseKVClient;
-use noise_kv::data::NoiseData;
+use sequential_noise_kv::client::NoiseKVClient;
+use sequential_noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;

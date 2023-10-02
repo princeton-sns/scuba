@@ -1,6 +1,6 @@
 use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
-use noise_kv::client::NoiseKVClient;
-use noise_kv::data::NoiseData;
+use sequential_noise_kv::client::NoiseKVClient;
+use sequential_noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
@@ -140,6 +140,10 @@ struct AppointmentInfo {
     duration_min: u32,
     client_notes: Option<String>,
     pending: bool,
+    // TODO add perm field or resolved writer idkeys if clients make apptmts,
+    // although data_store doesn't have access to metadata_store, so this would
+    // constitute a larger change in NoiseKV (the two are separate for locking
+    // purposes now)
 }
 
 impl AppointmentInfo {
@@ -379,6 +383,8 @@ impl CalendarApp {
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let vec = vec![&client];
+        // TODO want data-only-readers here instead of simple readers, but not
+        // yet implemented in the library
         match context
             .client
             .add_readers(AVAIL_PREFIX.to_string(), vec)
@@ -963,7 +969,7 @@ async fn main() -> ReplResult<()> {
         //.with_command(Command::new("get_contacts"), CalendarApp::get_contacts)
         .with_command_async(
             Command::new("add_client")
-                .arg(Arg::new("idkey").required(true),
+                .arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_client(args, context)),
         )
         .with_command_async(

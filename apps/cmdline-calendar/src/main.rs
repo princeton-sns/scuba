@@ -1,9 +1,9 @@
 use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
-use sequential_noise_kv::client::NoiseKVClient;
-use sequential_noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
+use sequential_noise_kv::client::NoiseKVClient;
+use sequential_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -968,8 +968,7 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
         //.with_command(Command::new("get_contacts"), CalendarApp::get_contacts)
         .with_command_async(
-            Command::new("add_client")
-                .arg(Arg::new("idkey").required(true)),
+            Command::new("add_client").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_client(args, context)),
         )
         .with_command_async(

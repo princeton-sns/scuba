@@ -350,20 +350,21 @@ impl NoiseKVClient {
             //Operation::AddChild(group_id, child_id) => Ok(()),
             /* Need data-mod permissions */
             Operation::UpdateData(data_id, data_val) => {
-                if !self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .has_data_mod_permissions(sender, data_val.perm_id())
-                {
-                    return Err(Error::InsufficientPermissions(
-                        sender.to_string(),
-                        data_val.perm_id().to_string(),
-                    ));
-                }
+                // FIXME need perm owner group when data is sent to a do-reader
+                //if !self
+                //    .device
+                //    .read()
+                //    .as_ref()
+                //    .unwrap()
+                //    .meta_store
+                //    .read()
+                //    .has_data_mod_permissions(sender, data_val.perm_id())
+                //{
+                //    return Err(Error::InsufficientPermissions(
+                //        sender.to_string(),
+                //        data_val.perm_id().to_string(),
+                //    ));
+                //}
                 Ok(())
             }
             Operation::DeleteData(data_id) => {
@@ -939,7 +940,7 @@ impl NoiseKVClient {
      * Data
      */
 
-    fn get_group_ids_from_perm_val(
+    fn get_metadata_reader_groups_from_perm(
         &self,
         perm_val: &PermissionSet,
     ) -> Vec<String> {
@@ -970,7 +971,7 @@ impl NoiseKVClient {
     //        .get_perm(perm_id)
     //    {
     //        Some(perm_val) => {
-    //            self.get_group_ids_from_perm_val(perm_val)
+    //            self.get_metadata_reader_groups_from_perm(perm_val)
     //        }
     //        None => { Vec::<String>::new() }
     //    }
@@ -983,6 +984,9 @@ impl NoiseKVClient {
         data_id: String,
         data_type: String,
         data_val: String,
+        // FIXME what is the below option for again? is it sharing upon setting?
+        // why just enabled for data readers and, e.g., not data writers?
+        // -> for do_readers apparently, but still don't totally understand
         data_reader_idkeys: Option<Vec<String>>,
     ) -> Result<(), Error> {
         // FIXME check write permissions
@@ -994,7 +998,7 @@ impl NoiseKVClient {
         // if data exists, use existing perms; otherwise create new one
         let perm_id;
         let mut perm_val;
-        let device_ids: Vec<String>;
+        let mut device_ids: Vec<String>;
         match existing_val {
             Some(old_val) => {
                 perm_id = old_val.perm_id().to_string();
@@ -1009,7 +1013,7 @@ impl NoiseKVClient {
 
                 // resolve idkeys
                 if data_reader_idkeys.is_none() {
-                    let group_ids = self.get_group_ids_from_perm_val(&perm_val);
+                    let group_ids = self.get_metadata_reader_groups_from_perm(&perm_val);
                     device_ids = device_guard
                         .as_ref()
                         .unwrap()
@@ -1026,7 +1030,7 @@ impl NoiseKVClient {
             }
             None => {
                 // create new perms for this data_val
-                perm_val = PermissionSet::new(None, None, None, None);
+                perm_val = PermissionSet::new(None, None, None, None, None);
                 perm_id = perm_val.perm_id().to_string();
 
                 // create owner group that includes self.linked_name()
@@ -1051,6 +1055,9 @@ impl NoiseKVClient {
                     .resolve_group_ids(vec![&self.linked_name()])
                     .into_iter()
                     .collect::<Vec<String>>();
+
+                // TODO why adding to device_ids when device_ids is the list
+                // that metadata should be sent to?
 
                 // resolve idkeys
                 if data_reader_idkeys.is_none() {
@@ -1129,6 +1136,26 @@ impl NoiseKVClient {
             perm_id.clone(),
         );
 
+        // add data-only-readers to device_ids
+        match perm_val.do_readers() {
+            Some(do_reader_group) => {
+                // resolve group to idkeys, then push idkeys
+                let group_ids = vec![do_reader_group.to_string()];
+                let mut do_reader_ids = device_guard
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .resolve_group_ids(
+                        group_ids.iter().collect::<Vec<&String>>(),
+                    )
+                    .into_iter()
+                    .collect::<Vec<String>>();
+                device_ids.append(&mut do_reader_ids);
+            },
+            None => {}
+        }
+
         match self
             .send_message(
                 // includes idkeys of _all_ permissions
@@ -1182,6 +1209,25 @@ impl NoiseKVClient {
     //    mut names: Vec<&String>,
     //) -> Result<(), Error> {
     //}
+
+    pub async fn add_do_readers(
+        &self,
+        data_id: String,
+        do_readers: Vec<&String>,
+    ) -> Result<(), Error> {
+        self.add_permissions(
+            data_id,
+            PermType::DOReaders(
+                do_readers
+                    .clone()
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>(),
+            ),
+            do_readers,
+        )
+        .await
+    }
 
     pub async fn add_readers(
         &self,
@@ -1259,6 +1305,10 @@ impl NoiseKVClient {
                         Some(_) => None,
                         None => Some(crate::metadata::generate_uuid()),
                     },
+                    PermType::DOReaders(_) => match perm_val.do_readers() {
+                        Some(_) => None,
+                        None => Some(crate::metadata::generate_uuid()),
+                    },
                 };
 
                 /*
@@ -1271,10 +1321,12 @@ impl NoiseKVClient {
 
                 // existing owner
                 let mut metadata_readers = Vec::<&String>::new();
+                let mut data_readers = Vec::<&String>::new();
                 // existing owners
                 match perm_val.owners() {
                     Some(owners_group_id) => {
                         metadata_readers.push(owners_group_id);
+                        data_readers.push(owners_group_id);
                     }
                     None => {}
                 }
@@ -1282,6 +1334,7 @@ impl NoiseKVClient {
                 match perm_val.writers() {
                     Some(writers_group_id) => {
                         metadata_readers.push(writers_group_id);
+                        data_readers.push(writers_group_id);
                     }
                     None => {}
                 }
@@ -1289,6 +1342,7 @@ impl NoiseKVClient {
                 match perm_val.readers() {
                     Some(readers_group_id) => {
                         metadata_readers.push(readers_group_id);
+                        data_readers.push(readers_group_id);
                     }
                     None => {}
                 }
@@ -1297,8 +1351,12 @@ impl NoiseKVClient {
                     PermType::Owners(_)
                     | PermType::Writers(_)
                     | PermType::Readers(_) => {
-                        metadata_readers.append(&mut new_members_refs.clone())
-                    } // skip append if PermType::DataOnlyReaders
+                        metadata_readers.append(&mut new_members_refs.clone());
+                        data_readers.append(&mut new_members_refs.clone());
+                    },
+                    PermType::DOReaders(_) => {
+                        data_readers.append(&mut new_members_refs.clone());
+                    },
                 }
 
                 // resolve the above to device ids
@@ -1306,17 +1364,17 @@ impl NoiseKVClient {
                     .resolve_group_ids(metadata_readers)
                     .into_iter()
                     .collect::<Vec<String>>();
-
-                // TODO add all data-only reader idkeys to send data to
-                // if PermType::DataOnlyReaders is implemented
-                let data_reader_idkeys = metadata_reader_idkeys
-                    .clone()
-                    .iter()
-                    .map(|idkey| idkey.to_string())
+                let data_reader_idkeys = meta_store_guard
+                    .resolve_group_ids(data_readers)
+                    .into_iter()
                     .collect::<Vec<String>>();
+
+                // FIXME still need to send owner to data-only-readers so they
+                // can confirm that the src idkey can actually write the data object
 
                 /*
                  * Then collect existing perm-associated groups.
+                 * TODO for what?
                  */
 
                 let mut assoc_groups = HashMap::<String, Group>::new();
@@ -1368,7 +1426,8 @@ impl NoiseKVClient {
                                 Some(Some(new_members_vec.clone())),
                             );
                             assoc_groups.insert(new_group_id, new_group);
-                        }
+                        },
+                        PermType::DOReaders(_) => {}
                     },
                     None => {}
                 }

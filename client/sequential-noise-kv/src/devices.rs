@@ -34,7 +34,7 @@ impl<T: NoiseData> Device<T> {
         let mut meta_store = MetadataStore::new();
 
         // set linked_group permissions set
-        let linked_perm_set = PermissionSet::new(None, None, None, None);
+        let linked_perm_set = PermissionSet::new(None, None, None, None, None);
         meta_store.set_perm(
             linked_perm_set.perm_id().to_string(),
             linked_perm_set.clone(),

@@ -383,11 +383,9 @@ impl CalendarApp {
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let vec = vec![&client];
-        // TODO want data-only-readers here instead of simple readers, but not
-        // yet implemented in the library
         match context
             .client
-            .add_readers(AVAIL_PREFIX.to_string(), vec)
+            .add_do_readers(AVAIL_PREFIX.to_string(), vec)
             .await
         {
             Ok(_) => Ok(Some(String::from(format!(

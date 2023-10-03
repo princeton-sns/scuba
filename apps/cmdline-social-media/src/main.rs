@@ -1,19 +1,22 @@
-use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
+use chrono::offset::Utc;
+use chrono::DateTime;
+use reedline_repl_rs::clap::{Arg, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
 use sequential_noise_kv::client::NoiseKVClient;
 use sequential_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /*
  * Family Social Media app
- * - [ ] shares data across families
+ * - [x] shares data across families
  * - [x] each user can belong to one or more families
  * - possible data:
  *   - [x] posts
- *   - [x] comments
+ *   - [ ] comments
  *   - [ ] emoji reactions
  *   - [ ] chat groups
  *   - [x] live location
@@ -32,20 +35,28 @@ use uuid::Uuid;
 // calling simple function w bool if only want struct name
 const FAM_PREFIX: &str = "family";
 const POST_PREFIX: &str = "post";
-const COMMENT_PREFIX: &str = "comment";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Family {
     members: Vec<String>,
+    // for easy time-based ordering
+    posts: BTreeMap<DateTime<Utc>, String>,
 }
 
 impl Family {
     fn new(members: Vec<String>) -> Self {
-        Family { members }
+        Family {
+            members,
+            posts: BTreeMap::new(),
+        }
     }
 
     fn add_member(&mut self, id: &String) {
         self.members.push(id.to_string());
+    }
+
+    fn add_post(&mut self, post_time: DateTime<Utc>, post_id: String) {
+        self.posts.insert(post_time, post_id);
     }
 }
 
@@ -53,30 +64,24 @@ impl Family {
 struct Post {
     family_id: String,
     contents: String,
+    creation_time: DateTime<Utc>,
 }
 
 impl Post {
-    fn new(family_id: String, contents: String) -> Self {
+    fn new(family_id: &String, contents: &String) -> Self {
         Post {
-            family_id,
-            contents,
+            family_id: family_id.to_string(),
+            contents: contents.to_string(),
+            creation_time: Utc::now(),
         }
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Comment {
-    post_id: String,
-    contents: String,
-}
-
-impl Comment {
-    fn new(post_id: String, contents: String) -> Self {
-        Comment { post_id, contents }
+    fn creation_time(&self) -> DateTime<Utc> {
+        self.creation_time
     }
 }
 
-// TODO invariant val for comment length
+// TODO invariant val for post length
 
 // TODO location sharing
 
@@ -333,6 +338,116 @@ impl FamilyApp {
         }
     }
 
+    pub async fn post_to_family(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let fam_id = args.get_one::<String>("fam_id").unwrap();
+        let contents = args.get_one::<String>("post").unwrap();
+
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let fam_opt = data_store_guard.get_data(&fam_id);
+
+        // TODO might be good to put the three operations below in a transaction
+        // (set post, share post, update family)
+
+        match fam_opt {
+            Some(fam_obj) => {
+                // create post
+                let post_id = Self::new_prefixed_id(&POST_PREFIX.to_string());
+                let post = Post::new(fam_id, contents);
+                let post_json = serde_json::to_string(&post).unwrap();
+
+                match context
+                    .client
+                    .set_data(
+                        post_id.clone(),
+                        POST_PREFIX.to_owned(),
+                        post_json,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // share post
+                        let mut fam: Family =
+                            serde_json::from_str(fam_obj.data_val()).unwrap();
+                        let own_name = context.client.linked_name();
+                        let sharees = fam
+                            .members
+                            .iter()
+                            .filter(|&x| *x != own_name)
+                            .collect::<Vec<&String>>();
+                        core::mem::drop(data_store_guard);
+
+                        // temporary hack b/c cannot set and share data
+                        // at the same time, and sharing expects that
+                        // the
+                        // data already exists, so must wait for
+                        // set_data
+                        // message to return from the server
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        match context
+                            .client
+                            .add_readers(post_id.clone(), sharees)
+                            .await
+                        {
+                            Ok(_) => {
+                                // add to family
+                                fam.add_post(
+                                    post.creation_time(),
+                                    post_id.clone(),
+                                );
+                                let fam_json =
+                                    serde_json::to_string(&fam).unwrap();
+
+                                match context
+                                    .client
+                                    .set_data(
+                                        fam_id.clone(),
+                                        FAM_PREFIX.to_owned(),
+                                        fam_json,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => Ok(Some(String::from(format!(
+                                        "Post with id {} added to family with id {}",
+                                        post_id, fam_id
+                                    )))),
+                                    Err(err) => Ok(Some(String::from(format!(
+                                        "Could not store updated family: {}",
+                                        err.to_string()
+                                    )))),
+                                }
+                            }
+                            Err(err) => Ok(Some(String::from(format!(
+                                "Could not share post: {}",
+                                err.to_string()
+                            )))),
+                        }
+                    }
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Could not store post: {}",
+                        err.to_string()
+                    )))),
+                }
+            }
+            None => Ok(Some(String::from(format!(
+                "Family with id {} does not exist.",
+                fam_id,
+            )))),
+        }
+    }
+
     pub fn get_data(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -481,6 +596,12 @@ async fn main() -> ReplResult<()> {
                 .arg(Arg::new("fam_id").short('f').required(true))
                 .arg(Arg::new("contact_name").short('c').required(true)),
             |args, context| Box::pin(FamilyApp::add_to_family(args, context)),
+        )
+        .with_command_async(
+            Command::new("post_to_family")
+                .arg(Arg::new("fam_id").short('f').required(true))
+                .arg(Arg::new("post").short('p').required(true)),
+            |args, context| Box::pin(FamilyApp::post_to_family(args, context)),
         )
         .with_command(
             Command::new("get_data").arg(Arg::new("id").required(false)),

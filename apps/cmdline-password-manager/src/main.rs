@@ -1,9 +1,9 @@
-use noise_kv::client::NoiseKVClient;
-use noise_kv::data::NoiseData;
 use passwords::PasswordGenerator;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
+use sequential_noise_kv::client::NoiseKVClient;
+use sequential_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -12,11 +12,13 @@ use uuid::Uuid;
  * Password Manager
  * - [x] automatically generates strong passwords
  * - [ ] TODO external app interaction
- *   - for now: copy/paste
+ *   - for now: copy/paste passwords
  * - [ ] login/logout functionality
  * - [x] stores encrypted passwords for any account across devices
  * - [x] allows users to easily access stored passwords
  * - [x] safely shares passwords/credentials across multiple users
+ * - [ ] linearizability (real-time constraints for password-updates in
+ *   groups of multiple users)
  */
 
 // TODO use the struct name as the type/prefix instead
@@ -472,10 +474,10 @@ async fn main() -> ReplResult<()> {
         )
         .with_command(Command::new("get_name"), PasswordManager::get_name)
         .with_command(Command::new("get_idkey"), PasswordManager::get_idkey)
-        .with_command(
-            Command::new("get_contacts").about("broken - don't use"),
-            PasswordManager::get_contacts,
-        )
+        //.with_command(
+        //    Command::new("get_contacts").about("broken - don't use"),
+        //    PasswordManager::get_contacts,
+        //)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| {

@@ -19,6 +19,9 @@ use uuid::Uuid;
  * - [x] safely shares passwords/credentials across multiple users
  * - [ ] linearizability (real-time constraints for password-updates in
  *   groups of multiple users)
+ * - [ ] 2FA
+ * - [ ] per-application password invariants
+ *   - e.g. min characters, allowed special characters, etc
  */
 
 // TODO use the struct name as the type/prefix instead

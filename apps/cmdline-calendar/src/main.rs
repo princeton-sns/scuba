@@ -11,17 +11,24 @@ use uuid::Uuid;
 
 /*
  * Calendar
- * - allows clients to book appointments with providers given the
+ * - [x] allows clients to book appointments with providers given the
  *   provider's availability
- * - providers share their availability with all clients
- * - appointments are private to provider and the client whom the
+ * - how appointments are made
+ *   - [x] client requests single time with provider, which the provider must
+ *     then confirm + update their own availability
+ *   - [ ] client requests a prioritized list of appointment times which the
+ *     provider can automatically confirm/deny based on the highest-pri slot 
+ *     that is available
+ *   - [ ] provider puts the appointment confirmation and availability update
+ *     in a transaction (serializability)
+ * - [x] providers share their availability with all clients
+ * - [x] appointments are private to provider and the client whom the
  *   appointment is with, but update the provider's overall
  *   availability, visible to their other clients
- * - providers can also block off times on their end without needing an
+ * - [ ] providers can also block off times on their end without needing an
  *   appointment to be scheduled, e.g. for lunch breaks
- * - the same device can act as both a client and provider
- * - TODO chat functionality?
- * - TODO what consistency model is most appropriate?
+ * - [x] the same device can act as both a client and provider
+ * - [ ] clients can have multiple providers
  */
 
 // FIXME impl more helper methods, a lot of repetitive code
@@ -383,6 +390,7 @@ impl CalendarApp {
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let vec = vec![&client];
+
         match context
             .client
             .add_do_readers(AVAIL_PREFIX.to_string(), vec)
@@ -742,6 +750,13 @@ impl CalendarApp {
         Ok(Some(String::from("TBD")))
     }
 
+    fn create_new_prefixed_id(prefix: &String) -> String {
+        let mut id: String = prefix.to_owned();
+        id.push_str("/");
+        id.push_str(&Uuid::new_v4().to_string());
+        id
+    }
+
     // Called by client
     pub async fn request_appointment(
         args: ArgMatches,
@@ -768,10 +783,7 @@ impl CalendarApp {
                     Ok(time) => {
                         let appt =
                             AppointmentInfo::new(date, time, notes.cloned());
-                        let mut id: String = APPT_PREFIX.to_owned();
-                        id.push_str("/");
-                        // TODO make method => create_new_prefixed_id()
-                        id.push_str(&Uuid::new_v4().to_string());
+                        let id = create_new_prefixed_id(&APPT_PREFIX);
                         let json_string = serde_json::to_string(&appt).unwrap();
 
                         // store appointment request

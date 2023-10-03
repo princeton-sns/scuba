@@ -440,52 +440,6 @@ impl FamilyApp {
             )))),
         }
     }
-
-    pub async fn share(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let id = args.get_one::<String>("id").unwrap().to_string();
-
-        if let Some(arg_readers) = args.get_many::<String>("readers") {
-            let readers = arg_readers.collect::<Vec<&String>>();
-            let res = context
-                .client
-                .add_readers(id.clone(), readers.clone())
-                .await;
-            if res.is_err() {
-                return Ok(Some(String::from(format!(
-                    "Error adding readers to datum: {}",
-                    res.err().unwrap().to_string()
-                ))));
-            }
-        }
-
-        if let Some(arg_writers) = args.get_many::<String>("writers") {
-            let writers = arg_writers.collect::<Vec<&String>>();
-            let res = context
-                .client
-                .add_writers(id.clone(), writers.clone())
-                .await;
-            if res.is_err() {
-                return Ok(Some(String::from(format!(
-                    "Error adding writers to datum: {}",
-                    res.err().unwrap().to_string()
-                ))));
-            }
-        }
-
-        Ok(Some(String::from(format!(
-            "Successfully shared datum {}",
-            id
-        ))))
-    }
 }
 
 #[tokio::main]
@@ -541,25 +495,6 @@ async fn main() -> ReplResult<()> {
         .with_command(
             Command::new("get_group").arg(Arg::new("id").required(true)),
             FamilyApp::get_group,
-        )
-        .with_command_async(
-            Command::new("share")
-                .arg(Arg::new("id").required(true).long("id").short('i'))
-                .arg(
-                    Arg::new("readers")
-                        .required(false)
-                        .long("readers")
-                        .short('r')
-                        .action(ArgAction::Append),
-                )
-                .arg(
-                    Arg::new("writers")
-                        .required(false)
-                        .long("writers")
-                        .short('w')
-                        .action(ArgAction::Append),
-                ),
-            |args, context| Box::pin(FamilyApp::share(args, context)),
         );
 
     repl.run_async().await

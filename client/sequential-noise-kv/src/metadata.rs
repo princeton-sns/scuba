@@ -236,7 +236,10 @@ impl PermissionSet {
         &self.do_readers
     }
 
-    pub fn set_do_readers(&mut self, do_reader_group_id: &String) -> Option<String> {
+    pub fn set_do_readers(
+        &mut self,
+        do_reader_group_id: &String,
+    ) -> Option<String> {
         let old_do_readers = self.do_readers.clone();
         self.do_readers = Some(do_reader_group_id.to_string());
         old_do_readers
@@ -296,7 +299,9 @@ impl MetadataStore {
             PermType::Owners(new_owners) => (perm_set.owners(), new_owners),
             PermType::Writers(new_writers) => (perm_set.writers(), new_writers),
             PermType::Readers(new_readers) => (perm_set.readers(), new_readers),
-            PermType::DOReaders(new_do_readers) => (perm_set.do_readers(), new_do_readers),
+            PermType::DOReaders(new_do_readers) => {
+                (perm_set.do_readers(), new_do_readers)
+            }
         };
 
         match existing_members {

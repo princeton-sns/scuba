@@ -984,9 +984,10 @@ impl NoiseKVClient {
         data_id: String,
         data_type: String,
         data_val: String,
-        // FIXME what is the below option for again? is it sharing upon setting?
-        // why just enabled for data readers and, e.g., not data writers?
-        // -> for do_readers apparently, but still don't totally understand
+        // FIXME what is the below option for again? is it sharing upon
+        // setting? why just enabled for data readers and, e.g., not
+        // data writers? -> for do_readers apparently, but still don't
+        // totally understand
         data_reader_idkeys: Option<Vec<String>>,
     ) -> Result<(), Error> {
         // FIXME check write permissions
@@ -1013,7 +1014,8 @@ impl NoiseKVClient {
 
                 // resolve idkeys
                 if data_reader_idkeys.is_none() {
-                    let group_ids = self.get_metadata_reader_groups_from_perm(&perm_val);
+                    let group_ids =
+                        self.get_metadata_reader_groups_from_perm(&perm_val);
                     device_ids = device_guard
                         .as_ref()
                         .unwrap()
@@ -1152,7 +1154,7 @@ impl NoiseKVClient {
                     .into_iter()
                     .collect::<Vec<String>>();
                 device_ids.append(&mut do_reader_ids);
-            },
+            }
             None => {}
         }
 
@@ -1353,10 +1355,10 @@ impl NoiseKVClient {
                     | PermType::Readers(_) => {
                         metadata_readers.append(&mut new_members_refs.clone());
                         data_readers.append(&mut new_members_refs.clone());
-                    },
+                    }
                     PermType::DOReaders(_) => {
                         data_readers.append(&mut new_members_refs.clone());
-                    },
+                    }
                 }
 
                 // resolve the above to device ids
@@ -1370,7 +1372,8 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>();
 
                 // FIXME still need to send owner to data-only-readers so they
-                // can confirm that the src idkey can actually write the data object
+                // can confirm that the src idkey can actually write the data
+                // object
 
                 /*
                  * Then collect existing perm-associated groups.
@@ -1426,7 +1429,7 @@ impl NoiseKVClient {
                                 Some(Some(new_members_vec.clone())),
                             );
                             assoc_groups.insert(new_group_id, new_group);
-                        },
+                        }
                         PermType::DOReaders(_) => {}
                     },
                     None => {}

@@ -1,5 +1,5 @@
 [package]
-name = "cmdline-skeleton"
+name = "cmdline-calendar"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,3 +12,6 @@ tokio = { version = "1.25.0", features = ["macros", "io-std", "io-util", "rt", "
 uuid = "1.3.0"
 itertools = "0.10.5"
 serde_json = "1.0.96"
+serde = { version = "1.0.188", features = ["derive"] }
+passwords = "3.1.16"
+chrono = { version = "0.4.31", features = ["serde"] }

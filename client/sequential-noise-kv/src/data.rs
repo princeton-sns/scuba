@@ -55,7 +55,7 @@ impl fmt::Display for BasicData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "id: {}, type: {}, perm: {}, val: {}",
+            "id: {},\n\ttype: {},\n\tperm: {},\n\tval: {}",
             self.data_id, self.data_type, self.perm_id, self.data_val
         )
     }

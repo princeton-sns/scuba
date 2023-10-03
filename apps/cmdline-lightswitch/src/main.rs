@@ -1,12 +1,12 @@
-use noise_kv::client::NoiseKVClient;
-use noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
+use sequential_noise_kv::client::NoiseKVClient;
+use sequential_noise_kv::data::NoiseData;
 use std::sync::Arc;
 use uuid::Uuid;
 
-const LB_PREFIX: &str = "lightbulb";
+const LB_PREFIX: &str = "bulb";
 const DEVICE_PREFIX: &str = "device";
 const LB_DEVICE_VAL: &str = r#"{ "is_bulb": true }"#;
 const LS_DEVICE_VAL: &str = r#"{ "is_bulb": false }"#;
@@ -63,8 +63,8 @@ impl LightswitchApp {
                             )));
                         } else {
                             panic!(
-                                "A device exists that is neither lightbulb /
-                                nor lightswitch."
+                                "A device exists that is neither bulb /
+                                nor switch."
                             );
                         }
                     },
@@ -75,12 +75,12 @@ impl LightswitchApp {
                 }
             },
             None => Ok(Some(String::from(
-                "Device does not exist: please create either a lightbulb or a lightswitch to continue.",
+                "Device does not exist: please create either a bulb or a switch to continue.",
             ))),
         }
     }
 
-    pub async fn create_lightbulb(
+    pub async fn create_bulb(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
@@ -94,13 +94,13 @@ impl LightswitchApp {
         {
             Ok(_) => Ok(Some(String::from("Lightbulb device created!"))),
             Err(err) => Ok(Some(String::from(format!(
-                "Could not create lightbulb device: {}",
+                "Could not create bulb device: {}",
                 err.to_string()
             )))),
         }
     }
 
-    pub async fn create_lightswitch(
+    pub async fn create_switch(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
@@ -114,13 +114,13 @@ impl LightswitchApp {
         {
             Ok(_) => Ok(Some(String::from("Lightswitch device created!"))),
             Err(err) => Ok(Some(String::from(format!(
-                "Could not create lightswitch device: {}",
+                "Could not create switch device: {}",
                 err.to_string()
             )))),
         }
     }
 
-    pub async fn create_linked_lightswitch(
+    pub async fn create_linked_switch(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -304,7 +304,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn add_lightbulb(
+    pub async fn add_bulb(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -322,12 +322,11 @@ impl LightswitchApp {
             .set_data(id.clone(), LB_PREFIX.to_string(), json_string, None)
             .await
         {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Created lightbulb with id {}",
-                id
-            )))),
+            Ok(_) => {
+                Ok(Some(String::from(format!("Created bulb with id {}", id))))
+            }
             Err(err) => Ok(Some(String::from(format!(
-                "Could not add lightbulb: {}",
+                "Could not add bulb: {}",
                 err.to_string()
             )))),
         }
@@ -417,19 +416,17 @@ async fn main() -> ReplResult<()> {
         .with_name("Lightswitch App")
         .with_version("v0.1.0")
         .with_description("Noise lightswitch app")
-        .with_command_async(Command::new("create_lightbulb"), |_, context| {
-            Box::pin(LightswitchApp::create_lightbulb(context))
+        .with_command_async(Command::new("create_bulb"), |_, context| {
+            Box::pin(LightswitchApp::create_bulb(context))
         })
-        .with_command_async(Command::new("create_lightswitch"), |_, context| {
-            Box::pin(LightswitchApp::create_lightswitch(context))
+        .with_command_async(Command::new("create_switch"), |_, context| {
+            Box::pin(LightswitchApp::create_switch(context))
         })
         .with_command_async(
-            Command::new("create_linked_lightswitch")
+            Command::new("create_linked_switch")
                 .arg(Arg::new("idkey").required(true)),
             |args, context| {
-                Box::pin(LightswitchApp::create_linked_lightswitch(
-                    args, context,
-                ))
+                Box::pin(LightswitchApp::create_linked_switch(args, context))
             },
         )
         .with_command(
@@ -445,7 +442,7 @@ async fn main() -> ReplResult<()> {
             },
         )
         .with_command(
-            Command::new("get_contacts"),
+            Command::new("get_contacts").about("broken - don't use"),
             LightswitchApp::get_contacts,
         )
         .with_command(
@@ -459,22 +456,22 @@ async fn main() -> ReplResult<()> {
             Command::new("get_state").arg(Arg::new("id").required(true)),
             LightswitchApp::get_state,
         )
-        .with_command_async(Command::new("add_lightbulb"), |_, context| {
-            Box::pin(LightswitchApp::add_lightbulb(context))
+        .with_command_async(Command::new("add_bulb"), |_, context| {
+            Box::pin(LightswitchApp::add_bulb(context))
         })
         .with_command_async(
             Command::new("share")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
                 .arg(
                     Arg::new("readers")
-                        .required(true)
+                        .required(false)
                         .long("readers")
                         .short('r')
                         .action(ArgAction::Append),
                 )
                 .arg(
                     Arg::new("writers")
-                        .required(true)
+                        .required(false)
                         .long("writers")
                         .short('w')
                         .action(ArgAction::Append),

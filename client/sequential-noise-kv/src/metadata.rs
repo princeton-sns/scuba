@@ -36,7 +36,7 @@ impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "group_id: {}, perm_ids: {}, is_contact_name: {}, parents: {}, children: {}",
+            "group_id: {},\n\tperm_ids: {},\n\tis_contact_name: {},\n\tparents: {},\n\tchildren: {}",
             self.group_id,
             itertools::join(self.perm_ids.clone(), ", "),
             self.is_contact_name,
@@ -139,6 +139,7 @@ pub enum PermType {
     Owners(Vec<String>),
     Writers(Vec<String>),
     Readers(Vec<String>),
+    DOReaders(Vec<String>),
 }
 
 // TODO make fields pub instead of using getters/setters
@@ -148,13 +149,14 @@ pub struct PermissionSet {
     owners: Option<String>,
     writers: Option<String>,
     readers: Option<String>,
+    do_readers: Option<String>,
 }
 
 impl fmt::Display for PermissionSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "perm_id: {}, owner: {}, writers: {}, readers: {}",
+            "perm_id: {},\n\towner: {},\n\twriters: {},\n\treaders: {},\n\tdo_readers: {}",
             self.perm_id,
             self.owners
                 .as_ref()
@@ -163,6 +165,9 @@ impl fmt::Display for PermissionSet {
                 .as_ref()
                 .map_or_else(|| "None".to_string(), |s| s.to_string()),
             self.readers
+                .as_ref()
+                .map_or_else(|| "None".to_string(), |s| s.to_string()),
+            self.do_readers
                 .as_ref()
                 .map_or_else(|| "None".to_string(), |s| s.to_string()),
         )
@@ -175,6 +180,7 @@ impl PermissionSet {
         owners: Option<String>,
         writers: Option<String>,
         readers: Option<String>,
+        do_readers: Option<String>,
     ) -> PermissionSet {
         let init_perm_id: String;
         if perm_id.is_none() {
@@ -188,6 +194,7 @@ impl PermissionSet {
             owners,
             writers,
             readers,
+            do_readers,
         }
     }
 
@@ -223,6 +230,19 @@ impl PermissionSet {
         let old_readers = self.readers.clone();
         self.readers = Some(reader_group_id.to_string());
         old_readers
+    }
+
+    pub fn do_readers(&self) -> &Option<String> {
+        &self.do_readers
+    }
+
+    pub fn set_do_readers(
+        &mut self,
+        do_reader_group_id: &String,
+    ) -> Option<String> {
+        let old_do_readers = self.do_readers.clone();
+        self.do_readers = Some(do_reader_group_id.to_string());
+        old_do_readers
     }
 }
 
@@ -279,6 +299,9 @@ impl MetadataStore {
             PermType::Owners(new_owners) => (perm_set.owners(), new_owners),
             PermType::Writers(new_writers) => (perm_set.writers(), new_writers),
             PermType::Readers(new_readers) => (perm_set.readers(), new_readers),
+            PermType::DOReaders(new_do_readers) => {
+                (perm_set.do_readers(), new_do_readers)
+            }
         };
 
         match existing_members {
@@ -324,6 +347,9 @@ impl MetadataStore {
                     }
                     PermType::Readers(_) => {
                         perm_set.set_readers(new_group.group_id());
+                    }
+                    PermType::DOReaders(_) => {
+                        perm_set.set_do_readers(new_group.group_id());
                     }
                 }
                 self.set_perm(perm_set.perm_id().to_string(), perm_set);
@@ -405,6 +431,7 @@ impl MetadataStore {
         }
     }
 
+    // TODO rename => exists_metadata_mod_permissions
     pub fn find_metadata_mod_permissions(
         &self,
         modifying_group_id: &String,

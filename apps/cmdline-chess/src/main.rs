@@ -1,8 +1,8 @@
-use noise_kv::client::NoiseKVClient;
-use noise_kv::data::NoiseData;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
+use sequential_noise_kv::client::NoiseKVClient;
+use sequential_noise_kv::data::NoiseData;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -418,7 +418,8 @@ impl ChessApp {
             )));
         }
 
-        let opponent_id = args.get_one::<String>("opponent").unwrap().to_string();
+        let opponent_id =
+            args.get_one::<String>("opponent").unwrap().to_string();
 
         let mut game_id = GAME_PREFIX.to_owned();
         game_id.push_str("/");
@@ -427,7 +428,12 @@ impl ChessApp {
 
         let res = context
             .client
-            .set_data(game_id.clone(), GAME_PREFIX.to_string(), json_string, None)
+            .set_data(
+                game_id.clone(),
+                GAME_PREFIX.to_string(),
+                json_string,
+                None,
+            )
             .await;
 
         if res.is_err() {
@@ -437,16 +443,19 @@ impl ChessApp {
             ))));
         }
 
-        match context.client.add_writers(game_id.clone(), vec![&opponent_id.clone()]).await {
-            Ok(_) => {
-                Ok(Some(String::from(format!("Created game with id {}", game_id))))
-            }
-            Err(err) => {
-                Ok(Some(String::from(format!(
-                    "Error adding opponent: {}",
-                    err
-                ))))
-            }
+        match context
+            .client
+            .add_writers(game_id.clone(), vec![&opponent_id.clone()])
+            .await
+        {
+            Ok(_) => Ok(Some(String::from(format!(
+                "Created game with id {}",
+                game_id
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error adding opponent: {}",
+                err
+            )))),
         }
     }
 
@@ -522,10 +531,9 @@ async fn main() -> ReplResult<()> {
             ChessApp::get_state,
         )
         .with_command_async(
-            Command::new("create_game").arg(Arg::new("opponent").required(true)),
-            |args, context| {
-                Box::pin(ChessApp::create_game(args, context))
-            }
+            Command::new("create_game")
+                .arg(Arg::new("opponent").required(true)),
+            |args, context| Box::pin(ChessApp::create_game(args, context)),
         )
         .with_command_async(
             Command::new("share")
@@ -537,7 +545,7 @@ async fn main() -> ReplResult<()> {
                         .short('r')
                         .action(ArgAction::Append),
                 ),
-                // TODO can add data-only readers, too
+            // TODO can add data-only readers, too
             |args, context| Box::pin(ChessApp::share(args, context)),
         );
 

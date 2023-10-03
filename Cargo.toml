@@ -8,4 +8,6 @@ members = [
     "apps/cmdline-period-tracking",
     "apps/cmdline-chess",
     "apps/cmdline-social-media",
+    "apps/cmdline-password-manager",
+    "apps/cmdline-calendar",
 ]

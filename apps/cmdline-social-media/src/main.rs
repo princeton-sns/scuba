@@ -22,7 +22,8 @@ use uuid::Uuid;
  *   - [x] live location
  *   - [ ] photos
  * - invariants:
- *   - [x] comment length
+ *   - [x] post length
+ *   - [ ] comment length
  *   - [ ] reaction type (subset of emojies)
  * - [ ] moderator permissions can be granted to users to help keep
  *   messages appropriate

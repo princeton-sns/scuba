@@ -185,6 +185,22 @@ impl FamilyApp {
             enable_loc_polling = true;
         }
 
+        let device_guard = context.client.device.read();
+        let mut data_store_guard =
+            device_guard.as_ref().unwrap().data_store.write();
+        data_store_guard.validator().set_validate_callback_for_type(
+            POST_PREFIX.to_string(),
+            // validate a 1000 char limit on posts
+            |id, val| {
+                let post: Post = serde_json::from_str(val.data_val()).unwrap();
+                if post.contents.len() > 10 {
+                    return false;
+                }
+                true
+            },
+        );
+        core::mem::drop(data_store_guard);
+
         // Each "user" has a single Member object pertaining to themselves
         // and a location object that polls for location on some interval
         let loc_id = Self::new_prefixed_id(&LOC_PREFIX.to_string());

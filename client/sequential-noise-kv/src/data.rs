@@ -136,6 +136,10 @@ impl<T: NoiseData> DataStore<T> {
         }
     }
 
+    pub fn validator(&mut self) -> &mut Validator<T> {
+        &mut self.validator
+    }
+
     pub fn get_data(&self, data_id: &String) -> Option<&T> {
         self.store.get(data_id)
     }

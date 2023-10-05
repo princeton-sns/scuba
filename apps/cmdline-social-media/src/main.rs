@@ -63,6 +63,10 @@ impl Family {
     fn add_post(&mut self, post_time: DateTime<Utc>, post_id: String) {
         self.posts.insert(post_time, post_id);
     }
+
+    fn add_location(&mut self, loc_id: &String) {
+        self.location_ids.push(loc_id.clone());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -640,9 +644,66 @@ impl FamilyApp {
 
         match fam_opt {
             Some(fam_obj) => {
-                // TODO share member's location object
+                let mut fam: Family =
+                    serde_json::from_str(fam_obj.data_val()).unwrap();
+                let fam_clone = fam.clone();
+                let fam_members =
+                    fam_clone.members.iter().collect::<Vec<&String>>();
 
-                Ok(Some(String::from("TBD")))
+                let member_obj = data_store_guard
+                    .get_data(&MEMBER_PREFIX.to_string())
+                    .unwrap();
+                let member: Member =
+                    serde_json::from_str(member_obj.data_val()).unwrap();
+
+                let loc_id = member.location_id;
+                let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+
+                // add location object id to family
+                fam.add_location(&loc_id);
+                let fam_json = serde_json::to_string(&fam).unwrap();
+
+                match context
+                    .client
+                    .set_data(
+                        fam_id.clone(),
+                        FAM_PREFIX.to_string(),
+                        fam_json,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        core::mem::drop(data_store_guard);
+
+                        // temporary hack b/c cannot set and share data
+                        // at the same time, and sharing expects that
+                        // the
+                        // data already exists, so must wait for
+                        // set_data
+                        // message to return from the server
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        // share member's location object
+                        match context
+                            .client
+                            .add_readers(loc_id, fam_members)
+                            .await
+                        {
+                            Ok(_) => Ok(Some(String::from(
+                                "Shared location with family",
+                            ))),
+                            Err(err) => Ok(Some(String::from(format!(
+                                "Could not share location: {}",
+                                err.to_string()
+                            )))),
+                        }
+                    }
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Could not update family: {}",
+                        err.to_string()
+                    )))),
+                }
             }
             None => Ok(Some(String::from(format!(
                 "Family with id {} does not exist.",

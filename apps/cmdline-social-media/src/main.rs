@@ -1,6 +1,6 @@
 use chrono::offset::Utc;
 use chrono::DateTime;
-use reedline_repl_rs::clap::{Arg, ArgMatches, Command};
+use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
 use sequential_noise_kv::client::NoiseKVClient;
@@ -175,9 +175,15 @@ impl FamilyApp {
     }
 
     pub async fn init_new_device(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
+
+        let mut enable_loc_polling = false;
+        if args.get_flag("enable_loc_polling") {
+            enable_loc_polling = true;
+        }
 
         // Each "user" has a single Member object pertaining to themselves
         // and a location object that polls for location on some interval
@@ -212,66 +218,80 @@ impl FamilyApp {
                     .await
                 {
                     Ok(_) => {
-                        // spawn location-polling thread
-                        let task_loc_id = loc_id.clone();
-                        let task_client = context.client.clone();
-                        tokio::spawn(async move {
-                            loop {
-                                // poll on the order of seconds, for demo
-                                // purposes
-                                std::thread::sleep(
-                                    // sometimes get the following error:
-                                    // "connection closed before message
-                                    // completed",
-                                    // which is seemingly a hyper issue:
-                                    // https://github.com/hyperium/hyper/issues/2136
-                                    //
-                                    // 10 updates once and then errors
-                                    // repeatedly
-                                    // (first error is the above, second panic
-                                    // in the thread with a FromUtf8 error, and
-                                    // the rest are the same as the above
-                                    // again)
-                                    //
-                                    // the below notes are not reproducible:
-                                    // 1 second hangs sometimes, or is fine
-                                    // past
-                                    //   the 100th increment
-                                    // 2 and 3 are fine
-                                    // 4 seconds hangs sometimes
-                                    // 5 is fine until the 5th increment
-                                    std::time::Duration::from_secs(4),
-                                );
+                        if enable_loc_polling {
+                            // spawn location-polling thread
+                            let task_loc_id = loc_id.clone();
+                            let task_client = context.client.clone();
+                            tokio::spawn(async move {
+                                loop {
+                                    // poll on the order of seconds, for demo
+                                    // purposes
+                                    std::thread::sleep(
+                                        // sometimes get the following error:
+                                        // "connection closed before message
+                                        // completed",
+                                        // which is seemingly a hyper issue:
+                                        // https://github.com/hyperium/hyper/issues/2136
+                                        //
+                                        // 10 updates once and then errors
+                                        // repeatedly
+                                        // (first error is the above, second
+                                        // panic
+                                        // in the thread with a FromUtf8 error,
+                                        // and
+                                        // the rest are the same as the above
+                                        // again)
+                                        //
+                                        // the below notes are not
+                                        // reproducible:
+                                        // 1 second hangs sometimes, or is fine
+                                        // past
+                                        //   the 100th increment
+                                        // 2 and 3 are fine
+                                        // 4 seconds hangs sometimes
+                                        // 5 is fine until the 5th increment
+                                        std::time::Duration::from_secs(1),
+                                    );
 
-                                loc.inc();
-                                loc_json = serde_json::to_string(&loc).unwrap();
+                                    loc.inc();
+                                    loc_json =
+                                        serde_json::to_string(&loc).unwrap();
 
-                                // for some reason this set_data message has a
-                                // much
-                                // longer round trip than the rest in this app
-                                // (as in, perceptable by me, a human)
-                                match task_client
-                                    .set_data(
-                                        task_loc_id.clone(),
-                                        LOC_PREFIX.to_string(),
-                                        loc_json.clone(),
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => println!("Location update sent"),
-                                    Err(err) => println!(
-                                        "Location could not be updated: {}",
-                                        err
-                                    ),
-                                };
-                            }
-                        });
+                                    // for some reason this set_data message has
+                                    // a
+                                    // much
+                                    // longer round trip than the rest in this
+                                    // app
+                                    // (as in, perceptable by me, a human)
+                                    match task_client
+                                        .set_data(
+                                            task_loc_id.clone(),
+                                            LOC_PREFIX.to_string(),
+                                            loc_json.clone(),
+                                            None,
+                                        )
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            println!("Location update sent")
+                                        }
+                                        Err(err) => println!(
+                                            "Location could not be updated: {}",
+                                            err
+                                        ),
+                                    };
+                                }
+                            });
 
-                        Ok(Some(String::from(format!(
-                            "Location polling for id {} initiated!",
-                            loc_id
-                        ))))
+                            Ok(Some(String::from(format!(
+                                "Location polling for id {} initiated!",
+                                loc_id
+                            ))))
+                        } else {
+                            Ok(Some(String::from(
+                                "No location polling initiated",
+                            )))
+                        }
                     }
                     Err(err) => Ok(Some(String::from(format!(
                         "Could not set member: {}",
@@ -627,6 +647,50 @@ impl FamilyApp {
         }
     }
 
+    pub async fn update_location(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+
+        let member_obj = data_store_guard
+            .get_data(&MEMBER_PREFIX.to_string())
+            .unwrap();
+        let member: Member =
+            serde_json::from_str(member_obj.data_val()).unwrap();
+
+        let loc_id = member.location_id;
+        let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+
+        let mut loc: Location =
+            serde_json::from_str(loc_obj.data_val()).unwrap();
+        loc.inc();
+        let loc_json = serde_json::to_string(&loc).unwrap();
+
+        match context
+            .client
+            .set_data(
+                loc_id.clone(),
+                LOC_PREFIX.to_string(),
+                loc_json.clone(),
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(Some(String::from("Location updated"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Location could not be updated: {}",
+                err.to_string()
+            )))),
+        }
+    }
+
     pub async fn share_location(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -829,9 +893,15 @@ async fn main() -> ReplResult<()> {
         .with_name("Family App")
         .with_version("v0.1.0")
         .with_description("Noise family app")
-        .with_command_async(Command::new("init_new_device"), |_, context| {
-            Box::pin(FamilyApp::init_new_device(context))
-        })
+        .with_command_async(
+            Command::new("init_new_device").arg(
+                Arg::new("enable_loc_polling")
+                    .required(false)
+                    .action(ArgAction::SetTrue)
+                    .short('e'),
+            ),
+            |args, context| Box::pin(FamilyApp::init_new_device(args, context)),
+        )
         .with_command_async(
             Command::new("init_linked_device")
                 .arg(Arg::new("idkey").required(true)),
@@ -872,6 +942,9 @@ async fn main() -> ReplResult<()> {
                 .arg(Arg::new("fam_id").short('f').required(true)),
             |args, context| Box::pin(FamilyApp::share_location(args, context)),
         )
+        .with_command_async(Command::new("update_location"), |_, context| {
+            Box::pin(FamilyApp::update_location(context))
+        })
         .with_command(
             Command::new("get_data").arg(Arg::new("id").required(false)),
             FamilyApp::get_data,

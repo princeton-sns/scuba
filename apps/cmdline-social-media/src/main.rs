@@ -6,7 +6,7 @@ use reedline_repl_rs::Result as ReplResult;
 use sequential_noise_kv::client::NoiseKVClient;
 use sequential_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -34,14 +34,17 @@ use uuid::Uuid;
 // or
 // #[serde(skip_serializing_if = "path")] on all fields (still cumbersome),
 // calling simple function w bool if only want struct name
+const MEMBER_PREFIX: &str = "member";
 const FAM_PREFIX: &str = "family";
 const POST_PREFIX: &str = "post";
+const LOC_PREFIX: &str = "location";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Family {
     members: Vec<String>,
     // for easy time-based ordering
     posts: BTreeMap<DateTime<Utc>, String>,
+    location_ids: Vec<String>,
 }
 
 impl Family {
@@ -49,6 +52,7 @@ impl Family {
         Family {
             members,
             posts: BTreeMap::new(),
+            location_ids: Vec::new(),
         }
     }
 
@@ -82,9 +86,50 @@ impl Post {
     }
 }
 
-// TODO invariant val for post length
+// TODO impl Display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Location {
+    member_id: String,
+    x: f64,
+    y: f64,
+    time: DateTime<Utc>,
+}
 
-// TODO location sharing
+impl Location {
+    fn new(member_id: &String) -> Self {
+        Location {
+            member_id: member_id.to_string(),
+            x: 1.0,
+            y: 1.0,
+            time: Utc::now(),
+        }
+    }
+
+    fn inc(&mut self) {
+        let x = &mut self.x;
+        *x += 1.0;
+        self.time = Utc::now();
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Member {
+    family_ids: Vec<String>,
+    authored_posts: Vec<String>,
+    location_id: String,
+}
+
+impl Member {
+    fn new(location_id: &String) -> Self {
+        Member {
+            family_ids: Vec::new(),
+            authored_posts: Vec::new(),
+            location_id: location_id.to_string(),
+        }
+    }
+}
+
+// TODO invariant val for post length
 
 #[derive(Clone)]
 struct FamilyApp {
@@ -125,12 +170,116 @@ impl FamilyApp {
         }
     }
 
-    pub fn init_new_device(
-        _args: ArgMatches,
+    pub async fn init_new_device(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
-        Ok(Some(String::from("Standalone device created.")))
+
+        // Each "user" has a single Member object pertaining to themselves
+        // and a location object that polls for location on some interval
+        let loc_id = Self::new_prefixed_id(&LOC_PREFIX.to_string());
+        let member_id = MEMBER_PREFIX.to_owned();
+
+        let mut loc = Location::new(&member_id);
+        let member = Member::new(&loc_id);
+
+        let mut loc_json = serde_json::to_string(&loc).unwrap();
+        let member_json = serde_json::to_string(&member).unwrap();
+
+        match context
+            .client
+            .set_data(
+                loc_id.clone(),
+                LOC_PREFIX.to_string(),
+                loc_json.clone(),
+                None,
+            )
+            .await
+        {
+            Ok(_) => {
+                match context
+                    .client
+                    .set_data(
+                        member_id.clone(),
+                        MEMBER_PREFIX.to_string(),
+                        member_json,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // spawn location-polling thread
+                        let task_loc_id = loc_id.clone();
+                        let task_client = context.client.clone();
+                        tokio::spawn(async move {
+                            loop {
+                                // poll on the order of seconds, for demo
+                                // purposes
+                                std::thread::sleep(
+                                    // sometimes get the following error:
+                                    // "connection closed before message
+                                    // completed",
+                                    // which is seemingly a hyper issue:
+                                    // https://github.com/hyperium/hyper/issues/2136
+                                    //
+                                    // 10 updates once and then errors
+                                    // repeatedly
+                                    // (first error is the above, second panic
+                                    // in the thread with a FromUtf8 error, and
+                                    // the rest are the same as the above
+                                    // again)
+                                    //
+                                    // the below notes are not reproducible:
+                                    // 1 second hangs sometimes, or is fine
+                                    // past
+                                    //   the 100th increment
+                                    // 2 and 3 are fine
+                                    // 4 seconds hangs sometimes
+                                    // 5 is fine until the 5th increment
+                                    std::time::Duration::from_secs(4),
+                                );
+
+                                loc.inc();
+                                loc_json = serde_json::to_string(&loc).unwrap();
+
+                                // for some reason this set_data message has a
+                                // much
+                                // longer round trip than the rest in this app
+                                // (as in, perceptable by me, a human)
+                                match task_client
+                                    .set_data(
+                                        task_loc_id.clone(),
+                                        LOC_PREFIX.to_string(),
+                                        loc_json.clone(),
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => println!("Location update sent"),
+                                    Err(err) => println!(
+                                        "Location could not be updated: {}",
+                                        err
+                                    ),
+                                };
+                            }
+                        });
+
+                        Ok(Some(String::from(format!(
+                            "Location polling for id {} initiated!",
+                            loc_id
+                        ))))
+                    }
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Could not set member: {}",
+                        err.to_string()
+                    )))),
+                }
+            }
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not set location: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     pub async fn init_linked_device(
@@ -204,6 +353,31 @@ impl FamilyApp {
                 .linked_devices(),
             "\n",
         )))
+    }
+
+    pub fn get_location(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+
+        let member_obj = data_store_guard
+            .get_data(&MEMBER_PREFIX.to_string())
+            .unwrap();
+        let member: Member =
+            serde_json::from_str(member_obj.data_val()).unwrap();
+
+        let loc_id = member.location_id;
+        let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+
+        Ok(Some(String::from(format!("{}", loc_obj.data_val()))))
     }
 
     //pub fn get_contacts(
@@ -449,6 +623,34 @@ impl FamilyApp {
         }
     }
 
+    pub async fn share_location(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let fam_id = args.get_one::<String>("fam_id").unwrap();
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let fam_opt = data_store_guard.get_data(&fam_id);
+
+        match fam_opt {
+            Some(fam_obj) => {
+                // TODO share member's location object
+
+                Ok(Some(String::from("TBD")))
+            }
+            None => Ok(Some(String::from(format!(
+                "Family with id {} does not exist.",
+                fam_id,
+            )))),
+        }
+    }
+
     pub fn get_data(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -566,10 +768,9 @@ async fn main() -> ReplResult<()> {
         .with_name("Family App")
         .with_version("v0.1.0")
         .with_description("Noise family app")
-        .with_command(
-            Command::new("init_new_device"),
-            FamilyApp::init_new_device,
-        )
+        .with_command_async(Command::new("init_new_device"), |_, context| {
+            Box::pin(FamilyApp::init_new_device(context))
+        })
         .with_command_async(
             Command::new("init_linked_device")
                 .arg(Arg::new("idkey").required(true)),
@@ -589,6 +790,7 @@ async fn main() -> ReplResult<()> {
             Command::new("get_linked_devices"),
             FamilyApp::get_linked_devices,
         )
+        .with_command(Command::new("get_location"), FamilyApp::get_location)
         .with_command_async(Command::new("init_family"), |_, context| {
             Box::pin(FamilyApp::init_family(context))
         })
@@ -603,6 +805,11 @@ async fn main() -> ReplResult<()> {
                 .arg(Arg::new("fam_id").short('f').required(true))
                 .arg(Arg::new("post").short('p').required(true)),
             |args, context| Box::pin(FamilyApp::post_to_family(args, context)),
+        )
+        .with_command_async(
+            Command::new("share_location")
+                .arg(Arg::new("fam_id").short('f').required(true)),
+            |args, context| Box::pin(FamilyApp::share_location(args, context)),
         )
         .with_command(
             Command::new("get_data").arg(Arg::new("id").required(false)),

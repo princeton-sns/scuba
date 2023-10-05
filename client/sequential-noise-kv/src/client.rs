@@ -553,6 +553,7 @@ impl NoiseKVClient {
             //    .remove_child(&group_id, &child_id)
             //    .map_err(Error::from),
             Operation::UpdateData(data_id, data_val) => {
+                //println!("\ndemux: ACQ DATA STORE WRITE LOCK\n");
                 self.device
                     .read()
                     .as_ref()
@@ -560,6 +561,7 @@ impl NoiseKVClient {
                     .data_store
                     .write()
                     .set_data(data_id, data_val);
+                //println!("\ndemux: DROPPED DATA STORE WRITE LOCK\n");
                 Ok(())
             }
             Operation::DeleteData(data_id) => {
@@ -986,14 +988,15 @@ impl NoiseKVClient {
         data_val: String,
         // FIXME what is the below option for again? is it sharing upon
         // setting? why just enabled for data readers and, e.g., not
-        // data writers? -> for do_readers apparently, but still don't
-        // totally understand
+        // data writers?
         data_reader_idkeys: Option<Vec<String>>,
     ) -> Result<(), Error> {
         // FIXME check write permissions
 
         let device_guard = self.device.read();
+        //println!("\nset_data: ACQUIRED DEVICE READ LOCK\n");
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        //println!("\nset_data: ACQUIRED DATA STORE READ LOCK\n");
         let existing_val = data_store_guard.get_data(&data_id).clone();
 
         // if data exists, use existing perms; otherwise create new one
@@ -1130,6 +1133,7 @@ impl NoiseKVClient {
         }
 
         core::mem::drop(data_store_guard);
+        //println!("\nset_data: DROPPED DATA STORE READ LOCK\n");
 
         let basic_data = BasicData::new(
             data_id.clone(),
@@ -1275,7 +1279,9 @@ impl NoiseKVClient {
         new_members: PermType,
         mut new_members_refs: Vec<&String>, // FIXME one or the other
     ) -> Result<(), Error> {
+        //println!("\nadd_perm: ACQ DEVICE READ LOCK\n");
         let device_guard = self.device.read();
+        //println!("\nadd_perm: ACQ DATA STORE READ LOCK\n");
         let mut data_store_guard =
             device_guard.as_ref().unwrap().data_store.read();
 
@@ -1283,6 +1289,7 @@ impl NoiseKVClient {
         match data_store_guard.get_data(&data_id) {
             None => return Err(Error::NonexistentData(data_id)),
             Some(data_val) => {
+                //println!("\nadd_perm: ACQ METADATA STORE READ LOCK\n");
                 let mut meta_store_guard =
                     device_guard.as_ref().unwrap().meta_store.read();
 
@@ -1348,15 +1355,25 @@ impl NoiseKVClient {
                     }
                     None => {}
                 }
+                // existing do-readers
+                match perm_val.do_readers() {
+                    Some(do_readers_group_id) => {
+                        data_readers.push(do_readers_group_id);
+                    }
+                    None => {}
+                }
                 // PER ADDED PERM new member
                 match new_members {
                     PermType::Owners(_)
                     | PermType::Writers(_)
                     | PermType::Readers(_) => {
+                        //println!("\nNEW MEMBERS READ BOTH METADATA +
+                        // DATA\n");
                         metadata_readers.append(&mut new_members_refs.clone());
                         data_readers.append(&mut new_members_refs.clone());
                     }
                     PermType::DOReaders(_) => {
+                        //println!("\nNEW MEMBERS ONLY READ DATA\n");
                         data_readers.append(&mut new_members_refs.clone());
                     }
                 }
@@ -1370,6 +1387,10 @@ impl NoiseKVClient {
                     .resolve_group_ids(data_readers)
                     .into_iter()
                     .collect::<Vec<String>>();
+
+                //println!("\nmetadata_reader_idkeys: {:?}\n",
+                // metadata_reader_idkeys); println!("\
+                // ndata_reader_idkeys: {:?}\n", data_reader_idkeys);
 
                 // FIXME still need to send owner to data-only-readers so they
                 // can confirm that the src idkey can actually write the data
@@ -1443,6 +1464,8 @@ impl NoiseKVClient {
 
                 core::mem::drop(meta_store_guard);
 
+                //println!("\nadd_perm: DROPPED METADATA STORE READ LOCK\n");
+
                 // first send SetPerm for existing, unmodified perm_set
                 // TODO remove this device from the idkeys for this op only
                 let mut res = self
@@ -1510,6 +1533,10 @@ impl NoiseKVClient {
                 let data_val_interior = data_val.data_val().clone();
 
                 core::mem::drop(data_store_guard);
+                //println!("\nadd_perm: DROPPED DATA STORE READ LOCK\n");
+
+                core::mem::drop(device_guard);
+                //println!("\nadd_perm: DROPPED DEVICE READ LOCK\n");
 
                 self.set_data(
                     data_id,

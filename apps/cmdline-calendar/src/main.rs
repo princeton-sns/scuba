@@ -783,7 +783,8 @@ impl CalendarApp {
                     Ok(time) => {
                         let appt =
                             AppointmentInfo::new(date, time, notes.cloned());
-                        let id = new_prefixed_id(&APPT_PREFIX);
+                        let id =
+                            Self::new_prefixed_id(&APPT_PREFIX.to_string());
                         let json_string = serde_json::to_string(&appt).unwrap();
 
                         // store appointment request

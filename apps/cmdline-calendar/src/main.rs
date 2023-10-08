@@ -861,81 +861,85 @@ impl CalendarApp {
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let appt_opt = data_store_guard.get_data(&id);
 
-        match appt_opt {
-            Some(appt_str) => {
-                let mut appt: AppointmentInfo =
-                    serde_json::from_str(appt_str.data_val()).unwrap();
-
-                // TODO check that appointment doesn't conflict with any
-                // existing busy slots
-
-                appt.pending = false;
-                let json_string = serde_json::to_string(&appt).unwrap();
-
-                // TODO put following two operations into a transaction
-                match context
-                    .client
-                    .set_data(
-                        id.clone(),
-                        APPT_PREFIX.to_owned(),
-                        json_string,
-                        None,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        // update availability
-                        let datetime = NaiveDateTime::new(appt.date, appt.time);
-                        let avail_opt = data_store_guard
-                            .get_data(&AVAIL_PREFIX.to_string());
-
-                        match avail_opt {
-                            Some(avail_str) => {
-                                let mut avail: Availability =
-                                    serde_json::from_str(avail_str.data_val())
-                                        .unwrap();
-                                avail.add_busy_slot(datetime, DEFAULT_DUR);
-                                let json_avail =
-                                    serde_json::to_string(&avail).unwrap();
-
-                                match context
-                                    .client
-                                    .set_data(
-                                        AVAIL_PREFIX.to_string(),
-                                        AVAIL_PREFIX.to_string(),
-                                        json_avail,
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => Ok(Some(String::from(format!(
-                                        "Confirmed appointment with id {}",
-                                        id
-                                    )))),
-                                    Err(err) => {
-                                        Ok(Some(String::from(format!(
-                                            "Could not modify availability: {}",
-                                            err
-                                        ))))
-                                    }
-                                }
-                            }
-                            None => Ok(Some(String::from(
-                                "Availability object does not exist - bug.",
-                            ))),
-                        }
-                    }
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Could not confirm appointment: {}",
-                        err.to_string()
-                    )))),
-                }
-            }
-            None => Ok(Some(String::from(format!(
+        if appt_opt.is_none() {
+            return Ok(Some(String::from(format!(
                 "Appointment with id {} does not exist.",
                 id,
-            )))),
+            ))));
         }
+
+        let mut appt: AppointmentInfo =
+            serde_json::from_str(appt_opt.unwrap().data_val()).unwrap();
+
+        // TODO check that appointment doesn't conflict with any
+        // existing busy slots
+
+        appt.pending = false;
+        let json_string = serde_json::to_string(&appt).unwrap();
+
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
+        res = context
+            .client
+            .set_data(
+                id.clone(),
+                APPT_PREFIX.to_owned(),
+                json_string,
+                None,
+            )
+            .await;
+        if res.is_err() {
+            context.client.end_transaction();
+            return Ok(Some(String::from(format!(
+                "Could not confirm appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        }
+
+        // update availability
+        let datetime = NaiveDateTime::new(appt.date, appt.time);
+        let avail_opt = data_store_guard
+            .get_data(&AVAIL_PREFIX.to_string());
+
+        if avail_opt.is_none() {
+            context.client.end_transaction();
+            return Ok(Some(String::from(
+                "Availability object does not exist - bug.",
+            )));
+        }
+
+        let mut avail: Availability =
+            serde_json::from_str(avail_opt.unwrap().data_val())
+                .unwrap();
+        avail.add_busy_slot(datetime, DEFAULT_DUR);
+        let json_avail =
+            serde_json::to_string(&avail).unwrap();
+
+        res = context
+            .client
+            .set_data(
+                AVAIL_PREFIX.to_string(),
+                AVAIL_PREFIX.to_string(),
+                json_avail,
+                None,
+            )
+            .await;
+        if res.is_err() {
+            context.client.end_transaction();
+            return Ok(Some(String::from(format!(
+                "Could not modify availability: {}",
+                res.err().unwrap().to_string()
+            ))));
+        }
+
+        context.client.end_transaction();
+        Ok(Some(String::from(format!(
+            "Confirmed appointment with id {}",
+            id
+        ))))
     }
 
     // Called by client

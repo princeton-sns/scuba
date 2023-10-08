@@ -357,11 +357,7 @@ pub struct NoiseKVClient {
 impl CoreClient for NoiseKVClient {
     async fn client_callback(
         &self,
-//<<<<<<< SEQ
-        seq: noise_core::core::SequenceNumber,
-//=======
-//        seq: SequenceNumber,
-//>>>>>>> TXN
+        seq: SequenceNumber,
         sender: String,
         message: String,
     ) {
@@ -1423,9 +1419,30 @@ impl NoiseKVClient {
         Ok(())
     }
 
+    // TODO cancel transaction func?
+
     pub fn end_transaction(&mut self) {
         let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
         self.initiate_transaction(self.idkey(), ops, prev_seq_number);
+    }
+
+    async fn send_or_add_to_txn(
+        &self,
+        dst_idkeys: Vec<String>,
+        op: &Operation,
+    ) -> Result<(), Error> {
+        if self.tx_coordinator.read().check_tx_state() {
+            self.tx_coordinator.write().add_op_to_cur_tx(op.clone());
+            Ok(())
+        } else {
+            match self
+                .send_message(dst_idkeys, &Operation::to_string(op).unwrap())
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(err) => Err(Error::SendFailed(err.to_string())),
+            }
+        }
     }
 
     pub async fn set_data(
@@ -1525,56 +1542,47 @@ impl NoiseKVClient {
 
                 // send perms
                 let mut res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         idkeys.clone(),
-                        &Operation::to_string(&Operation::SetPerm(
+                        &Operation::SetPerm(
                             perm_val.perm_id().to_string(),
                             perm_val.clone(),
-                        ))
-                        .unwrap(),
+                        ),
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // send group
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         idkeys.clone(),
-                        &Operation::to_string(&Operation::SetGroup(
+                        &Operation::SetGroup(
                             group_val.group_id().to_string(),
                             group_val.clone(),
-                        ))
-                        .unwrap(),
+                        )
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // add newly created group as a parent of linked_name
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         idkeys.clone(),
-                        &Operation::to_string(&Operation::AddParent(
+                        &Operation::AddParent(
                             self.linked_name().to_string(),
                             group_val.group_id().to_string(),
-                        ))
-                        .unwrap(),
+                        )
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
             }
         }
@@ -1609,39 +1617,13 @@ impl NoiseKVClient {
             None => {}
         }
 
-//<<<<<<< SEQ
-//        match self
-//            .send_message(
-//                // includes idkeys of _all_ permissions
-//                // (including data-only readers)
-//                device_ids.clone(),
-//                &Operation::to_string(&Operation::UpdateData(
-//                    data_id, basic_data,
-//                ))
-//                .unwrap(),
-//            )
-//            .await
-//        {
-//            Ok(_) => Ok(()),
-//            Err(err) => Err(Error::SendFailed(err.to_string())),
-//=======
-        let op = Operation::UpdateData(data_id, basic_data);
-
-        if self.tx_coordinator.read().check_tx_state() {
-            self.tx_coordinator.write().add_op_to_cur_tx(op);
-            Ok(())
-        } else {
-            match self
-                // includes idkeys of _all_ permissions
-                // (including data-only readers)
-                .send_message(device_ids.clone(), &Operation::to_string(&op).unwrap())
-                .await
-            {
-                Ok(_) => Ok(()),
-                Err(err) => Err(Error::SendFailed(err.to_string())),
-            }
-//>>>>>>> TXN
-        }
+        // includes idkeys of _all_ permissions
+        // (including data-only readers)
+        self.send_or_add_to_txn(
+                device_ids.clone(),
+                &Operation::UpdateData(data_id, basic_data)
+            )
+            .await
     }
 
     // TODO remove_data
@@ -1673,13 +1655,6 @@ impl NoiseKVClient {
     // could group->perm backpointers (go up the group tree
     // until find a perm_id OR propagate perm_ids to all group
     // children? - latter seems worse)
-
-    //pub async fn add_readers(
-    //    &self,
-    //    data_id: String,
-    //    mut names: Vec<&String>,
-    //) -> Result<(), Error> {
-    //}
 
     pub async fn add_do_readers(
         &self,
@@ -1934,57 +1909,48 @@ impl NoiseKVClient {
                 // first send SetPerm for existing, unmodified perm_set
                 // TODO remove this device from the idkeys for this op only
                 let mut res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::to_string(&Operation::SetPerm(
+                        &Operation::SetPerm(
                             perm_val.perm_id().to_string(),
                             perm_val.clone(),
-                        ))
-                        .unwrap(),
+                        )
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // then send SetGroups for all associated subgroups
                 // FIXME will overwrite is_contact_name fields
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::to_string(&Operation::SetGroups(
+                        &Operation::SetGroups(
                             assoc_groups,
-                        ))
-                        .unwrap(),
+                        )
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // PER ADDED PERM send AddPermMembers to all metadata-readers
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::to_string(&Operation::AddPermMembers(
+                        &Operation::AddPermMembers(
                             perm_val.perm_id().to_string(),
                             group_id_opt,
                             new_members,
-                        ))
-                        .unwrap(),
+                        )
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // finally, send UpdateData (via set_data) to set the

@@ -11,24 +11,24 @@ use uuid::Uuid;
 
 /*
  * Calendar
- * - [x] allows clients to book appointments with providers given the
+ * - [x] allows patients to book appointments with providers given the
  *   provider's availability
  * - how appointments are made
- *   - [x] client requests single time with provider, which the provider
+ *   - [x] patient requests single time with provider, which the provider
  *     must then confirm + update their own availability
- *   - [ ] client requests a prioritized list of appointment times which
+ *   - [ ] patient requests a prioritized list of appointment times which
  *     the provider can automatically confirm/deny based on the
  *     highest-pri slot that is available
- *   - [ ] provider puts the appointment confirmation and availability
+ *   - [~] provider puts the appointment confirmation and availability
  *     update in a transaction (serializability)
- * - [x] providers share their availability with all clients
- * - [x] appointments are private to provider and the client whom the
+ * - [x] providers share their availability with all patients
+ * - [x] appointments are private to provider and the patient whom the
  *   appointment is with, but update the provider's overall
- *   availability, visible to their other clients
+ *   availability, visible to their other patients
  * - [ ] providers can also block off times on their end without needing
  *   an appointment to be scheduled, e.g. for lunch breaks
- * - [x] the same device can act as both a client and provider
- * - [ ] clients can have multiple providers
+ * - [x] the same device can act as both a patient and provider
+ * - [ ] patients can have multiple providers
  */
 
 // FIXME impl more helper methods, a lot of repetitive code
@@ -38,6 +38,7 @@ use uuid::Uuid;
 // or
 // #[serde(skip_serializing_if = "path")] on all fields (still cumbersome),
 // calling simple function w bool if only want struct name
+// TODO remove roles and just have patient/provider objects
 const ROLES_PREFIX: &str = "roles";
 const APPT_PREFIX: &str = "appointment";
 const AVAIL_PREFIX: &str = "availability";
@@ -83,35 +84,35 @@ impl Blocked {
 /*
  * The following structs track information that is private to the
  * current-acting set of linked devices (e.g. user), whether that user
- * is a client, provider, or both.
+ * is a patient, provider, or both.
  */
 
 // TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Provider {
     appointment_ids: Vec<String>,
-    //clients: Vec<String>,
+    //patients: Vec<String>,
 }
 
 impl Provider {
     fn new(durations: Option<Vec<u32>>) -> Self {
         Provider {
             appointment_ids: Vec::<String>::new(),
-            //clients: Vec::<String>::new(),
+            //patients: Vec::<String>::new(),
         }
     }
 }
 
 // TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Client {
+struct Patient {
     appointment_ids: Vec<String>,
     //providers: Vec<String>,
 }
 
-impl Client {
+impl Patient {
     fn new() -> Self {
-        Client {
+        Patient {
             appointment_ids: Vec::<String>::new(),
             //providers: Vec::<String>::new(),
         }
@@ -122,21 +123,21 @@ impl Client {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Roles {
     provider: Option<Provider>,
-    client: Option<Client>,
+    patient: Option<Patient>,
 }
 
 impl Roles {
     fn new() -> Self {
         Roles {
             provider: None,
-            client: None,
+            patient: None,
         }
     }
 }
 
 /*
  * The AppointmentInfo struct describes each appointment made and is
- * shared between client and provider
+ * shared between patient and provider
  */
 
 // TODO impl Display
@@ -145,9 +146,9 @@ struct AppointmentInfo {
     date: NaiveDate,
     time: NaiveTime,
     duration_min: u32,
-    client_notes: Option<String>,
+    patient_notes: Option<String>,
     pending: bool,
-    // TODO add perm field or resolved writer idkeys if clients make apptmts,
+    // TODO add perm field or resolved writer idkeys if patients make apptmts,
     // although data_store doesn't have access to metadata_store, so this would
     // constitute a larger change in NoiseKV (the two are separate for locking
     // purposes now)
@@ -157,13 +158,13 @@ impl AppointmentInfo {
     fn new(
         date: NaiveDate,
         time: NaiveTime,
-        client_notes: Option<String>,
+        patient_notes: Option<String>,
     ) -> AppointmentInfo {
         AppointmentInfo {
             date,
             time,
             duration_min: DEFAULT_DUR,
-            client_notes,
+            patient_notes,
             pending: true,
         }
     }
@@ -171,7 +172,7 @@ impl AppointmentInfo {
 
 /*
  * The Availability struct info is shared by providers with their
- * clients. It obfuscates all appointment details or blocked slots and
+ * patients. It obfuscates all appointment details or blocked slots and
  * simply shows them all as "busy".
  */
 
@@ -356,8 +357,8 @@ impl CalendarApp {
     */
 
     // Called by provider only; upon contact addition, provider shares
-    // availability object with client
-    pub async fn add_client(
+    // availability object with patient
+    pub async fn add_patient(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -372,11 +373,11 @@ impl CalendarApp {
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
         match context.client.add_contact(idkey.clone()).await {
             Ok(_) => Ok(Some(String::from(format!(
-                "Client with idkey <{}> added",
+                "Patient with idkey <{}> added",
                 idkey
             )))),
             Err(err) => Ok(Some(String::from(format!(
-                "Could not add client: {}",
+                "Could not add patient: {}",
                 err.to_string()
             )))),
         }
@@ -393,10 +394,10 @@ impl CalendarApp {
             )));
         }
 
-        let client = args.get_one::<String>("client_name").unwrap().to_string();
+        let patient = args.get_one::<String>("patient_name").unwrap().to_string();
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let vec = vec![&client];
+        let vec = vec![&patient];
 
         match context
             .client
@@ -404,8 +405,8 @@ impl CalendarApp {
             .await
         {
             Ok(_) => Ok(Some(String::from(format!(
-                "Availability shared with client {}",
-                client
+                "Availability shared with patient {}",
+                patient
             )))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not share availability: {}",
@@ -416,7 +417,7 @@ impl CalendarApp {
 
     /*
     // Called by provider
-    pub async fn add_client(
+    pub async fn add_patient(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -439,28 +440,28 @@ impl CalendarApp {
 
                 match roles.provider {
                     Some(provider) => {
-                        // add client
-                        let client_idkey =
-                            args.get_one::<String>("client_idkey").unwrap().to_string();
+                        // add patient
+                        let patient_idkey =
+                            args.get_one::<String>("patient_idkey").unwrap().to_string();
 
-                        match context.client.add_contact(client_idkey.clone()).await {
+                        match context.client.add_contact(patient_idkey.clone()).await {
                             Ok(_) => Ok(Some(String::from(format!(
-                                "Client with idkey <{}> added",
+                                "Patient with idkey <{}> added",
                                 idkey
                             )))),
                             Err(err) => Ok(Some(String::from(format!(
-                                "Could not add client: {}",
+                                "Could not add patient: {}",
                                 err.to_string()
                             )))),
                         }
                     }
                     None => Ok(Some(String::from(
-                        "Provider role does not exist; cannot add client.",
+                        "Provider role does not exist; cannot add patient.",
                     ))),
                 }
             }
             None => {
-                Ok(Some(String::from("Roles do not exist; cannot add client")))
+                Ok(Some(String::from("Roles do not exist; cannot add patient")))
             }
         }
     }
@@ -605,15 +606,15 @@ impl CalendarApp {
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         let mut init_provider = false;
-        let mut init_client = false;
+        let mut init_patient = false;
         if args.get_flag("provider") {
             init_provider = true;
         }
-        if args.get_flag("client") {
-            init_client = true;
+        if args.get_flag("patient") {
+            init_patient = true;
         }
 
-        if !init_client && !init_provider {
+        if !init_patient && !init_provider {
             return Ok(Some(String::from("No roles to init.")));
         }
 
@@ -664,8 +665,8 @@ impl CalendarApp {
                     }
                 }
 
-                if init_client {
-                    roles.client = Some(Client::new());
+                if init_patient {
+                    roles.patient = Some(Patient::new());
                 }
 
                 let json_string = serde_json::to_string(&roles).unwrap();
@@ -691,7 +692,7 @@ impl CalendarApp {
         }
     }
 
-    // Called by either client or provider
+    // Called by either patient or provider
     pub fn get_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -722,7 +723,7 @@ impl CalendarApp {
 
     /*
     // TODO
-    // Called by client (see all appointments with one provider)
+    // Called by patient (see all appointments with one provider)
     pub fn get_provider_appointments(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -731,8 +732,8 @@ impl CalendarApp {
     }
 
     // TODO
-    // Called by provider (see all appointments with one client)
-    pub fn get_client_appointments(
+    // Called by provider (see all appointments with one patient)
+    pub fn get_patient_appointments(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -741,7 +742,7 @@ impl CalendarApp {
     */
 
     // TODO
-    // Called by client
+    // Called by patient
     pub fn view_provider_availability(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -757,7 +758,7 @@ impl CalendarApp {
         Ok(Some(String::from("TBD")))
     }
 
-    // Called by client
+    // Called by patient
     pub async fn request_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -942,7 +943,7 @@ impl CalendarApp {
         ))))
     }
 
-    // Called by client
+    // Called by patient
     pub async fn edit_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -983,20 +984,20 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
         //.with_command(Command::new("get_contacts"), CalendarApp::get_contacts)
         .with_command_async(
-            Command::new("add_client").arg(Arg::new("idkey").required(true)),
-            |args, context| Box::pin(CalendarApp::add_client(args, context)),
+            Command::new("add_patient").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(CalendarApp::add_patient(args, context)),
         )
         .with_command_async(
             Command::new("share_availability")
-                .arg(Arg::new("client_name").required(true)),
+                .arg(Arg::new("patient_name").required(true)),
             |args, context| {
                 Box::pin(CalendarApp::share_availability(args, context))
             },
         )
         //.with_command_async(
-        //    Command::new("add_client").arg(Arg::new("client_idkey").
+        //    Command::new("add_patient").arg(Arg::new("patient_idkey").
         // required(true).short('i')),    |args, context|
-        // Box::pin(CalendarApp::add_client(args, context)),
+        // Box::pin(CalendarApp::add_patient(args, context)),
         //)
         //.with_command_async(
         //    Command::new("add_provider").arg(Arg::new("provider_idkey").
@@ -1022,7 +1023,7 @@ async fn main() -> ReplResult<()> {
             CalendarApp::get_group,
         )
         .with_command(Command::new("get_roles"), CalendarApp::get_roles)
-        //.with_command(Command::new("get_clients"), CalendarApp::get_clients)
+        //.with_command(Command::new("get_patients"), CalendarApp::get_patients)
         //.with_command(Command::new("get_providers"), CalendarApp::get_providers)
         .with_command_async(
             Command::new("init_role")
@@ -1031,7 +1032,6 @@ async fn main() -> ReplResult<()> {
                         .required(false)
                         .action(ArgAction::SetTrue)
                         .long("provider")
-                        .short('p')
                         .help("Init provider role"),
                 )
                 //.arg(
@@ -1052,12 +1052,11 @@ async fn main() -> ReplResult<()> {
                 //        .help("Set blocked-off times (provider only)"),
                 //)
                 .arg(
-                    Arg::new("client")
+                    Arg::new("patient")
                         .required(false)
                         .action(ArgAction::SetTrue)
-                        .long("client")
-                        .short('c')
-                        .help("Init client role"),
+                        .long("patient")
+                        .help("Init patient role"),
                 ),
             |args, context| Box::pin(CalendarApp::init_role(args, context)),
         )
@@ -1075,13 +1074,13 @@ async fn main() -> ReplResult<()> {
         //    CalendarApp::get_provider_appointments,
         //)
         //.with_command(
-        //    Command::new("get_client_appointments").arg(
-        //        Arg::new("client_id")
+        //    Command::new("get_patient_appointments").arg(
+        //        Arg::new("patient_id")
         //            .required(true)
-        //            .long("client_id")
+        //            .long("patient_id")
         //            .short('c'),
         //    ),
-        //    CalendarApp::get_client_appointments,
+        //    CalendarApp::get_patient_appointments,
         //)
         .with_command(
             Command::new("view_provider_availability").arg(

@@ -172,6 +172,8 @@ impl TxCoordinator {
     fn check_tx_state(&self) -> bool {
         return self.tx_state;
     }
+
+    // TODO should this update go through the server?!
     fn enter_tx(&mut self) -> bool {
         if self.tx_state {
             return false;
@@ -488,6 +490,7 @@ impl NoiseKVClient {
     fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
         let mut recipients = Vec::new();
         for op in msg {
+            // FIXME support more than just UpdateData operation types in transactions
             if let Operation::UpdateData(_, data) = op {
                 let mut group_ids = Vec::<&String>::new();
                 let perm = self
@@ -1411,8 +1414,8 @@ impl NoiseKVClient {
 
     // TODO add facility for setting and sharing data at the same time
 
-    pub fn start_transaction(&mut self) -> Result<(), Error> {
-        let res = self.tx_coordinator.write().enter_tx();
+    pub fn start_transaction(&self) -> Result<(), Error> {
+        let res = *self.tx_coordinator.write().enter_tx();
         if !res {
             return Err(Error::BadTransactionError);
         }
@@ -1421,8 +1424,8 @@ impl NoiseKVClient {
 
     // TODO cancel transaction func?
 
-    pub fn end_transaction(&mut self) {
-        let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
+    pub fn end_transaction(&self) {
+        let (ops, prev_seq_number) = *self.tx_coordinator.write().exit_tx();
         self.initiate_transaction(self.idkey(), ops, prev_seq_number);
     }
 

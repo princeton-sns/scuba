@@ -191,7 +191,7 @@ impl FamilyApp {
         data_store_guard.validator().set_validate_callback_for_type(
             POST_PREFIX.to_string(),
             // validate a 1000 char limit on posts
-            |id, val| {
+            |_, val| {
                 let post: Post = serde_json::from_str(val.data_val()).unwrap();
                 if post.contents.len() > 10 {
                     return false;
@@ -283,7 +283,7 @@ impl FamilyApp {
                                         .set_data(
                                             task_loc_id.clone(),
                                             LOC_PREFIX.to_string(),
-                                            loc_json.clone(),
+                                            loc_json,
                                             None,
                                         )
                                         .await
@@ -717,6 +717,46 @@ impl FamilyApp {
             )));
         }
 
+        let member_id = args.get_one::<String>("member_id").unwrap();
+        // get own location object
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let member_obj = data_store_guard
+            .get_data(&MEMBER_PREFIX.to_string())
+            .unwrap();
+        let member: Member =
+            serde_json::from_str(member_obj.data_val()).unwrap();
+
+        let loc_id = member.location_id;
+        let readers = vec![member_id];
+
+        // share location object
+        match context
+            .client
+            .add_readers(loc_id, readers)
+            .await
+        {
+            Ok(_) => Ok(Some(String::from(
+                "Shared location",
+            ))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not share location: {}",
+                err.to_string()
+            )))),
+        }
+    }
+
+    /*
+    pub async fn share_location_with_fam(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
         let fam_id = args.get_one::<String>("fam_id").unwrap();
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
@@ -791,6 +831,7 @@ impl FamilyApp {
             )))),
         }
     }
+    */
 
     pub fn get_data(
         args: ArgMatches,
@@ -955,7 +996,7 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("share_location")
-                .arg(Arg::new("fam_id").short('f').required(true)),
+                .arg(Arg::new("member_id").short('m').required(true)),
             |args, context| Box::pin(FamilyApp::share_location(args, context)),
         )
         .with_command_async(Command::new("update_location"), |_, context| {

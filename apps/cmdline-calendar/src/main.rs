@@ -28,7 +28,8 @@ use uuid::Uuid;
  * - [ ] providers can also block off times on their end without needing
  *   an appointment to be scheduled, e.g. for lunch breaks
  * - [x] the same device can act as both a client and provider
- * - [ ] clients can have multiple providers
+ * - [x] clients can have multiple providers
+ * - [x] providers can have their own providers
  */
 
 // FIXME impl more helper methods, a lot of repetitive code
@@ -401,7 +402,7 @@ impl CalendarApp {
         let mut avail_id: String = AVAIL_PREFIX.to_owned();
         avail_id.push_str("/");
         // <avail_id> = avail/<provider_id>
-        avail_id.push_str(context.client.linked_name());
+        avail_id.push_str(&context.client.linked_name());
 
         match context
             .client
@@ -652,7 +653,7 @@ impl CalendarApp {
                     let mut avail_id: String = AVAIL_PREFIX.to_owned();
                     avail_id.push_str("/");
                     // <avail_id> = avail/<provider_id>
-                    avail_id.push_str(context.client.linked_name());
+                    avail_id.push_str(&context.client.linked_name());
                     let json_avail = serde_json::to_string(&avail).unwrap();
 
                     let res = context
@@ -897,9 +898,9 @@ impl CalendarApp {
                         let mut avail_id: String = AVAIL_PREFIX.to_owned();
                         avail_id.push_str("/");
                         // <avail_id> = avail/<provider_id>
-                        avail_id.push_str(context.client.linked_name());
+                        avail_id.push_str(&context.client.linked_name());
                         let avail_opt = data_store_guard
-                            .get_data(avail_id);
+                            .get_data(&avail_id);
 
                         match avail_opt {
                             Some(avail_str) => {

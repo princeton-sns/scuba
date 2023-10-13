@@ -45,7 +45,7 @@ struct Family {
     members: Vec<String>,
     // for easy time-based ordering
     posts: BTreeMap<DateTime<Utc>, String>,
-    location_ids: Vec<String>,
+    //location_ids: Vec<String>,
 }
 
 impl Family {
@@ -53,7 +53,7 @@ impl Family {
         Family {
             members,
             posts: BTreeMap::new(),
-            location_ids: Vec::new(),
+            //location_ids: Vec::new(),
         }
     }
 
@@ -65,9 +65,9 @@ impl Family {
         self.posts.insert(post_time, post_id);
     }
 
-    fn add_location(&mut self, loc_id: &String) {
-        self.location_ids.push(loc_id.clone());
-    }
+    //fn add_location(&mut self, loc_id: &String) {
+    //    self.location_ids.push(loc_id.clone());
+    //}
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

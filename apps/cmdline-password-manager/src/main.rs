@@ -37,7 +37,7 @@ const HOTP_PREFIX: &str = "hotp_pass";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PasswordTOTP {
     app_name: String,
-    url: Option<String>,
+    //url: Option<String>,
     username: String,
     password: String,
     otp_secret: String,
@@ -46,14 +46,14 @@ struct PasswordTOTP {
 impl PasswordTOTP {
     fn new(
         app_name: String,
-        url: Option<String>,
+        //url: Option<String>,
         username: String,
         password: String,
         otp_secret: String,
     ) -> Self {
         PasswordTOTP {
             app_name,
-            url,
+            //url,
             username,
             password,
             otp_secret,
@@ -64,7 +64,7 @@ impl PasswordTOTP {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PasswordHOTP {
     app_name: String,
-    url: Option<String>,
+    //url: Option<String>,
     username: String,
     password: String,
     otp_secret: String,
@@ -74,14 +74,14 @@ struct PasswordHOTP {
 impl PasswordHOTP {
     fn new(
         app_name: String,
-        url: Option<String>,
+        //url: Option<String>,
         username: String,
         password: String,
         otp_secret: String,
     ) -> Self {
         PasswordHOTP {
             app_name,
-            url,
+            //url,
             username,
             password,
             otp_secret,
@@ -152,11 +152,12 @@ impl PasswordManager {
         }
 
         let app_name = args.get_one::<String>("app_name").unwrap().to_string();
-        let length = args.get_one::<usize>("length").unwrap();
+        let length_str = args.get_one::<String>("length").unwrap().to_string();
+        let length : usize = length_str.parse().unwrap();
 
         let config = PasswordConfig::new(
             app_name.clone(),
-            *length,
+            length,
             args.get_flag("numbers"),
             args.get_flag("lc"),
             args.get_flag("uc"),
@@ -453,11 +454,11 @@ impl PasswordManager {
         if args.get_flag("totp") {
             totp = true;
         }
-        let url;
-        match args.get_one::<String>("url") {
-            Some(arg_url) => url = Some(arg_url.to_string()),
-            None => url = None,
-        }
+        //let url;
+        //match args.get_one::<String>("url") {
+        //    Some(arg_url) => url = Some(arg_url.to_string()),
+        //    None => url = None,
+        //}
         let username = args.get_one::<String>("username").unwrap().to_string();
         let otp_secret = args.get_one::<String>("secret").unwrap().to_string();
         let password;
@@ -467,7 +468,7 @@ impl PasswordManager {
         }
 
         if hotp {
-            let pass_info = PasswordHOTP::new(app_name, url, username, password, otp_secret);
+            let pass_info = PasswordHOTP::new(app_name, username, password, otp_secret);
             let id = Self::new_prefixed_id(&HOTP_PREFIX.to_string());
             let json_string = serde_json::to_string(&pass_info).unwrap();
             match context
@@ -484,8 +485,8 @@ impl PasswordManager {
                 )))),
             }
         } else {
-            let pass_info = PasswordTOTP::new(app_name, url, username, password, otp_secret);
-            let id = Self::new_prefixed_id(&HOTP_PREFIX.to_string());
+            let pass_info = PasswordTOTP::new(app_name, username, password, otp_secret);
+            let id = Self::new_prefixed_id(&TOTP_PREFIX.to_string());
             let json_string = serde_json::to_string(&pass_info).unwrap();
             match context
                 .client
@@ -755,8 +756,8 @@ async fn main() -> ReplResult<()> {
         .with_command(
             Command::new("get_password")
                 .arg(Arg::new("id").required(true))
-                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
-                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false).long("hotp"))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false).long("totp"))
                 .about("use either hotp or totp depending on the password id")
             ,
             PasswordManager::get_password,
@@ -769,11 +770,11 @@ async fn main() -> ReplResult<()> {
                         .long("app_name")
                         .short('a'),
                 )
-                .arg(Arg::new("length").required(true))
-                .arg(Arg::new("numbers").required(true))
-                .arg(Arg::new("lc").required(true))
-                .arg(Arg::new("uc").required(true))
-                .arg(Arg::new("symbols").required(true)),
+                .arg(Arg::new("length").required(true).long("length"))
+                .arg(Arg::new("numbers").action(ArgAction::SetTrue).required(false).short('n'))
+                .arg(Arg::new("lc").action(ArgAction::SetTrue).required(false).short('l'))
+                .arg(Arg::new("uc").action(ArgAction::SetTrue).required(false).short('u'))
+                .arg(Arg::new("symbols").action(ArgAction::SetTrue).required(false).short('s')),
             |args, context| {
                 Box::pin(PasswordManager::config_app_password(args, context))
             }
@@ -786,10 +787,11 @@ async fn main() -> ReplResult<()> {
                         .long("app_name")
                         .short('a'),
                 )
-                .arg(Arg::new("secret").required(true))
-                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
-                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
-                .arg(Arg::new("url").required(false).long("url").short('u'))
+                .arg(Arg::new("secret").required(true).long("secret").short('s'))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false).long("hotp"))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false).long("totp"))
+                .about("use either hotp or totp depending on the password id")
+                //.arg(Arg::new("url").required(false).long("url").short('u'))
                 .arg(
                     Arg::new("username")
                         .required(true)
@@ -809,8 +811,8 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("get_otp")
                 .arg(Arg::new("id").required(true))
-                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
-                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false).long("hotp"))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false).long("totp"))
                 .about("use either hotp or totp depending on the password id")
             ,
             |args, context| {
@@ -821,8 +823,9 @@ async fn main() -> ReplResult<()> {
             Command::new("update_password")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
                 .arg(Arg::new("app_name").required(true).short('a'))
-                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
-                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false).long("hotp"))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false).long("totp"))
+                .about("use either hotp or totp depending on the password id")
                 .arg(
                     Arg::new("password")
                         .required(false)

@@ -18,9 +18,9 @@ use uuid::Uuid;
  * - [x] safely shares passwords/credentials across multiple users
  * - [ ] linearizability (real-time constraints for password-updates in
  *   groups of multiple users)
- * - [ ] 2FA
- *   - [ ] TOTP
- *   - [ ] HOTP
+ * - 2FA
+ *   - [x] TOTP
+ *   - [x] HOTP
  * - [x] per-application password invariants
  *   - e.g. min characters, allowed special characters, etc
  */

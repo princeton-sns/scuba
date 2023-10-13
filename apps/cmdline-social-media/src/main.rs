@@ -16,14 +16,14 @@ use uuid::Uuid;
  * - [x] each user can belong to one or more families
  * - possible data:
  *   - [x] posts
- *   - [ ] comments
+ *   - [x] comments
  *   - [ ] emoji reactions
  *   - [ ] chat groups
  *   - [x] live location
  *   - [ ] photos
  * - invariants:
  *   - [x] post length
- *   - [ ] comment length
+ *   - [x] comment length
  *   - [ ] reaction type (subset of emojies)
  * - [ ] moderator permissions can be granted to users to help keep
  *   messages appropriate

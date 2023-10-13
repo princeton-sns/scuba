@@ -398,9 +398,14 @@ impl CalendarApp {
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let vec = vec![&client];
 
+        let mut avail_id: String = AVAIL_PREFIX.to_owned();
+        avail_id.push_str("/");
+        // <avail_id> = avail/<provider_id>
+        avail_id.push_str(context.client.linked_name());
+
         match context
             .client
-            .add_do_readers(AVAIL_PREFIX.to_string(), vec)
+            .add_do_readers(avail_id, vec)
             .await
         {
             Ok(_) => Ok(Some(String::from(format!(
@@ -644,13 +649,16 @@ impl CalendarApp {
 
                     // init Availability object
                     let avail = Availability::new();
-                    // TODO give avail a unique id in case of multiple providers
+                    let mut avail_id: String = AVAIL_PREFIX.to_owned();
+                    avail_id.push_str("/");
+                    // <avail_id> = avail/<provider_id>
+                    avail_id.push_str(context.client.linked_name());
                     let json_avail = serde_json::to_string(&avail).unwrap();
 
                     let res = context
                         .client
                         .set_data(
-                            AVAIL_PREFIX.to_string(),
+                            avail_id,
                             AVAIL_PREFIX.to_string(),
                             json_avail,
                             None,
@@ -742,20 +750,20 @@ impl CalendarApp {
 
     // TODO
     // Called by client
-    pub fn view_provider_availability(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
+    //pub fn view_provider_availability(
+    //    args: ArgMatches,
+    //    context: &mut Arc<Self>,
+    //) -> ReplResult<Option<String>> {
+    //    if !context.exists_device() {
+    //        return Ok(Some(String::from(
+    //            "Device does not exist, cannot run command.",
+    //        )));
+    //    }
 
-        let pid = args.get_one::<String>("provider_id").unwrap().to_string();
+    //    let pid = args.get_one::<String>("provider_id").unwrap().to_string();
 
-        Ok(Some(String::from("TBD")))
-    }
+    //    Ok(Some(String::from("TBD")))
+    //}
 
     // Called by client
     pub async fn request_appointment(
@@ -886,8 +894,12 @@ impl CalendarApp {
                     Ok(_) => {
                         // update availability
                         let datetime = NaiveDateTime::new(appt.date, appt.time);
+                        let mut avail_id: String = AVAIL_PREFIX.to_owned();
+                        avail_id.push_str("/");
+                        // <avail_id> = avail/<provider_id>
+                        avail_id.push_str(context.client.linked_name());
                         let avail_opt = data_store_guard
-                            .get_data(&AVAIL_PREFIX.to_string());
+                            .get_data(avail_id);
 
                         match avail_opt {
                             Some(avail_str) => {
@@ -939,21 +951,21 @@ impl CalendarApp {
     }
 
     // Called by client
-    pub async fn edit_appointment(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
+    //pub async fn edit_appointment(
+    //    args: ArgMatches,
+    //    context: &mut Arc<Self>,
+    //) -> ReplResult<Option<String>> {
+    //    if !context.exists_device() {
+    //        return Ok(Some(String::from(
+    //            "Device does not exist, cannot run command.",
+    //        )));
+    //    }
 
-        // TODO modify appointment
-        // TODO does edit delete the previous appointment or not?
+    //    // TODO modify appointment
+    //    // TODO does edit delete the previous appointment or not?
 
-        Ok(Some(String::from("TBD")))
-    }
+    //    Ok(Some(String::from("TBD")))
+    //}
 }
 
 #[tokio::main]
@@ -1079,15 +1091,15 @@ async fn main() -> ReplResult<()> {
         //    ),
         //    CalendarApp::get_client_appointments,
         //)
-        .with_command(
-            Command::new("view_provider_availability").arg(
-                Arg::new("provider_id")
-                    .required(true)
-                    .long("provider_id")
-                    .short('p'),
-            ),
-            CalendarApp::view_provider_availability,
-        )
+        //.with_command(
+        //    Command::new("view_provider_availability").arg(
+        //        Arg::new("provider_id")
+        //            .required(true)
+        //            .long("provider_id")
+        //            .short('p'),
+        //    ),
+        //    CalendarApp::view_provider_availability,
+        //)
         .with_command_async(
             Command::new("request_appointment")
                 .arg(

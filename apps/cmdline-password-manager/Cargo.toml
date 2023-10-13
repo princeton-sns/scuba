@@ -16,3 +16,5 @@ serde_json = "1.0.96"
 serde = { version = "1.0.188", features = ["derive"] }
 passwords = "3.1.16"
 chrono = { version = "0.4.31", features = ["clock", "serde"] }
+sha2 = "0.10.8"
+base64ct = { version = "1.6.0", features = ["alloc"] }

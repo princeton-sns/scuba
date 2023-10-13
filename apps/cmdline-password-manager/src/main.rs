@@ -30,7 +30,6 @@ use uuid::Uuid;
 // or
 // #[serde(skip_serializing_if = "path")] on all fields (still cumbersome),
 // calling simple function w bool if only want struct name
-//const PASS_PREFIX: &str = "pass";
 const CONFIG_PREFIX: &str = "config";
 const TOTP_PREFIX: &str = "totp_pass";
 const HOTP_PREFIX: &str = "hotp_pass";
@@ -79,7 +78,6 @@ impl PasswordHOTP {
         username: String,
         password: String,
         otp_secret: String,
-        otp_counter: u64,
     ) -> Self {
         PasswordHOTP {
             app_name,
@@ -87,7 +85,7 @@ impl PasswordHOTP {
             username,
             password,
             otp_secret,
-            otp_counter,
+            otp_counter: 0,
         }
     }
 }
@@ -143,8 +141,8 @@ impl PasswordManager {
         id
     }
 
-    pub fn config_app_password(
-        _args: ArgMatches,
+    pub async fn config_app_password(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -154,17 +152,20 @@ impl PasswordManager {
         }
 
         let app_name = args.get_one::<String>("app_name").unwrap().to_string();
-        let length = args.get_one::<String>("length").unwrap().to_string();
-        let numbers = args.get_one::<String>("numbers").unwrap().to_string();
-        let lowercase_letters = args.get_one::<String>("lc").unwrap().to_string();
-        let uppercase_letters = args.get_one::<String>("uc").unwrap().to_string();
-        let symbols = args.get_one::<String>("symbols").unwrap().to_string();
+        let length = args.get_one::<usize>("length").unwrap();
 
-        let config = PasswordConfig::new(app_name, length, numbers, lowercase_letters, uppercase_letters, symbols);
+        let config = PasswordConfig::new(
+            app_name.clone(),
+            *length,
+            args.get_flag("numbers"),
+            args.get_flag("lc"),
+            args.get_flag("uc"),
+            args.get_flag("symbols"),
+        );
 
         let mut id: String = CONFIG_PREFIX.to_owned();
         id.push_str("/");
-        id.push_str(app_name);
+        id.push_str(&app_name);
         let json_string = serde_json::to_string(&config).unwrap();
 
         match context
@@ -417,11 +418,11 @@ impl PasswordManager {
         let mut config_id: String = CONFIG_PREFIX.to_owned();
         config_id.push_str("/");
         config_id.push_str(app_name);
-        let device_guard = context.client.device.read();
+        let device_guard = self.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         // breaks if no config previously set
         let config = data_store_guard.get_data(&config_id).unwrap().clone();
-        let mut config_obj: PasswordConfig =
+        let config_obj: PasswordConfig =
             serde_json::from_str(config.data_val()).unwrap();
         // this is horrible for perf
         let pgi = PasswordGenerator::new()
@@ -458,19 +459,20 @@ impl PasswordManager {
             None => url = None,
         }
         let username = args.get_one::<String>("username").unwrap().to_string();
+        let otp_secret = args.get_one::<String>("secret").unwrap().to_string();
         let password;
         match args.get_one::<String>("password") {
             Some(arg_pass) => password = arg_pass.to_string(),
-            None => password = context.gen_password_from_config(app_name);
+            None => password = context.gen_password_from_config(&app_name),
         }
 
         if hotp {
             let pass_info = PasswordHOTP::new(app_name, url, username, password, otp_secret);
-            let mut id = Self::new_prefixed_id(HOTP_PREFIX);
+            let id = Self::new_prefixed_id(&HOTP_PREFIX.to_string());
             let json_string = serde_json::to_string(&pass_info).unwrap();
             match context
                 .client
-                .set_data(id.clone(), PASS_PREFIX.to_string(), json_string, None)
+                .set_data(id.clone(), HOTP_PREFIX.to_string(), json_string, None)
                 .await
             {
                 Ok(_) => {
@@ -483,11 +485,11 @@ impl PasswordManager {
             }
         } else {
             let pass_info = PasswordTOTP::new(app_name, url, username, password, otp_secret);
-            let mut id = Self::new_prefixed_id(HOTP_PREFIX);
+            let id = Self::new_prefixed_id(&HOTP_PREFIX.to_string());
             let json_string = serde_json::to_string(&pass_info).unwrap();
             match context
                 .client
-                .set_data(id.clone(), PASS_PREFIX.to_string(), json_string, None)
+                .set_data(id.clone(), TOTP_PREFIX.to_string(), json_string, None)
                 .await
             {
                 Ok(_) => {
@@ -501,8 +503,9 @@ impl PasswordManager {
         }
     }
 
-    fn hash(first: String, second: String) -> {
+    fn hash(first: String, second: String) -> String {
         use sha2::Digest;
+        use base64ct::Encoding;
 
         let mut hasher = sha2::Sha256::new();
         hasher.update(b"first");
@@ -534,9 +537,9 @@ impl PasswordManager {
         match val_opt {
             Some(val_str) => {
                 if hotp {
-                    let val: PasswordHOTP =
+                    let mut val: PasswordHOTP =
                         serde_json::from_str(val_str.data_val()).unwrap();
-                    let hash_res = hash(val.otp_secret, val.otp_counter);
+                    let hash_res = Self::hash(val.otp_secret.clone(), val.otp_counter.to_string());
                     val.otp_counter += 1;
                     let hotp_json = serde_json::to_string(&val).unwrap();
                     match context
@@ -558,7 +561,7 @@ impl PasswordManager {
                     let val: PasswordTOTP =
                         serde_json::from_str(val_str.data_val()).unwrap();
                     let cur_time = chrono::offset::Utc::now();
-                    let hash_res = hash(val.otp_secret, serde_json::to_string(&cur_time).unwrap());
+                    let hash_res = Self::hash(val.otp_secret, serde_json::to_string(&cur_time).unwrap());
                     Ok(Some(String::from(format!("OTP: {}", hash_res))))
                 }
             }
@@ -598,7 +601,7 @@ impl PasswordManager {
                 let password;
                 match args.get_one::<String>("password") {
                     Some(arg_pass) => password = arg_pass.to_string(),
-                    None => password = context.gen_password_from_config(app_name),
+                    None => password = context.gen_password_from_config(&app_name),
                 }
                 
                 if hotp {
@@ -783,6 +786,7 @@ async fn main() -> ReplResult<()> {
                         .long("app_name")
                         .short('a'),
                 )
+                .arg(Arg::new("secret").required(true))
                 .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
                 .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
                 .arg(Arg::new("url").required(false).long("url").short('u'))
@@ -802,14 +806,16 @@ async fn main() -> ReplResult<()> {
                 Box::pin(PasswordManager::add_password(args, context))
             },
         )
-        .with_command(
+        .with_command_async(
             Command::new("get_otp")
                 .arg(Arg::new("id").required(true))
                 .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
                 .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
                 .about("use either hotp or totp depending on the password id")
             ,
-            PasswordManager::get_otp,
+            |args, context| {
+                Box::pin(PasswordManager::get_otp(args, context))
+            }
         )
         .with_command_async(
             Command::new("update_password")

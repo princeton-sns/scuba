@@ -6,7 +6,7 @@ use reedline_repl_rs::Result as ReplResult;
 use sequential_noise_kv::client::NoiseKVClient;
 use sequential_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -37,6 +37,7 @@ use uuid::Uuid;
 const MEMBER_PREFIX: &str = "member";
 const FAM_PREFIX: &str = "family";
 const POST_PREFIX: &str = "post";
+const COMMENT_PREFIX: &str = "comment";
 const LOC_PREFIX: &str = "location";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,12 +75,39 @@ struct Post {
     family_id: String,
     contents: String,
     creation_time: DateTime<Utc>,
+    comments: BTreeMap<DateTime<Utc>, String>,
 }
 
 impl Post {
     fn new(family_id: &String, contents: &String) -> Self {
         Post {
             family_id: family_id.to_string(),
+            contents: contents.to_string(),
+            creation_time: Utc::now(),
+            comments: BTreeMap::new(),
+        }
+    }
+
+    fn creation_time(&self) -> DateTime<Utc> {
+        self.creation_time
+    }
+
+    fn add_comment(&mut self, comment_time: DateTime<Utc>, comment_id: String) {
+        self.comments.insert(comment_time, comment_id);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Comment {
+    post_id: String,
+    contents: String,
+    creation_time: DateTime<Utc>,
+}
+
+impl Comment {
+    fn new(post_id: &String, contents: &String) -> Self {
+        Comment {
+            post_id: post_id.to_string(),
             contents: contents.to_string(),
             creation_time: Utc::now(),
         }
@@ -188,17 +216,31 @@ impl FamilyApp {
         let device_guard = context.client.device.read();
         let mut data_store_guard =
             device_guard.as_ref().unwrap().data_store.write();
+
+        // register callback that validates char limit for posts
         data_store_guard.validator().set_validate_callback_for_type(
             POST_PREFIX.to_string(),
-            // validate a 1000 char limit on posts
             |_, val| {
                 let post: Post = serde_json::from_str(val.data_val()).unwrap();
-                if post.contents.len() > 10 {
+                if post.contents.len() > 200 {
                     return false;
                 }
                 true
-            },
+            }
         );
+
+        // register callback that validates char limit for comments
+        data_store_guard.validator().set_validate_callback_for_type(
+            COMMENT_PREFIX.to_string(),
+            |_, val| {
+                let comment: Comment = serde_json::from_str(val.data_val()).unwrap();
+                if comment.contents.len() > 100 {
+                    return false;
+                }
+                true
+            }
+        );
+
         core::mem::drop(data_store_guard);
 
         // Each "user" has a single Member object pertaining to themselves
@@ -663,6 +705,119 @@ impl FamilyApp {
         }
     }
 
+    pub async fn comment_on_post(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let post_id = args.get_one::<String>("post_id").unwrap();
+        let contents = args.get_one::<String>("comment").unwrap();
+
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let post_opt = data_store_guard.get_data(&post_id);
+
+        // TODO might be good to put the three operations below in a transaction
+        // (set comment, share comment, update post)
+
+        match post_opt {
+            Some(post_obj) => {
+                // create post
+                let comment_id = Self::new_prefixed_id(&COMMENT_PREFIX.to_string());
+                let comment = Comment::new(post_id, contents);
+                let comment_json = serde_json::to_string(&comment).unwrap();
+
+                match context
+                    .client
+                    .set_data(
+                        comment_id.clone(),
+                        COMMENT_PREFIX.to_owned(),
+                        comment_json,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // share comment
+                        let mut post: Post =
+                            serde_json::from_str(post_obj.data_val()).unwrap();
+                        let fam_id = post.family_id.clone();
+                        let fam_obj = data_store_guard.get_data(&fam_id).unwrap();
+                        let fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
+                        let own_name = context.client.linked_name();
+                        let sharees = fam
+                            .members
+                            .iter()
+                            .filter(|&x| *x != own_name)
+                            .collect::<Vec<&String>>();
+                        core::mem::drop(data_store_guard);
+
+                        // temporary hack b/c cannot set and share data
+                        // at the same time, and sharing expects that
+                        // the
+                        // data already exists, so must wait for
+                        // set_data
+                        // message to return from the server
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        match context
+                            .client
+                            .add_readers(comment_id.clone(), sharees)
+                            .await
+                        {
+                            Ok(_) => {
+                                // add to post
+                                post.add_comment(
+                                    comment.creation_time(),
+                                    comment_id.clone(),
+                                );
+                                let post_json =
+                                    serde_json::to_string(&post).unwrap();
+
+                                match context
+                                    .client
+                                    .set_data(
+                                        post_id.clone(),
+                                        POST_PREFIX.to_owned(),
+                                        post_json,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => Ok(Some(String::from(format!(
+                                        "Comment with id {} added to post with id {}",
+                                        comment_id, post_id
+                                    )))),
+                                    Err(err) => Ok(Some(String::from(format!(
+                                        "Could not store updated post: {}",
+                                        err.to_string()
+                                    )))),
+                                }
+                            }
+                            Err(err) => Ok(Some(String::from(format!(
+                                "Could not share comment: {}",
+                                err.to_string()
+                            )))),
+                        }
+                    }
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Could not store comment: {}",
+                        err.to_string()
+                    )))),
+                }
+            }
+            None => Ok(Some(String::from(format!(
+                "Post with id {} does not exist.",
+                post_id,
+            )))),
+        }
+    }
+
     pub async fn update_location(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -993,6 +1148,12 @@ async fn main() -> ReplResult<()> {
                 .arg(Arg::new("fam_id").short('f').required(true))
                 .arg(Arg::new("post").short('p').required(true)),
             |args, context| Box::pin(FamilyApp::post_to_family(args, context)),
+        )
+        .with_command_async(
+            Command::new("comment_on_post")
+                .arg(Arg::new("post_id").short('p').required(true))
+                .arg(Arg::new("comment").short('c').required(true)),
+            |args, context| Box::pin(FamilyApp::comment_on_post(args, context)),
         )
         .with_command_async(
             Command::new("share_location")

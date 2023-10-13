@@ -10,17 +10,18 @@ use uuid::Uuid;
 
 /*
  * Password Manager
- * - [x] automatically generates strong passwords
- * - [ ] TODO external app interaction
- *   - for now: copy/paste passwords
+ * - [x] automatically generates passwords
  * - [ ] login/logout functionality
+ * - [x] copy/paste passwords
  * - [x] stores encrypted passwords for any account across devices
  * - [x] allows users to easily access stored passwords
  * - [x] safely shares passwords/credentials across multiple users
  * - [ ] linearizability (real-time constraints for password-updates in
  *   groups of multiple users)
  * - [ ] 2FA
- * - [ ] per-application password invariants
+ *   - [ ] TOTP
+ *   - [ ] HOTP
+ * - [x] per-application password invariants
  *   - e.g. min characters, allowed special characters, etc
  */
 
@@ -29,28 +30,94 @@ use uuid::Uuid;
 // or
 // #[serde(skip_serializing_if = "path")] on all fields (still cumbersome),
 // calling simple function w bool if only want struct name
-const PASS_PREFIX: &str = "pass";
+//const PASS_PREFIX: &str = "pass";
+const CONFIG_PREFIX: &str = "config";
+const TOTP_PREFIX: &str = "totp_pass";
+const HOTP_PREFIX: &str = "hotp_pass";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PasswordInfo {
+struct PasswordTOTP {
     app_name: String,
     url: Option<String>,
     username: String,
     password: String,
+    otp_secret: String,
 }
 
-impl PasswordInfo {
+impl PasswordTOTP {
     fn new(
         app_name: String,
         url: Option<String>,
         username: String,
         password: String,
-    ) -> PasswordInfo {
-        PasswordInfo {
+        otp_secret: String,
+    ) -> Self {
+        PasswordTOTP {
             app_name,
             url,
             username,
             password,
+            otp_secret,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PasswordHOTP {
+    app_name: String,
+    url: Option<String>,
+    username: String,
+    password: String,
+    otp_secret: String,
+    otp_counter: u64,
+}
+
+impl PasswordHOTP {
+    fn new(
+        app_name: String,
+        url: Option<String>,
+        username: String,
+        password: String,
+        otp_secret: String,
+        otp_counter: u64,
+    ) -> Self {
+        PasswordHOTP {
+            app_name,
+            url,
+            username,
+            password,
+            otp_secret,
+            otp_counter,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PasswordConfig {
+    app_name: String,
+    length: usize,
+    numbers: bool,
+    lowercase_letters: bool,
+    uppercase_letters: bool,
+    symbols: bool,
+}
+
+impl PasswordConfig {
+    fn new(
+        app_name: String,
+        length: usize,
+        numbers: bool,
+        lowercase_letters: bool,
+        uppercase_letters: bool,
+        symbols: bool,
+    ) -> Self {
+        PasswordConfig {
+            app_name,
+            length,
+            numbers,
+            lowercase_letters,
+            uppercase_letters,
+            symbols,
         }
     }
 }
@@ -60,25 +127,59 @@ struct PasswordManager {
     client: NoiseKVClient,
     // iterator would be more efficient but compiler isn't finding this struct
     //pgi: passwords::PasswordGeneratorIter,
-    pgi: PasswordGenerator,
+    //pgi: PasswordGenerator,
 }
 
 impl PasswordManager {
     pub async fn new() -> PasswordManager {
         let client = NoiseKVClient::new(None, None, false, None, None).await;
-        // TODO allow configuration
-        let pgi = PasswordGenerator::new()
-            .length(8)
-            .numbers(true)
-            .lowercase_letters(true)
-            .uppercase_letters(true)
-            .symbols(true)
-            .spaces(true)
-            .exclude_similar_characters(true)
-            .strict(true);
-        //.try_iter()
-        //.unwrap();
-        Self { client, pgi }
+        Self { client }
+    }
+
+    fn new_prefixed_id(prefix: &String) -> String {
+        let mut id: String = prefix.to_owned();
+        id.push_str("/");
+        id.push_str(&Uuid::new_v4().to_string());
+        id
+    }
+
+    pub fn config_app_password(
+        _args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let app_name = args.get_one::<String>("app_name").unwrap().to_string();
+        let length = args.get_one::<String>("length").unwrap().to_string();
+        let numbers = args.get_one::<String>("numbers").unwrap().to_string();
+        let lowercase_letters = args.get_one::<String>("lc").unwrap().to_string();
+        let uppercase_letters = args.get_one::<String>("uc").unwrap().to_string();
+        let symbols = args.get_one::<String>("symbols").unwrap().to_string();
+
+        let config = PasswordConfig::new(app_name, length, numbers, lowercase_letters, uppercase_letters, symbols);
+
+        let mut id: String = CONFIG_PREFIX.to_owned();
+        id.push_str("/");
+        id.push_str(app_name);
+        let json_string = serde_json::to_string(&config).unwrap();
+
+        match context
+            .client
+            .set_data(id.clone(), CONFIG_PREFIX.to_string(), json_string, None)
+            .await
+        {
+            Ok(_) => {
+                Ok(Some(String::from(format!("Added config with id {}", id))))
+            }
+            Err(err) => Ok(Some(String::from(format!(
+                "Error adding config: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     // FIXME this should go into the noise-kv library and top-level functions
@@ -281,21 +382,55 @@ impl PasswordManager {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
+        let mut hotp = false;
+        let mut totp = false;
+        if args.get_flag("hotp") {
+            hotp = true;
+        }
+        if args.get_flag("totp") {
+            totp = true;
+        }
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let val_opt = data_store_guard.get_data(&id);
 
         match val_opt {
             Some(val_str) => {
-                let val: PasswordInfo =
-                    serde_json::from_str(val_str.data_val()).unwrap();
-                Ok(Some(String::from(format!("{}", val.password))))
+                if hotp {
+                    let val: PasswordHOTP =
+                        serde_json::from_str(val_str.data_val()).unwrap();
+                    Ok(Some(String::from(format!("{}", val.password))))
+                } else {
+                    let val: PasswordTOTP =
+                        serde_json::from_str(val_str.data_val()).unwrap();
+                    Ok(Some(String::from(format!("{}", val.password))))
+                }
             }
             None => Ok(Some(String::from(format!(
                 "Password with id {} does not exist.",
                 id,
             )))),
         }
+    }
+
+    fn gen_password_from_config(&self, app_name: &String) -> String {
+        let mut config_id: String = CONFIG_PREFIX.to_owned();
+        config_id.push_str("/");
+        config_id.push_str(app_name);
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        // breaks if no config previously set
+        let config = data_store_guard.get_data(&config_id).unwrap().clone();
+        let mut config_obj: PasswordConfig =
+            serde_json::from_str(config.data_val()).unwrap();
+        // this is horrible for perf
+        let pgi = PasswordGenerator::new()
+            .length(config_obj.length)
+            .numbers(config_obj.numbers)
+            .lowercase_letters(config_obj.lowercase_letters)
+            .uppercase_letters(config_obj.uppercase_letters)
+            .symbols(config_obj.symbols);
+        pgi.try_iter().unwrap().next().unwrap()
     }
 
     pub async fn add_password(
@@ -309,6 +444,14 @@ impl PasswordManager {
         }
 
         let app_name = args.get_one::<String>("app_name").unwrap().to_string();
+        let mut hotp = false;
+        let mut totp = false;
+        if args.get_flag("hotp") {
+            hotp = true;
+        }
+        if args.get_flag("totp") {
+            totp = true;
+        }
         let url;
         match args.get_one::<String>("url") {
             Some(arg_url) => url = Some(arg_url.to_string()),
@@ -318,30 +461,110 @@ impl PasswordManager {
         let password;
         match args.get_one::<String>("password") {
             Some(arg_pass) => password = arg_pass.to_string(),
-            None => {
-                // is this horrible for perf?
-                password = context.pgi.try_iter().unwrap().next().unwrap();
-            }
+            None => password = context.gen_password_from_config(app_name);
         }
 
-        let pass_info = PasswordInfo::new(app_name, url, username, password);
-
-        let mut id = PASS_PREFIX.to_owned();
-        id.push_str("/");
-        id.push_str(&Uuid::new_v4().to_string());
-        let json_string = serde_json::to_string(&pass_info).unwrap();
-
-        match context
-            .client
-            .set_data(id.clone(), PASS_PREFIX.to_string(), json_string, None)
-            .await
-        {
-            Ok(_) => {
-                Ok(Some(String::from(format!("Added password with id {}", id))))
+        if hotp {
+            let pass_info = PasswordHOTP::new(app_name, url, username, password, otp_secret);
+            let mut id = Self::new_prefixed_id(HOTP_PREFIX);
+            let json_string = serde_json::to_string(&pass_info).unwrap();
+            match context
+                .client
+                .set_data(id.clone(), PASS_PREFIX.to_string(), json_string, None)
+                .await
+            {
+                Ok(_) => {
+                    Ok(Some(String::from(format!("Added password with id {}", id))))
+                }
+                Err(err) => Ok(Some(String::from(format!(
+                    "Error adding password: {}",
+                    err.to_string()
+                )))),
             }
-            Err(err) => Ok(Some(String::from(format!(
-                "Error adding password: {}",
-                err.to_string()
+        } else {
+            let pass_info = PasswordTOTP::new(app_name, url, username, password, otp_secret);
+            let mut id = Self::new_prefixed_id(HOTP_PREFIX);
+            let json_string = serde_json::to_string(&pass_info).unwrap();
+            match context
+                .client
+                .set_data(id.clone(), PASS_PREFIX.to_string(), json_string, None)
+                .await
+            {
+                Ok(_) => {
+                    Ok(Some(String::from(format!("Added password with id {}", id))))
+                }
+                Err(err) => Ok(Some(String::from(format!(
+                    "Error adding password: {}",
+                    err.to_string()
+                )))),
+            }
+        }
+    }
+
+    fn hash(first: String, second: String) -> {
+        use sha2::Digest;
+
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(b"first");
+        hasher.update(first);
+        hasher.update(b"second");
+        hasher.update(second);
+
+        let hash = hasher.finalize();
+        base64ct::Base64::encode_string(&hash)
+    }
+
+    pub async fn get_otp(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        let id = args.get_one::<String>("id").unwrap().to_string();
+        let mut hotp = false;
+        let mut totp = false;
+        if args.get_flag("hotp") {
+            hotp = true;
+        }
+        if args.get_flag("totp") {
+            totp = true;
+        }
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let val_opt = data_store_guard.get_data(&id);
+
+        match val_opt {
+            Some(val_str) => {
+                if hotp {
+                    let val: PasswordHOTP =
+                        serde_json::from_str(val_str.data_val()).unwrap();
+                    let hash_res = hash(val.otp_secret, val.otp_counter);
+                    val.otp_counter += 1;
+                    let hotp_json = serde_json::to_string(&val).unwrap();
+                    match context
+                        .client
+                        .set_data(
+                            id.clone(),
+                            HOTP_PREFIX.to_string(),
+                            hotp_json,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => Ok(Some(String::from(format!("OTP: {}", hash_res)))),
+                        Err(err) => Ok(Some(String::from(format!(
+                            "Could not update counter for HOTP: {}", err.to_string()
+                        )))),
+                    }
+                } else {
+                    let val: PasswordTOTP =
+                        serde_json::from_str(val_str.data_val()).unwrap();
+                    let cur_time = chrono::offset::Utc::now();
+                    let hash_res = hash(val.otp_secret, serde_json::to_string(&cur_time).unwrap());
+                    Ok(Some(String::from(format!("OTP: {}", hash_res))))
+                }
+            }
+            None => Ok(Some(String::from(format!(
+                "Password with id {} does not exist.",
+                id,
             )))),
         }
     }
@@ -357,6 +580,15 @@ impl PasswordManager {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
+        let mut hotp = false;
+        let mut totp = false;
+        if args.get_flag("hotp") {
+            hotp = true;
+        }
+        if args.get_flag("totp") {
+            totp = true;
+        }
+        let app_name = args.get_one::<String>("app_name").unwrap().to_string();
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let val_opt = data_store_guard.get_data(&id);
@@ -366,36 +598,59 @@ impl PasswordManager {
                 let password;
                 match args.get_one::<String>("password") {
                     Some(arg_pass) => password = arg_pass.to_string(),
-                    None => {
-                        // is this horrible for perf?
-                        password =
-                            context.pgi.try_iter().unwrap().next().unwrap();
-                    }
+                    None => password = context.gen_password_from_config(app_name),
                 }
+                
+                if hotp {
+                    let mut old_val: PasswordHOTP =
+                        serde_json::from_str(val_str.data_val()).unwrap();
+                    old_val.password = password;
+                    let json_string = serde_json::to_string(&old_val).unwrap();
 
-                let mut old_val: PasswordInfo =
-                    serde_json::from_str(val_str.data_val()).unwrap();
-                old_val.password = password;
-                let json_string = serde_json::to_string(&old_val).unwrap();
+                    match context
+                        .client
+                        .set_data(
+                            id.clone(),
+                            HOTP_PREFIX.to_string(),
+                            json_string,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => Ok(Some(String::from(format!(
+                            "Updated password with id {}",
+                            id
+                        )))),
+                        Err(err) => Ok(Some(String::from(format!(
+                            "Error adding password: {}",
+                            err.to_string()
+                        )))),
+                    }
+                } else {
+                    let mut old_val: PasswordTOTP =
+                        serde_json::from_str(val_str.data_val()).unwrap();
+                    old_val.password = password;
+                    let json_string = serde_json::to_string(&old_val).unwrap();
 
-                match context
-                    .client
-                    .set_data(
-                        id.clone(),
-                        PASS_PREFIX.to_string(),
-                        json_string,
-                        None,
-                    )
-                    .await
-                {
-                    Ok(_) => Ok(Some(String::from(format!(
-                        "Updated password with id {}",
-                        id
-                    )))),
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error adding password: {}",
-                        err.to_string()
-                    )))),
+                    match context
+                        .client
+                        .set_data(
+                            id.clone(),
+                            TOTP_PREFIX.to_string(),
+                            json_string,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => Ok(Some(String::from(format!(
+                            "Updated password with id {}",
+                            id
+                        )))),
+                        Err(err) => Ok(Some(String::from(format!(
+                            "Error adding password: {}",
+                            err.to_string()
+                        )))),
+                    }
                 }
             }
             None => Ok(Some(String::from(format!(
@@ -495,8 +750,30 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_perms"), PasswordManager::get_perms)
         .with_command(Command::new("get_groups"), PasswordManager::get_groups)
         .with_command(
-            Command::new("get_password").arg(Arg::new("id").required(true)),
+            Command::new("get_password")
+                .arg(Arg::new("id").required(true))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
+                .about("use either hotp or totp depending on the password id")
+            ,
             PasswordManager::get_password,
+        )
+        .with_command_async(
+            Command::new("config_app_password")
+                .arg(
+                    Arg::new("app_name")
+                        .required(true)
+                        .long("app_name")
+                        .short('a'),
+                )
+                .arg(Arg::new("length").required(true))
+                .arg(Arg::new("numbers").required(true))
+                .arg(Arg::new("lc").required(true))
+                .arg(Arg::new("uc").required(true))
+                .arg(Arg::new("symbols").required(true)),
+            |args, context| {
+                Box::pin(PasswordManager::config_app_password(args, context))
+            }
         )
         .with_command_async(
             Command::new("add_password")
@@ -506,6 +783,8 @@ async fn main() -> ReplResult<()> {
                         .long("app_name")
                         .short('a'),
                 )
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
                 .arg(Arg::new("url").required(false).long("url").short('u'))
                 .arg(
                     Arg::new("username")
@@ -523,9 +802,21 @@ async fn main() -> ReplResult<()> {
                 Box::pin(PasswordManager::add_password(args, context))
             },
         )
+        .with_command(
+            Command::new("get_otp")
+                .arg(Arg::new("id").required(true))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
+                .about("use either hotp or totp depending on the password id")
+            ,
+            PasswordManager::get_otp,
+        )
         .with_command_async(
             Command::new("update_password")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
+                .arg(Arg::new("app_name").required(true).short('a'))
+                .arg(Arg::new("hotp").action(ArgAction::SetTrue).required(false))
+                .arg(Arg::new("totp").action(ArgAction::SetTrue).required(false))
                 .arg(
                     Arg::new("password")
                         .required(false)

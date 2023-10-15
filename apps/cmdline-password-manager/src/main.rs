@@ -323,7 +323,7 @@ impl PasswordManager {
     }
 
     pub fn get_data(
-        _args: ArgMatches,
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -334,9 +334,18 @@ impl PasswordManager {
 
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let data = data_store_guard.get_all_data().values();
-
-        Ok(Some(itertools::join(data, "\n")))
+        if let Some(id) = args.get_one::<String>("id") {
+            match data_store_guard.get_data(id) {
+                Some(data) => Ok(Some(String::from(format!("{}", data)))),
+                None => Ok(Some(String::from(format!(
+                    "Data with id {} does not exist",
+                    id
+                )))),
+            }
+        } else {
+            let data = data_store_guard.get_all_data().values();
+            Ok(Some(itertools::join(data, "\n")))
+        }
     }
 
     pub fn get_perms(
@@ -356,6 +365,30 @@ impl PasswordManager {
         Ok(Some(itertools::join(perms, "\n")))
     }
 
+    pub fn get_perm(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let id = args.get_one::<String>("id").unwrap();
+        let device_guard = context.client.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let perm_opt = meta_store_guard.get_perm(&id);
+
+        match perm_opt {
+            Some(perm) => Ok(Some(String::from(format!("{}", perm)))),
+            None => Ok(Some(String::from(format!(
+                "Perm with id {} does not exist",
+                id
+            )))),
+        }
+    }
+
     pub fn get_groups(
         _args: ArgMatches,
         context: &mut Arc<Self>,
@@ -371,6 +404,30 @@ impl PasswordManager {
         let groups = meta_store_guard.get_all_groups().values();
 
         Ok(Some(itertools::join(groups, "\n")))
+    }
+
+    pub fn get_group(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let id = args.get_one::<String>("id").unwrap();
+        let device_guard = context.client.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let group_opt = meta_store_guard.get_group(&id);
+
+        match group_opt {
+            Some(group) => Ok(Some(String::from(format!("{}", group)))),
+            None => Ok(Some(String::from(format!(
+                "Group with id {} does not exist",
+                id
+            )))),
+        }
     }
 
     pub fn get_password(
@@ -750,9 +807,20 @@ async fn main() -> ReplResult<()> {
             Command::new("get_linked_devices"),
             PasswordManager::get_linked_devices,
         )
-        .with_command(Command::new("get_data"), PasswordManager::get_data)
+        .with_command(
+            Command::new("get_data").arg(Arg::new("id").required(false)),
+            CalendarApp::get_data,
+        )
         .with_command(Command::new("get_perms"), PasswordManager::get_perms)
+        .with_command(
+            Command::new("get_perm").arg(Arg::new("id").required(true)),
+            CalendarApp::get_perm,
+        )
         .with_command(Command::new("get_groups"), PasswordManager::get_groups)
+        .with_command(
+            Command::new("get_group").arg(Arg::new("id").required(true)),
+            CalendarApp::get_group,
+        )
         .with_command(
             Command::new("get_password")
                 .arg(Arg::new("id").required(true))

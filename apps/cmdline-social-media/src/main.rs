@@ -226,19 +226,20 @@ impl FamilyApp {
                     return false;
                 }
                 true
-            }
+            },
         );
 
         // register callback that validates char limit for comments
         data_store_guard.validator().set_validate_callback_for_type(
             COMMENT_PREFIX.to_string(),
             |_, val| {
-                let comment: Comment = serde_json::from_str(val.data_val()).unwrap();
+                let comment: Comment =
+                    serde_json::from_str(val.data_val()).unwrap();
                 if comment.contents.len() > 100 {
                     return false;
                 }
                 true
-            }
+            },
         );
 
         core::mem::drop(data_store_guard);
@@ -728,7 +729,8 @@ impl FamilyApp {
         match post_opt {
             Some(post_obj) => {
                 // create post
-                let comment_id = Self::new_prefixed_id(&COMMENT_PREFIX.to_string());
+                let comment_id =
+                    Self::new_prefixed_id(&COMMENT_PREFIX.to_string());
                 let comment = Comment::new(post_id, contents);
                 let comment_json = serde_json::to_string(&comment).unwrap();
 
@@ -747,8 +749,10 @@ impl FamilyApp {
                         let mut post: Post =
                             serde_json::from_str(post_obj.data_val()).unwrap();
                         let fam_id = post.family_id.clone();
-                        let fam_obj = data_store_guard.get_data(&fam_id).unwrap();
-                        let fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
+                        let fam_obj =
+                            data_store_guard.get_data(&fam_id).unwrap();
+                        let fam: Family =
+                            serde_json::from_str(fam_obj.data_val()).unwrap();
                         let own_name = context.client.linked_name();
                         let sharees = fam
                             .members
@@ -886,14 +890,8 @@ impl FamilyApp {
         let readers = vec![member_id];
 
         // share location object
-        match context
-            .client
-            .add_readers(loc_id, readers)
-            .await
-        {
-            Ok(_) => Ok(Some(String::from(
-                "Shared location",
-            ))),
+        match context.client.add_readers(loc_id, readers).await {
+            Ok(_) => Ok(Some(String::from("Shared location"))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not share location: {}",
                 err.to_string()

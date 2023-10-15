@@ -404,11 +404,7 @@ impl CalendarApp {
         // <avail_id> = avail/<provider_id>
         avail_id.push_str(&context.client.linked_name());
 
-        match context
-            .client
-            .add_do_readers(avail_id, vec)
-            .await
-        {
+        match context.client.add_do_readers(avail_id, vec).await {
             Ok(_) => Ok(Some(String::from(format!(
                 "Availability shared with client {}",
                 client
@@ -899,8 +895,7 @@ impl CalendarApp {
                         avail_id.push_str("/");
                         // <avail_id> = avail/<provider_id>
                         avail_id.push_str(&context.client.linked_name());
-                        let avail_opt = data_store_guard
-                            .get_data(&avail_id);
+                        let avail_opt = data_store_guard.get_data(&avail_id);
 
                         match avail_opt {
                             Some(avail_str) => {

@@ -809,17 +809,17 @@ async fn main() -> ReplResult<()> {
         )
         .with_command(
             Command::new("get_data").arg(Arg::new("id").required(false)),
-            CalendarApp::get_data,
+            PasswordManager::get_data,
         )
         .with_command(Command::new("get_perms"), PasswordManager::get_perms)
         .with_command(
             Command::new("get_perm").arg(Arg::new("id").required(true)),
-            CalendarApp::get_perm,
+            PasswordManager::get_perm,
         )
         .with_command(Command::new("get_groups"), PasswordManager::get_groups)
         .with_command(
             Command::new("get_group").arg(Arg::new("id").required(true)),
-            CalendarApp::get_group,
+            PasswordManager::get_group,
         )
         .with_command(
             Command::new("get_password")

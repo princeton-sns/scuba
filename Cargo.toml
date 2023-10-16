@@ -10,4 +10,5 @@ members = [
     "apps/cmdline-social-media",
     "apps/cmdline-password-manager",
     "apps/cmdline-calendar",
+    "apps/cmdline-auctioning",
 ]

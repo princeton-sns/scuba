@@ -1,3 +1,5 @@
+use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::offset::Utc;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
@@ -34,6 +36,10 @@ const BID_PREFIX: &str = "bid";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Auction {
     item_description: String,
+    start_date: NaiveDate,
+    start_time: NaiveTime,
+    end_date: NaiveDate,
+    end_time: NaiveTime,
     highest_bid: u64,
     highest_bidder: String,
 }
@@ -41,11 +47,21 @@ struct Auction {
 impl Auction {
     fn new(
         item_description: String,
+        start_date: NaiveDate,
+        start_time: NaiveTime,
+        end_date: NaiveDate,
+        end_time: NaiveTime,
         highest_bid: u64,
         highest_bidder: String,
     ) -> Self {
         Auction {
             item_description,
+            start_date,
+            start_time,
+            end_date,
+            end_time,
+            //start_date_time: NaiveDateTime::new(start_date, start_time),
+            //end_date_time: NaiveDateTime::new(end_date, end_time),
             highest_bid,
             highest_bidder,
         }
@@ -62,6 +78,26 @@ impl Auction {
 
     // returns true if updated, false otherwise
     fn submit_bid(&mut self, bid: &Bid) -> bool {
+        let cur_datetime = Utc::now();
+        let cur_date = cur_datetime.date_naive();
+        let cur_time = cur_datetime.time();
+
+        // check after start time
+        if cur_date.cmp(&self.start_date) == Ordering::Less {
+            return false;
+        }
+        if cur_time.cmp(&self.start_time) == Ordering::Less {
+            return false;
+        }
+
+        // check before end time
+        if cur_date.cmp(&self.end_date) == Ordering::Greater {
+            return false;
+        }
+        if cur_time.cmp(&self.end_time) == Ordering::Greater {
+            return false;
+        }
+
         if bid.bid > self.highest_bid {
             self.update_highest_bid(bid.bid, bid.bidder.clone());
             return true;
@@ -355,11 +391,39 @@ impl AuctioningApp {
             .get_one::<String>("item_description")
             .unwrap()
             .to_string();
+
         let starting_bid_str =
             args.get_one::<String>("starting_bid").unwrap().to_string();
         let starting_bid: u64 = starting_bid_str.parse().unwrap();
+
+        let start_date = NaiveDate::parse_from_str(
+            args.get_one::<String>("start_date").unwrap(),
+            "%Y-%m-%d",
+        )
+        .unwrap();
+        let start_time = NaiveTime::parse_from_str(
+            args.get_one::<String>("start_time").unwrap(),
+            "%H:%M:%S",
+        )
+        .unwrap();
+
+        let end_date = NaiveDate::parse_from_str(
+            args.get_one::<String>("end_date").unwrap(),
+            "%Y-%m-%d",
+        )
+        .unwrap();
+        let end_time = NaiveTime::parse_from_str(
+            args.get_one::<String>("end_time").unwrap(),
+            "%H:%M:%S",
+        )
+        .unwrap();
+
         let auction = Auction::new(
             item_descr,
+            start_date,
+            start_time,
+            end_date,
+            end_time,
             starting_bid,
             context.client.linked_name(),
         );
@@ -508,6 +572,34 @@ async fn main() -> ReplResult<()> {
                         .required(true)
                         .long("starting_bid")
                         .short('b'),
+                )
+                .arg(
+                    Arg::new("start_date")
+                        .required(true)
+                        .long("start_date")
+                        //.short('d')
+                        .help("Format: YYYY-MM-DD"),
+                )
+                .arg(
+                    Arg::new("start_time")
+                        .required(true)
+                        .long("start_time")
+                        //.short('t')
+                        .help("Format: HH:MM:SS"),
+                )
+                .arg(
+                    Arg::new("end_date")
+                        .required(true)
+                        .long("end_date")
+                        //.short('d')
+                        .help("Format: YYYY-MM-DD"),
+                )
+                .arg(
+                    Arg::new("end_time")
+                        .required(true)
+                        .long("end_time")
+                        //.short('t')
+                        .help("Format: HH:MM:SS"),
                 ),
             |args, context| {
                 Box::pin(AuctioningApp::create_auction(args, context))

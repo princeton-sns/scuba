@@ -33,6 +33,7 @@ use uuid::Uuid;
 // calling simple function w bool if only want struct name
 const AUCTION_PREFIX: &str = "auction";
 const BID_PREFIX: &str = "bid";
+const OPEN_CLIENTS_PREFIX: &str = "open_clients";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Auction {
@@ -153,6 +154,24 @@ impl Bid {
             bid,
             bidder,
         }
+    }
+}
+
+// takes place of contacts list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenAuctionClients {
+    client_ids: Vec<String>,
+}
+
+impl OpenAuctionClients {
+    fn new() -> Self {
+        OpenAuctionClients {
+            client_ids: Vec::new(),
+        }
+    }
+
+    fn add_client(&mut self, client_id: &String) {
+        self.client_ids.push(client_id.clone());
     }
 }
 
@@ -407,6 +426,115 @@ impl AuctioningApp {
             "Successfully shared datum {}",
             id
         ))))
+    }
+
+    // called by auctioneer for announcing open auctions
+    pub async fn add_to_open_auction_list(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let client_id =
+            args.get_one::<String>("client_id").unwrap().to_string();
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let open_clients_opt =
+            data_store_guard.get_data(&OPEN_CLIENTS_PREFIX.to_string());
+        if open_clients_opt.is_none() {
+            let mut open_clients = OpenAuctionClients::new();
+            open_clients.add_client(&client_id);
+            let open_clients_json =
+                serde_json::to_string(&open_clients).unwrap();
+
+            match context
+                .client
+                .set_data(
+                    OPEN_CLIENTS_PREFIX.to_string(),
+                    OPEN_CLIENTS_PREFIX.to_string(),
+                    open_clients_json,
+                    None,
+                )
+                .await
+            {
+                Ok(_) => Ok(Some(String::from(
+                    "Created and added client to open auction list",
+                ))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not store open auction list: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let mut open_clients: OpenAuctionClients =
+                serde_json::from_str(&open_clients_opt.unwrap().data_val())
+                    .unwrap();
+            open_clients.add_client(&client_id);
+            let open_clients_json =
+                serde_json::to_string(&open_clients).unwrap();
+
+            match context
+                .client
+                .set_data(
+                    OPEN_CLIENTS_PREFIX.to_string(),
+                    OPEN_CLIENTS_PREFIX.to_string(),
+                    open_clients_json,
+                    None,
+                )
+                .await
+            {
+                Ok(_) => {
+                    Ok(Some(String::from("Added client to open auction list")))
+                }
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not store open auction list: {}",
+                    err.to_string()
+                )))),
+            }
+        }
+    }
+
+    // called by auctioneer for announcing open auctions
+    pub async fn announce_open_auction(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let auction_id =
+            args.get_one::<String>("auction_id").unwrap().to_string();
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let open_clients_opt =
+            data_store_guard.get_data(&OPEN_CLIENTS_PREFIX.to_string());
+        if open_clients_opt.is_none() {
+            return Ok(Some(String::from(
+                "Open clients list does not exist: add clients for open auction announcements."
+            )));
+        }
+        let open_clients: OpenAuctionClients =
+            serde_json::from_str(&open_clients_opt.unwrap().data_val())
+                .unwrap();
+        let clients = open_clients.client_ids.iter().collect::<Vec<&String>>();
+        match context
+            .client
+            .add_readers(auction_id.clone(), clients)
+            .await
+        {
+            Ok(_) => Ok(Some(String::from("Open auction announced."))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error announcing open auction: {}",
+                err.to_string()
+            )))),
+        }
     }
 
     // called by auctioneer
@@ -678,28 +806,24 @@ async fn main() -> ReplResult<()> {
                     Arg::new("start_date")
                         .required(true)
                         .long("start_date")
-                        //.short('d')
                         .help("Format: YYYY-MM-DD"),
                 )
                 .arg(
                     Arg::new("start_time")
                         .required(true)
                         .long("start_time")
-                        //.short('t')
                         .help("Format: HH:MM:SS"),
                 )
                 .arg(
                     Arg::new("end_date")
                         .required(true)
                         .long("end_date")
-                        //.short('d')
                         .help("Format: YYYY-MM-DD"),
                 )
                 .arg(
                     Arg::new("end_time")
                         .required(true)
                         .long("end_time")
-                        //.short('t')
                         .help("Format: HH:MM:SS"),
                 ),
             |args, context| {
@@ -732,6 +856,28 @@ async fn main() -> ReplResult<()> {
             ),
             |args, context| {
                 Box::pin(AuctioningApp::announce_sale(args, context))
+            },
+        )
+        .with_command_async(
+            Command::new("add_to_open_auction_list").arg(
+                Arg::new("client_id")
+                    .required(true)
+                    .long("client_id")
+                    .short('i'),
+            ),
+            |args, context| {
+                Box::pin(AuctioningApp::add_to_open_auction_list(args, context))
+            },
+        )
+        .with_command_async(
+            Command::new("announce_open_auction").arg(
+                Arg::new("auction_id")
+                    .required(true)
+                    .long("auction_id")
+                    .short('i'),
+            ),
+            |args, context| {
+                Box::pin(AuctioningApp::announce_open_auction(args, context))
             },
         )
         .with_command_async(

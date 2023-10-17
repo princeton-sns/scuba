@@ -1,5 +1,6 @@
-use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
-use chrono::offset::Utc;
+use chrono::naive::{NaiveDate, NaiveTime};
+use chrono::offset::Local;
+use core::cmp::Ordering;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
@@ -42,6 +43,8 @@ struct Auction {
     end_time: NaiveTime,
     highest_bid: u64,
     highest_bidder: String,
+    sold_price: Option<u64>,
+    sold_bidder: Option<String>,
 }
 
 impl Auction {
@@ -64,6 +67,8 @@ impl Auction {
             //end_date_time: NaiveDateTime::new(end_date, end_time),
             highest_bid,
             highest_bidder,
+            sold_price: None,
+            sold_bidder: None,
         }
     }
 
@@ -78,23 +83,29 @@ impl Auction {
 
     // returns true if updated, false otherwise
     fn submit_bid(&mut self, bid: &Bid) -> bool {
-        let cur_datetime = Utc::now();
+        let cur_datetime = Local::now();
+        println!("cur_datetime: {:?}", cur_datetime.clone());
         let cur_date = cur_datetime.date_naive();
         let cur_time = cur_datetime.time();
 
         // check after start time
         if cur_date.cmp(&self.start_date) == Ordering::Less {
+            println!("DATE TOO EARLY");
             return false;
         }
         if cur_time.cmp(&self.start_time) == Ordering::Less {
+            println!("TIME TOO EARLY");
             return false;
         }
 
         // check before end time
+        println!("\n{:?}\n", cur_date.cmp(&self.end_date));
         if cur_date.cmp(&self.end_date) == Ordering::Greater {
+            println!("DATE TOO LATE");
             return false;
         }
         if cur_time.cmp(&self.end_time) == Ordering::Greater {
+            println!("TIME TOO LATE");
             return false;
         }
 
@@ -103,6 +114,28 @@ impl Auction {
             return true;
         }
         false
+    }
+
+    fn is_over(&self) -> bool {
+        let cur_datetime = Local::now();
+        let cur_date = cur_datetime.date_naive();
+        let cur_time = cur_datetime.time();
+
+        // check after end time
+        if cur_date.cmp(&self.end_date) == Ordering::Less {
+            println!("DATE TOO EARLY");
+            return false;
+        }
+        if cur_time.cmp(&self.end_time) == Ordering::Less {
+            println!("TIME TOO EARLY");
+            return false;
+        }
+        true
+    }
+
+    fn update_sale(&mut self) {
+        self.sold_price = Some(self.highest_bid);
+        self.sold_bidder = Some(self.highest_bidder.clone());
     }
 }
 
@@ -490,13 +523,26 @@ impl AuctioningApp {
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
 
         let bid_id = args.get_one::<String>("bid_id").unwrap().to_string();
-        let bid_data = data_store_guard.get_data(&bid_id).unwrap();
-        let bid: Bid = serde_json::from_str(bid_data.data_val()).unwrap();
+        let bid_data_opt = data_store_guard.get_data(&bid_id);
+        if bid_data_opt.is_none() {
+            return Ok(Some(String::from(format!(
+                "Bid with id {} does not exist",
+                bid_id
+            ))));
+        }
+        let bid: Bid =
+            serde_json::from_str(bid_data_opt.unwrap().data_val()).unwrap();
 
         let auction_id = bid.auction_id.clone();
-        let auction_data = data_store_guard.get_data(&auction_id).unwrap();
+        let auction_data_opt = data_store_guard.get_data(&auction_id);
+        if auction_data_opt.is_none() {
+            return Ok(Some(String::from(format!(
+                "Auction with id {} does not exist",
+                auction_id
+            ))));
+        }
         let mut auction: Auction =
-            serde_json::from_str(auction_data.data_val()).unwrap();
+            serde_json::from_str(auction_data_opt.unwrap().data_val()).unwrap();
 
         if auction.submit_bid(&bid) {
             let auction_json = serde_json::to_string(&auction).unwrap();
@@ -517,7 +563,62 @@ impl AuctioningApp {
                 )))),
             }
         } else {
-            Ok(Some(String::from("Bid too low")))
+            Ok(Some(String::from("Invalid bid")))
+        }
+    }
+
+    // called by auctioneer
+    pub async fn announce_sale(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let auction_id =
+            args.get_one::<String>("auction_id").unwrap().to_string();
+        let device_guard = context.client.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+
+        let auction_data_opt = data_store_guard.get_data(&auction_id);
+        if auction_data_opt.is_none() {
+            return Ok(Some(String::from(format!(
+                "Auction with id {} does not exist",
+                auction_id
+            ))));
+        }
+        let mut auction: Auction =
+            serde_json::from_str(auction_data_opt.unwrap().data_val()).unwrap();
+
+        if auction.is_over() {
+            auction.update_sale();
+            let auction_json = serde_json::to_string(&auction).unwrap();
+            match context
+                .client
+                .set_data(
+                    auction_id,
+                    AUCTION_PREFIX.to_string(),
+                    auction_json,
+                    None,
+                )
+                .await
+            {
+                Ok(_) => Ok(Some(String::from(format!(
+                    "Auction is over, sold to client {:?} for ${:?}",
+                    auction.sold_bidder, auction.sold_price
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not update auction: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            Ok(Some(String::from(
+                "Auction is not over, cannot announce sale.",
+            )))
         }
     }
 }
@@ -621,6 +722,17 @@ async fn main() -> ReplResult<()> {
                 Arg::new("bid_id").required(true).long("bid_id").short('i'),
             ),
             |args, context| Box::pin(AuctioningApp::submit_bid(args, context)),
+        )
+        .with_command_async(
+            Command::new("announce_sale").arg(
+                Arg::new("auction_id")
+                    .required(true)
+                    .long("auction_id")
+                    .short('i'),
+            ),
+            |args, context| {
+                Box::pin(AuctioningApp::announce_sale(args, context))
+            },
         )
         .with_command_async(
             Command::new("share")

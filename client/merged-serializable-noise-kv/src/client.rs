@@ -1415,7 +1415,7 @@ impl NoiseKVClient {
     // TODO add facility for setting and sharing data at the same time
 
     pub fn start_transaction(&self) -> Result<(), Error> {
-        let res = *self.tx_coordinator.write().enter_tx();
+        let res = self.tx_coordinator.write().enter_tx();
         if !res {
             return Err(Error::BadTransactionError);
         }
@@ -1425,7 +1425,7 @@ impl NoiseKVClient {
     // TODO cancel transaction func?
 
     pub fn end_transaction(&self) {
-        let (ops, prev_seq_number) = *self.tx_coordinator.write().exit_tx();
+        let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
         self.initiate_transaction(self.idkey(), ops, prev_seq_number);
     }
 

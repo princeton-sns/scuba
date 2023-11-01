@@ -474,6 +474,7 @@ impl NoiseKVClient {
 
     /* Sending-side function */
 
+    // TODO: change message to be a collection of messages
     async fn send_message(
         &self,
         dst_idkeys: Vec<String>,
@@ -1429,6 +1430,7 @@ impl NoiseKVClient {
         self.initiate_transaction(self.idkey(), ops, prev_seq_number);
     }
 
+    // TODO: change message to be a collection of messages
     async fn send_or_add_to_txn(
         &self,
         dst_idkeys: Vec<String>,
@@ -1622,6 +1624,7 @@ impl NoiseKVClient {
 
         // includes idkeys of _all_ permissions
         // (including data-only readers)
+        // TODO make separate for read-only memebers of txn
         self.send_or_add_to_txn(
                 device_ids.clone(),
                 &Operation::UpdateData(data_id, basic_data)

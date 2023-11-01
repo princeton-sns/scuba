@@ -143,6 +143,8 @@ impl<C: CoreClient> Core<C> {
         self.crypto.get_idkey()
     }
 
+
+    // TODO: change message to be a collection of messages
     pub async fn send_message(
         &self,
         dst_idkeys: Vec<String>,

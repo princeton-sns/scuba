@@ -893,7 +893,7 @@ impl CalendarApp {
             )
             .await;
         if res.is_err() {
-            context.client.end_transaction();
+            context.client.end_transaction().await;
             return Ok(Some(String::from(format!(
                 "Could not confirm appointment: {}",
                 res.err().unwrap().to_string()
@@ -906,7 +906,7 @@ impl CalendarApp {
             .get_data(&AVAIL_PREFIX.to_string());
 
         if avail_opt.is_none() {
-            context.client.end_transaction();
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Availability object does not exist - bug.",
             )));
@@ -929,14 +929,14 @@ impl CalendarApp {
             )
             .await;
         if res.is_err() {
-            context.client.end_transaction();
+            context.client.end_transaction().await;
             return Ok(Some(String::from(format!(
                 "Could not modify availability: {}",
                 res.err().unwrap().to_string()
             ))));
         }
 
-        context.client.end_transaction();
+        context.client.end_transaction().await;
         Ok(Some(String::from(format!(
             "Confirmed appointment with id {}",
             id

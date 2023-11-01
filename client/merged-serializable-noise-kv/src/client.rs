@@ -479,6 +479,7 @@ impl NoiseKVClient {
         dst_idkeys: Vec<String>,
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
+        println!("\nHERE??\n");
         self.core
             .as_ref()
             .unwrap()
@@ -553,7 +554,7 @@ impl NoiseKVClient {
         Ok(())
     }
 
-    fn initiate_transaction(
+    async fn initiate_transaction(
         &self,
         device_id: String,
         ops: Vec<Operation>,
@@ -571,30 +572,30 @@ impl NoiseKVClient {
             recipients,
             &Operation::to_string(&Operation::TxStart(device_id, transaction))
                 .unwrap(),
-        );
+        ).await;
         println!("sent TxStart");
     }
 
-    fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
+    async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
         let recipients = vec![self.idkey(), sender];
         self.send_message(
             recipients,
             &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
                 .unwrap(),
-        );
+        ).await;
     }
 
-    fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
+    async fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
         let binding = self.tx_coordinator.read();
         let tx = binding.get_transaction(tx_id).unwrap().clone();
         self.send_message(
             tx.recipients,
             &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
                 .unwrap(),
-        );
+        ).await;
     }
 
-    fn send_commit_to_coordinator(
+    async fn send_commit_to_coordinator(
         &self,
         sender: String,
         tx_id: SequenceNumber,
@@ -604,17 +605,17 @@ impl NoiseKVClient {
             recipients,
             &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
                 .unwrap(),
-        );
+        ).await;
     }
 
-    fn send_commit_as_coordinator(&self, tx_id: SequenceNumber) {
+    async fn send_commit_as_coordinator(&self, tx_id: SequenceNumber) {
         let binding = self.tx_coordinator.read();
         let tx = binding.get_transaction(tx_id).unwrap().clone();
         self.send_message(
             tx.recipients,
             &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
                 .unwrap(),
-        );
+        ).await;
     }
 
     /* Receiving-side functions */
@@ -1426,10 +1427,10 @@ impl NoiseKVClient {
 
     // TODO cancel transaction func?
 
-    pub fn end_transaction(&self) {
+    pub async fn end_transaction(&self) {
         let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
         println!("ops in txns: {:?}", ops.clone());
-        self.initiate_transaction(self.idkey(), ops, prev_seq_number);
+        self.initiate_transaction(self.idkey(), ops, prev_seq_number).await;
     }
 
     async fn send_or_add_to_txn(

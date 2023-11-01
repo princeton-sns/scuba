@@ -479,7 +479,6 @@ impl NoiseKVClient {
         dst_idkeys: Vec<String>,
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
-        println!("\nHERE??\n");
         self.core
             .as_ref()
             .unwrap()
@@ -567,13 +566,11 @@ impl NoiseKVClient {
             ops,
             prev_seq_number,
         );
-        println!("sending TxStart");
         self.send_message(
             recipients,
             &Operation::to_string(&Operation::TxStart(device_id, transaction))
                 .unwrap(),
         ).await;
-        println!("sent TxStart");
     }
 
     async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
@@ -999,9 +996,9 @@ impl NoiseKVClient {
                     tx,
                 );
                 if res == Err(Error::TransactionConflictsError) {
-                    self.send_abort_to_coordinator(sender, seq);
+                    self.send_abort_to_coordinator(sender, seq).await;
                 } else if sender != self.idkey() {
-                    self.send_commit_to_coordinator(sender, seq);
+                    self.send_commit_to_coordinator(sender, seq).await;
                 }
                 Ok(())
             }
@@ -1013,7 +1010,7 @@ impl NoiseKVClient {
                     seq,
                 );
                 if resp == Err(Error::SendToAll) {
-                    self.send_commit_as_coordinator(tx_id);
+                    self.send_commit_as_coordinator(tx_id).await;
                 } else if resp == Ok(()) {
                     self.apply_locally(tx_id).await;
                 }
@@ -1026,7 +1023,7 @@ impl NoiseKVClient {
                     &tx_id,
                 );
                 if resp == Err(Error::SendToAll) {
-                    self.send_abort_as_coordinator(tx_id);
+                    self.send_abort_as_coordinator(tx_id).await;
                 }
                 Ok(())
             }
@@ -1429,7 +1426,6 @@ impl NoiseKVClient {
 
     pub async fn end_transaction(&self) {
         let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
-        println!("ops in txns: {:?}", ops.clone());
         self.initiate_transaction(self.idkey(), ops, prev_seq_number).await;
     }
 

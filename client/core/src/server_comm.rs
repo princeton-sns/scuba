@@ -426,6 +426,11 @@ pub struct EncryptedOutboxMessage {
     pub enc_recipients: HashMap<String, EncryptedPerRecipientPayload>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct OutboxMessages {
+    pub messages: Vec<EncryptedOutboxMessage>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedInboxMessage {
     pub sender: String,
@@ -647,7 +652,7 @@ impl<C: CoreClient> ServerComm<C> {
 
     pub async fn send_message(
         &self,
-        batch: &EncryptedOutboxMessage,
+        batch: &OutboxMessages,
     ) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message").expect("").as_str())

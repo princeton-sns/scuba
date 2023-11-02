@@ -50,8 +50,10 @@ pub enum Error {
     BadTransactionError,
     #[error("Transaction conflicts")]
     TransactionConflictsError,
+    #[error("Transaction timed out")]
+    Timeout,
     #[error("not an error")]
-    SendToAll, //FIXME::not an error but here for now, make enum
+    SendToAll,
     #[error("also not an error")]
     NOOP,
     #[error("Tx not found locall")]
@@ -116,8 +118,10 @@ struct Transaction {
     read_only_recipients: Option<Vec<String>>,
     num_recipients: Option<usize>,
     ops: Vec<Operation>,
-    sequence_number: Option<SequenceNumber>,
+    prepare_sequence_number: Option<SequenceNumber>,
+    commit_sequence_number: Option<SequenceNumber>,
     prev_seq_number: SequenceNumber,
+    timeout: SequenceNumber,
 }
 
 impl Transaction {
@@ -134,8 +138,10 @@ impl Transaction {
             read_only_recipients: readers,
             num_recipients: Some(recipients.len()),
             ops,
-            sequence_number: None,
+            prepare_sequence_number: None,
+            commit_sequence_number: None,
             prev_seq_number,
+            timeout: 400, // TODO: make this dynamic? system dependent?
         }
     }
 
@@ -176,7 +182,8 @@ impl TxCoordinator {
         return self.tx_state;
     }
 
-    // TODO should this update go through the server?!
+    // TODO should this update go through the server?! maybe only from strict
+    // serializability
     fn enter_tx(&mut self) -> bool {
         if self.tx_state {
             return false;
@@ -216,7 +223,7 @@ impl TxCoordinator {
         unsequenced_tx: Transaction,
     ) -> Result<(), Error> {
         let mut tx = unsequenced_tx.clone();
-        tx.sequence_number = Some(tx_id);
+        tx.prepare_sequence_number = Some(tx_id);
 
         if sender == my_device_id {
             self.local_pending_tx
@@ -245,30 +252,26 @@ impl TxCoordinator {
         if sender == my_device_id {
             let q = &mut self.local_pending_tx;
             let mut tx = q[tx_id].1.clone();
-            tx.sequence_number = Some(seq);
+            tx.commit_sequence_number = Some(seq);
             q.remove(tx_id);
-            self.committed_tx.push(((*tx_id, seq), tx));
-
-        //coordinating commit messages from not me
-        } else if self.local_pending_tx.contains_key(tx_id) {
-            let tuple = self.local_pending_tx[tx_id].clone();
-            let mut new_tuple = tuple.clone();
-            new_tuple.0.push(sender);
-
-            self.local_pending_tx.insert(*tx_id, new_tuple);
-            if tuple.0.len() == tuple.1.num_recipients.unwrap() {
-                return Err(Error::SendToAll);
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+            {
+                return Err(Error::Timeout);
+            } else {
+                self.committed_tx.push(((*tx_id, seq), tx));
             }
-
-            return Err(Error::NOOP);
-
         // commit message for a remote transaction
         } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
             == sender
         {
             let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
-            tx.sequence_number = Some(seq);
-            self.committed_tx.push(((*tx_id, seq), tx));
+            tx.commit_sequence_number = Some(seq);
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+            {
+                return Err(Error::Timeout);
+            } else {
+                self.committed_tx.push(((*tx_id, seq), tx));
+            }
         }
 
         self.seq_number = *tx_id;
@@ -335,7 +338,7 @@ impl TxCoordinator {
         for tx in self.committed_tx.clone().into_iter() {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
-            if tx.1.sequence_number.unwrap() > msg.prev_seq_number {
+            if tx.1.prepare_sequence_number.unwrap() > msg.prev_seq_number {
                 for op in tx.1.ops.clone().into_iter() {
                     let data_id = Operation::get_data_id(&op);
                     if tx_keys.contains(&data_id) {
@@ -1060,9 +1063,7 @@ impl NoiseKVClient {
                     &tx_id,
                     seq,
                 );
-                if resp == Err(Error::SendToAll) {
-                    self.send_commit_as_coordinator(tx_id).await;
-                } else if resp == Ok(()) {
+                if resp == Ok(()) {
                     self.apply_locally(tx_id).await;
                 }
                 Ok(())

@@ -130,7 +130,7 @@ struct PasswordManager {
 
 impl PasswordManager {
     pub async fn new() -> PasswordManager {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = NoiseKVClient::new(None, None, false, Some("passmanager.txt"), None, None).await;
         Self { client }
     }
 
@@ -441,13 +441,13 @@ impl PasswordManager {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
-        let mut hotp = false;
-        let mut totp = false;
-        if args.get_flag("hotp") {
-            hotp = true;
+        let t = args.get_one::<String>("type").unwrap().to_string();
+        if t != "hotp" && t != "totp" {
+            return Ok(Some(String::from(format!("Type argument must either be <hotp> or <totp>; argument was {}", t))));
         }
-        if args.get_flag("totp") {
-            totp = true;
+        let mut hotp = false;
+        if t == "hotp" {
+            hotp = true;
         }
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
@@ -503,13 +503,13 @@ impl PasswordManager {
         }
 
         let app_name = args.get_one::<String>("app_name").unwrap().to_string();
-        let mut hotp = false;
-        let mut totp = false;
-        if args.get_flag("hotp") {
-            hotp = true;
+        let t = args.get_one::<String>("type").unwrap().to_string();
+        if t != "hotp" && t != "totp" {
+            return Ok(Some(String::from(format!("Type argument must either be <hotp> or <totp>; argument was {}", t))));
         }
-        if args.get_flag("totp") {
-            totp = true;
+        let mut hotp = false;
+        if t == "hotp" {
+            hotp = true;
         }
         //let url;
         //match args.get_one::<String>("url") {
@@ -594,13 +594,14 @@ impl PasswordManager {
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         let id = args.get_one::<String>("id").unwrap().to_string();
-        let mut hotp = false;
-        let mut totp = false;
-        if args.get_flag("hotp") {
-            hotp = true;
+        // TODO parse id for type
+        let t = args.get_one::<String>("type").unwrap().to_string();
+        if t != "hotp" && t != "totp" {
+            return Ok(Some(String::from(format!("Type argument must either be <hotp> or <totp>; argument was {}", t))));
         }
-        if args.get_flag("totp") {
-            totp = true;
+        let mut hotp = false;
+        if t == "hotp" {
+            hotp = true;
         }
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
@@ -664,13 +665,14 @@ impl PasswordManager {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
-        let mut hotp = false;
-        let mut totp = false;
-        if args.get_flag("hotp") {
-            hotp = true;
+        // TODO parse id for type
+        let t = args.get_one::<String>("type").unwrap().to_string();
+        if t != "hotp" && t != "totp" {
+            return Ok(Some(String::from(format!("Type argument must either be <hotp> or <totp>; argument was {}", t))));
         }
-        if args.get_flag("totp") {
-            totp = true;
+        let mut hotp = false;
+        if t == "hotp" {
+            hotp = true;
         }
         let app_name = args.get_one::<String>("app_name").unwrap().to_string();
         let device_guard = context.client.device.read();
@@ -756,13 +758,14 @@ impl PasswordManager {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap().to_string();
+        let config_id = args.get_one::<String>("config_id").unwrap().to_string();
+        let pass_id = args.get_one::<String>("pass_id").unwrap().to_string();
 
         if let Some(arg_readers) = args.get_many::<String>("readers") {
             let readers = arg_readers.collect::<Vec<&String>>();
             let res = context
                 .client
-                .add_readers(id.clone(), readers.clone())
+                .add_readers(pass_id.clone(), readers.clone())
                 .await;
             if res.is_err() {
                 return Ok(Some(String::from(format!(
@@ -774,13 +777,25 @@ impl PasswordManager {
 
         if let Some(arg_writers) = args.get_many::<String>("writers") {
             let writers = arg_writers.collect::<Vec<&String>>();
-            let res = context
+            // share config obj
+            let mut res = context
                 .client
-                .add_writers(id.clone(), writers.clone())
+                .add_writers(config_id.clone(), writers.clone())
                 .await;
             if res.is_err() {
                 return Ok(Some(String::from(format!(
-                    "Error adding writers to datum: {}",
+                    "Error adding writers to config obj: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
+            // share pass obj
+            res = context
+                .client
+                .add_writers(pass_id.clone(), writers.clone())
+                .await;
+            if res.is_err() {
+                return Ok(Some(String::from(format!(
+                    "Error adding writers to password obj: {}",
                     res.err().unwrap().to_string()
                 ))));
             }
@@ -788,7 +803,7 @@ impl PasswordManager {
 
         Ok(Some(String::from(format!(
             "Successfully shared datum {}",
-            id
+            pass_id
         ))))
     }
 }
@@ -849,18 +864,7 @@ async fn main() -> ReplResult<()> {
         .with_command(
             Command::new("get_password")
                 .arg(Arg::new("id").required(true))
-                .arg(
-                    Arg::new("hotp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("hotp"),
-                )
-                .arg(
-                    Arg::new("totp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("totp"),
-                )
+                .arg(Arg::new("type").required(true).short('t'))
                 .about("use either hotp or totp depending on the password id"),
             PasswordManager::get_password,
         )
@@ -872,7 +876,7 @@ async fn main() -> ReplResult<()> {
                         .long("app_name")
                         .short('a'),
                 )
-                .arg(Arg::new("length").required(true).long("length"))
+                .arg(Arg::new("length").required(true).long("length").short('l'))
                 .arg(
                     Arg::new("numbers")
                         .action(ArgAction::SetTrue)
@@ -883,13 +887,13 @@ async fn main() -> ReplResult<()> {
                     Arg::new("lc")
                         .action(ArgAction::SetTrue)
                         .required(false)
-                        .short('l'),
+                        .long("lc"),
                 )
                 .arg(
                     Arg::new("uc")
                         .action(ArgAction::SetTrue)
                         .required(false)
-                        .short('u'),
+                        .long("uc"),
                 )
                 .arg(
                     Arg::new("symbols")
@@ -912,19 +916,8 @@ async fn main() -> ReplResult<()> {
                 .arg(
                     Arg::new("secret").required(true).long("secret").short('s'),
                 )
-                .arg(
-                    Arg::new("hotp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("hotp"),
-                )
-                .arg(
-                    Arg::new("totp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("totp"),
-                )
-                .about("use either hotp or totp depending on the password id")
+                .arg(Arg::new("type").required(true).short('t'))
+                .about("use either <hotp> or <totp> depending on the password id")
                 //.arg(Arg::new("url").required(false).long("url").short('u'))
                 .arg(
                     Arg::new("username")
@@ -945,38 +938,16 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("get_otp")
                 .arg(Arg::new("id").required(true))
-                .arg(
-                    Arg::new("hotp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("hotp"),
-                )
-                .arg(
-                    Arg::new("totp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("totp"),
-                )
-                .about("use either hotp or totp depending on the password id"),
+                .arg(Arg::new("type").required(true).short('t'))
+                .about("use either <hotp> or <totp> depending on the password id"),
             |args, context| Box::pin(PasswordManager::get_otp(args, context)),
         )
         .with_command_async(
             Command::new("update_password")
                 .arg(Arg::new("id").required(true).long("id").short('i'))
                 .arg(Arg::new("app_name").required(true).short('a'))
-                .arg(
-                    Arg::new("hotp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("hotp"),
-                )
-                .arg(
-                    Arg::new("totp")
-                        .action(ArgAction::SetTrue)
-                        .required(false)
-                        .long("totp"),
-                )
-                .about("use either hotp or totp depending on the password id")
+                .arg(Arg::new("type").required(true).short('t'))
+                .about("use either <hotp> or <totp> depending on the password id")
                 .arg(
                     Arg::new("password")
                         .required(false)
@@ -989,7 +960,8 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("share")
-                .arg(Arg::new("id").required(true).long("id").short('i'))
+                .arg(Arg::new("config_id").required(true).long("config_id").short('c'))
+                .arg(Arg::new("pass_id").required(true).long("pass_id").short('p'))
                 .arg(
                     Arg::new("readers")
                         .required(false)

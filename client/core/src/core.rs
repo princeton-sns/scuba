@@ -3,12 +3,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::fs::File;
+use std::io::Write;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
-    EncryptedCommonPayload, EncryptedInboxMessage, EncryptedOutboxMessage,
+    EncryptedCommonPayload, EncryptedOutboxMessage,
     EncryptedPerRecipientPayload, Event, ServerComm, ToDelete,
 };
 
@@ -81,6 +83,7 @@ pub struct Core<C: CoreClient> {
     incoming_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
     oq_cv: Condvar,
     iq_cv: Condvar,
+    common_ct_size_filename: Option<&'static str>,
 }
 
 impl<C: CoreClient> Core<C> {
@@ -88,6 +91,7 @@ impl<C: CoreClient> Core<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
+        common_ct_size_filename: Option<&'static str>,
         client: Option<Arc<C>>,
     ) -> Arc<Core<C>> {
         let crypto = Crypto::new(turn_encryption_off);
@@ -114,6 +118,7 @@ impl<C: CoreClient> Core<C> {
             )),
             oq_cv: Condvar::new(),
             iq_cv: Condvar::new(),
+            common_ct_size_filename,
         });
 
         {
@@ -192,6 +197,11 @@ impl<C: CoreClient> Core<C> {
         let (common_ct, key, iv) = self
             .crypto
             .symmetric_encrypt(CommonPayload::to_string(&common_payload));
+
+        if let Some(filename) = &self.common_ct_size_filename {
+            let mut f = File::options().append(true).create(true).open(filename).unwrap();
+            write!(f, "{}\n", common_ct.clone().len());
+        }
 
         // Can't use .iter().map().collect() due to async/await
         let mut encrypted_per_recipient_payloads = HashMap::new();

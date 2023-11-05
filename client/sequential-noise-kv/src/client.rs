@@ -152,6 +152,7 @@ impl NoiseKVClient {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
+        common_ct_size_filename: Option<&'static str>,
         test_wait_num_callbacks: Option<u32>,
         sec_wait_to_apply: Option<u64>,
     ) -> NoiseKVClient {
@@ -168,6 +169,7 @@ impl NoiseKVClient {
             ip_arg,
             port_arg,
             turn_encryption_off,
+            common_ct_size_filename,
             Some(Arc::new(client.clone())),
         )
         .await;

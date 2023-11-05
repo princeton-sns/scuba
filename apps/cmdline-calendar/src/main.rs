@@ -209,7 +209,7 @@ struct CalendarApp {
 
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = NoiseKVClient::new(None, None, false, Some("calendar.txt"), None, None).await;
         Self { client }
     }
 

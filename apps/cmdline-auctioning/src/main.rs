@@ -182,7 +182,7 @@ struct AuctioningApp {
 
 impl AuctioningApp {
     pub async fn new() -> AuctioningApp {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = NoiseKVClient::new(None, None, false, Some("auctioning.txt"), None, None).await;
         Self { client }
     }
 

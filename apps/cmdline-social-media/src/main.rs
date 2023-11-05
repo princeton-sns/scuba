@@ -170,7 +170,7 @@ struct FamilyApp {
 
 impl FamilyApp {
     pub async fn new() -> FamilyApp {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = NoiseKVClient::new(None, None, false, Some("familyapp.txt"), None, None).await;
         Self { client }
     }
 

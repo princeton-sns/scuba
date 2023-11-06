@@ -12,3 +12,4 @@ members = [
     "apps/cmdline-calendar",
     "apps/cmdline-auctioning",
 ]
+resolver = "2"

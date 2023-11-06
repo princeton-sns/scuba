@@ -12,7 +12,7 @@ cd sharded-noise-server/parallel-networked-server
 In one window run the sequencer: 
 
 ```sh
-rm epoch_log.txt && rm -rf persist-outbox/ && cargo run --release sequencer --port 8082 --shard-count 1
+rm -rf epoch_log.txt && rm -rf persist-outbox/ && cargo run --release sequencer --port 8082 --shard-count 1
 ```
 
 and in another start the shards: 

@@ -427,7 +427,7 @@ pub struct EncryptedOutboxMessage {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub struct OutboxMessages {
+pub struct EncryptedOutboxMessages {
     pub messages: Vec<EncryptedOutboxMessage>,
 }
 
@@ -652,7 +652,7 @@ impl<C: CoreClient> ServerComm<C> {
 
     pub async fn send_message(
         &self,
-        batch: &OutboxMessages,
+        batch: &EncryptedOutboxMessages,
     ) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message").expect("").as_str())

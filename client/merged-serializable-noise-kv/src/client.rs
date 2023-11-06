@@ -115,7 +115,7 @@ impl Operation {
 struct Transaction {
     coordinator: String,
     recipients: Vec<String>,
-    read_only_recipients: Option<Vec<String>>,
+    do_reader_recipients: Option<Vec<String>>,
     num_recipients: Option<usize>,
     ops: Vec<Operation>,
     prepare_sequence_number: Option<SequenceNumber>,
@@ -128,14 +128,14 @@ impl Transaction {
     fn new(
         device_id: String,
         recipients: Vec<String>,
-        readers: Option<Vec<String>>,
+        do_reader_recipients: Option<Vec<String>>,
         ops: Vec<Operation>,
         prev_seq_number: SequenceNumber,
     ) -> Transaction {
         Transaction {
             coordinator: device_id,
             recipients: recipients.clone(),
-            read_only_recipients: readers,
+            do_reader_recipients,
             num_recipients: Some(recipients.len()),
             ops,
             prepare_sequence_number: None,
@@ -484,15 +484,15 @@ impl NoiseKVClient {
     async fn send_message(
         &self,
         dst_idkeys: Vec<String>,
-        dst_idkeys_reader_only: Option<Vec<String>>,
+        dst_idkeys_do_readers: Option<Vec<String>>,
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
         // FIXME: pass option
-        let readers = dst_idkeys_reader_only.unwrap_or_default();
+        //let do_readers = dst_idkeys_do_readers.unwrap_or_default();
         self.core
             .as_ref()
             .unwrap()
-            .send_message(dst_idkeys, readers, payload)
+            .send_message(dst_idkeys, dst_idkeys_do_readers.unwrap_or_default(), payload)
             .await
     }
 
@@ -548,7 +548,7 @@ impl NoiseKVClient {
         return recipients;
     }
 
-    fn collect_data_only_recipients(
+    fn collect_do_reader_recipients(
         &self,
         msg: Vec<Operation>,
     ) -> Option<Vec<String>> {
@@ -615,17 +615,17 @@ impl NoiseKVClient {
         prev_seq_number: SequenceNumber,
     ) {
         let recipients = self.collect_recipients(ops.clone());
-        let readers = self.collect_data_only_recipients(ops.clone());
+        let do_reader_recipients = self.collect_do_reader_recipients(ops.clone());
         let transaction = Transaction::new(
             device_id.clone(),
             recipients.clone(),
-            readers.clone(),
+            do_reader_recipients.clone(),
             ops,
             prev_seq_number,
         );
         self.send_message(
             recipients,
-            readers,
+            do_reader_recipients,
             &Operation::to_string(&Operation::TxStart(device_id, transaction))
                 .unwrap(),
         )
@@ -664,7 +664,7 @@ impl NoiseKVClient {
         let tx = binding.get_transaction(tx_id).unwrap().clone();
         self.send_message(
             tx.recipients,
-            tx.read_only_recipients,
+            tx.do_reader_recipients,
             &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
                 .unwrap(),
         )

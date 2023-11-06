@@ -9,7 +9,7 @@ use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
     EncryptedCommonPayload, EncryptedInboxMessage, EncryptedOutboxMessage,
-    EncryptedPerRecipientPayload, Event, OutboxMessages, ServerComm, ToDelete,
+    EncryptedPerRecipientPayload, Event, EncryptedOutboxMessages, ServerComm, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -248,7 +248,7 @@ impl<C: CoreClient> Core<C> {
 
         // add "main" message with all those w/access to metadata
         outgoing_messages.push(encrypted_message_with_metadata);
-        let outbox_messages = OutboxMessages {
+        let outbox_messages = EncryptedOutboxMessages {
             messages: outgoing_messages,
         };
 

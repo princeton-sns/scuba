@@ -2,9 +2,9 @@ use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
@@ -199,7 +199,11 @@ impl<C: CoreClient> Core<C> {
             .symmetric_encrypt(CommonPayload::to_string(&common_payload));
 
         if let Some(filename) = &self.common_ct_size_filename {
-            let mut f = File::options().append(true).create(true).open(filename).unwrap();
+            let mut f = File::options()
+                .append(true)
+                .create(true)
+                .open(filename)
+                .unwrap();
             write!(f, "{}\n", common_ct.clone().len());
         }
 

@@ -2,8 +2,8 @@ use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use sequential_noise_kv::client::NoiseKVClient;
-use sequential_noise_kv::data::NoiseData;
+use seq_lin_noise_kv::client::NoiseKVClient;
+use seq_lin_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -209,7 +209,15 @@ struct CalendarApp {
 
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
-        let client = NoiseKVClient::new(None, None, false, Some("calendar.txt"), None, None).await;
+        let client = NoiseKVClient::new(
+            None,
+            None,
+            false,
+            Some("calendar.txt"),
+            None,
+            None,
+        )
+        .await;
         Self { client }
     }
 

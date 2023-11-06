@@ -2,8 +2,8 @@ use passwords::PasswordGenerator;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use sequential_noise_kv::client::NoiseKVClient;
-use sequential_noise_kv::data::NoiseData;
+use seq_lin_noise_kv::client::NoiseKVClient;
+use seq_lin_noise_kv::data::NoiseData;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -130,7 +130,15 @@ struct PasswordManager {
 
 impl PasswordManager {
     pub async fn new() -> PasswordManager {
-        let client = NoiseKVClient::new(None, None, false, Some("passmanager.txt"), None, None).await;
+        let client = NoiseKVClient::new(
+            None,
+            None,
+            false,
+            Some("passmanager.txt"),
+            None,
+            None,
+        )
+        .await;
         Self { client }
     }
 
@@ -758,7 +766,8 @@ impl PasswordManager {
             )));
         }
 
-        let config_id = args.get_one::<String>("config_id").unwrap().to_string();
+        let config_id =
+            args.get_one::<String>("config_id").unwrap().to_string();
         let pass_id = args.get_one::<String>("pass_id").unwrap().to_string();
 
         if let Some(arg_readers) = args.get_many::<String>("readers") {
@@ -876,7 +885,9 @@ async fn main() -> ReplResult<()> {
                         .long("app_name")
                         .short('a'),
                 )
-                .arg(Arg::new("length").required(true).long("length").short('l'))
+                .arg(
+                    Arg::new("length").required(true).long("length").short('l'),
+                )
                 .arg(
                     Arg::new("numbers")
                         .action(ArgAction::SetTrue)
@@ -917,7 +928,9 @@ async fn main() -> ReplResult<()> {
                     Arg::new("secret").required(true).long("secret").short('s'),
                 )
                 .arg(Arg::new("type").required(true).short('t'))
-                .about("use either <hotp> or <totp> depending on the password id")
+                .about(
+                    "use either <hotp> or <totp> depending on the password id",
+                )
                 //.arg(Arg::new("url").required(false).long("url").short('u'))
                 .arg(
                     Arg::new("username")
@@ -939,7 +952,9 @@ async fn main() -> ReplResult<()> {
             Command::new("get_otp")
                 .arg(Arg::new("id").required(true))
                 .arg(Arg::new("type").required(true).short('t'))
-                .about("use either <hotp> or <totp> depending on the password id"),
+                .about(
+                    "use either <hotp> or <totp> depending on the password id",
+                ),
             |args, context| Box::pin(PasswordManager::get_otp(args, context)),
         )
         .with_command_async(
@@ -947,7 +962,9 @@ async fn main() -> ReplResult<()> {
                 .arg(Arg::new("id").required(true).long("id").short('i'))
                 .arg(Arg::new("app_name").required(true).short('a'))
                 .arg(Arg::new("type").required(true).short('t'))
-                .about("use either <hotp> or <totp> depending on the password id")
+                .about(
+                    "use either <hotp> or <totp> depending on the password id",
+                )
                 .arg(
                     Arg::new("password")
                         .required(false)
@@ -960,8 +977,18 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("share")
-                .arg(Arg::new("config_id").required(true).long("config_id").short('c'))
-                .arg(Arg::new("pass_id").required(true).long("pass_id").short('p'))
+                .arg(
+                    Arg::new("config_id")
+                        .required(true)
+                        .long("config_id")
+                        .short('c'),
+                )
+                .arg(
+                    Arg::new("pass_id")
+                        .required(true)
+                        .long("pass_id")
+                        .short('p'),
+                )
                 .arg(
                     Arg::new("readers")
                         .required(false)

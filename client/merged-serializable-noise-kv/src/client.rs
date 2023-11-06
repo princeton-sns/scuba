@@ -50,8 +50,10 @@ pub enum Error {
     BadTransactionError,
     #[error("Transaction conflicts")]
     TransactionConflictsError,
+    #[error("Transaction timed out")]
+    Timeout,
     #[error("not an error")]
-    SendToAll, //FIXME::not an error but here for now, make enum
+    SendToAll,
     #[error("also not an error")]
     NOOP,
     #[error("Tx not found locall")]
@@ -113,26 +115,33 @@ impl Operation {
 struct Transaction {
     coordinator: String,
     recipients: Vec<String>,
+    do_reader_recipients: Option<Vec<String>>,
     num_recipients: Option<usize>,
     ops: Vec<Operation>,
-    sequence_number: Option<SequenceNumber>,
+    prepare_sequence_number: Option<SequenceNumber>,
+    commit_sequence_number: Option<SequenceNumber>,
     prev_seq_number: SequenceNumber,
+    timeout: SequenceNumber,
 }
 
 impl Transaction {
     fn new(
         device_id: String,
         recipients: Vec<String>,
+        do_reader_recipients: Option<Vec<String>>,
         ops: Vec<Operation>,
         prev_seq_number: SequenceNumber,
     ) -> Transaction {
         Transaction {
             coordinator: device_id,
             recipients: recipients.clone(),
+            do_reader_recipients,
             num_recipients: Some(recipients.len()),
             ops,
-            sequence_number: None,
+            prepare_sequence_number: None,
+            commit_sequence_number: None,
             prev_seq_number,
+            timeout: 400, // TODO: make this dynamic? system dependent?
         }
     }
 
@@ -173,7 +182,8 @@ impl TxCoordinator {
         return self.tx_state;
     }
 
-    // TODO should this update go through the server?!
+    // TODO should this update go through the server?! maybe only from strict
+    // serializability
     fn enter_tx(&mut self) -> bool {
         if self.tx_state {
             return false;
@@ -213,7 +223,7 @@ impl TxCoordinator {
         unsequenced_tx: Transaction,
     ) -> Result<(), Error> {
         let mut tx = unsequenced_tx.clone();
-        tx.sequence_number = Some(tx_id);
+        tx.prepare_sequence_number = Some(tx_id);
 
         if sender == my_device_id {
             self.local_pending_tx
@@ -242,30 +252,26 @@ impl TxCoordinator {
         if sender == my_device_id {
             let q = &mut self.local_pending_tx;
             let mut tx = q[tx_id].1.clone();
-            tx.sequence_number = Some(seq);
+            tx.commit_sequence_number = Some(seq);
             q.remove(tx_id);
-            self.committed_tx.push(((*tx_id, seq), tx));
-
-        //coordinating commit messages from not me
-        } else if self.local_pending_tx.contains_key(tx_id) {
-            let tuple = self.local_pending_tx[tx_id].clone();
-            let mut new_tuple = tuple.clone();
-            new_tuple.0.push(sender);
-
-            self.local_pending_tx.insert(*tx_id, new_tuple);
-            if tuple.0.len() == tuple.1.num_recipients.unwrap() {
-                return Err(Error::SendToAll);
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+            {
+                return Err(Error::Timeout);
+            } else {
+                self.committed_tx.push(((*tx_id, seq), tx));
             }
-
-            return Err(Error::NOOP);
-
         // commit message for a remote transaction
         } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
             == sender
         {
             let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
-            tx.sequence_number = Some(seq);
-            self.committed_tx.push(((*tx_id, seq), tx));
+            tx.commit_sequence_number = Some(seq);
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+            {
+                return Err(Error::Timeout);
+            } else {
+                self.committed_tx.push(((*tx_id, seq), tx));
+            }
         }
 
         self.seq_number = *tx_id;
@@ -332,7 +338,7 @@ impl TxCoordinator {
         for tx in self.committed_tx.clone().into_iter() {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
-            if tx.1.sequence_number.unwrap() > msg.prev_seq_number {
+            if tx.1.prepare_sequence_number.unwrap() > msg.prev_seq_number {
                 for op in tx.1.ops.clone().into_iter() {
                     let data_id = Operation::get_data_id(&op);
                     if tx_keys.contains(&data_id) {
@@ -474,15 +480,19 @@ impl NoiseKVClient {
 
     /* Sending-side function */
 
+    // TODO: change message to be a collection of messages
     async fn send_message(
         &self,
         dst_idkeys: Vec<String>,
+        dst_idkeys_do_readers: Option<Vec<String>>,
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
+        // FIXME: pass option
+        //let do_readers = dst_idkeys_do_readers.unwrap_or_default();
         self.core
             .as_ref()
             .unwrap()
-            .send_message(dst_idkeys, payload)
+            .send_message(dst_idkeys, dst_idkeys_do_readers.unwrap_or_default(), payload)
             .await
     }
 
@@ -490,7 +500,8 @@ impl NoiseKVClient {
     fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
         let mut recipients = Vec::new();
         for op in msg {
-            // FIXME support more than just UpdateData operation types in transactions
+            // FIXME support more than just UpdateData operation types in
+            // transactions
             if let Operation::UpdateData(_, data) = op {
                 let mut group_ids = Vec::<&String>::new();
                 let perm = self
@@ -512,11 +523,6 @@ impl NoiseKVClient {
                     None => {}
                 }
                 match perm.readers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-                // FIXME depends on what's in the transaction, no?
-                match perm.do_readers() {
                     Some(group_id) => group_ids.push(group_id),
                     None => {}
                 }
@@ -542,6 +548,55 @@ impl NoiseKVClient {
         return recipients;
     }
 
+    fn collect_do_reader_recipients(
+        &self,
+        msg: Vec<Operation>,
+    ) -> Option<Vec<String>> {
+        let mut recipients = Vec::new();
+        for op in msg {
+            // FIXME support more than just UpdateData operation types in
+            // transactions
+            if let Operation::UpdateData(_, data) = op {
+                let mut group_ids = Vec::<&String>::new();
+                let perm = self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .get_perm(data.perm_id())
+                    .unwrap()
+                    .clone();
+                match perm.do_readers() {
+                    Some(group_id) => group_ids.push(group_id),
+                    None => {}
+                }
+
+                let device_ids = self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .resolve_group_ids(group_ids)
+                    .into_iter()
+                    .collect::<Vec<String>>();
+
+                recipients.extend(device_ids);
+            }
+        }
+
+        recipients.sort();
+        recipients.dedup();
+
+        if recipients.is_empty() {
+            return None;
+        }
+        return Some(recipients);
+    }
+
     async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
         let coord_guard = self.tx_coordinator.read();
         let tx = coord_guard.get_transaction(tx_id).unwrap();
@@ -560,39 +615,24 @@ impl NoiseKVClient {
         prev_seq_number: SequenceNumber,
     ) {
         let recipients = self.collect_recipients(ops.clone());
+        let do_reader_recipients = self.collect_do_reader_recipients(ops.clone());
         let transaction = Transaction::new(
             device_id.clone(),
             recipients.clone(),
+            do_reader_recipients.clone(),
             ops,
             prev_seq_number,
         );
         self.send_message(
             recipients,
+            do_reader_recipients,
             &Operation::to_string(&Operation::TxStart(device_id, transaction))
                 .unwrap(),
-        ).await;
+        )
+        .await;
     }
 
-    async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
-        let recipients = vec![self.idkey(), sender];
-        self.send_message(
-            recipients,
-            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
-                .unwrap(),
-        ).await;
-    }
-
-    async fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
-        let binding = self.tx_coordinator.read();
-        let tx = binding.get_transaction(tx_id).unwrap().clone();
-        self.send_message(
-            tx.recipients,
-            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
-                .unwrap(),
-        ).await;
-    }
-
-    async fn send_commit_to_coordinator(
+    async fn send_abort_to_coordinator(
         &self,
         sender: String,
         tx_id: SequenceNumber,
@@ -600,9 +640,23 @@ impl NoiseKVClient {
         let recipients = vec![self.idkey(), sender];
         self.send_message(
             recipients,
-            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
+            None,
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
                 .unwrap(),
-        ).await;
+        )
+        .await;
+    }
+
+    async fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
+        let binding = self.tx_coordinator.read();
+        let tx = binding.get_transaction(tx_id).unwrap().clone();
+        self.send_message(
+            tx.recipients,
+            None,
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
+                .unwrap(),
+        )
+        .await;
     }
 
     async fn send_commit_as_coordinator(&self, tx_id: SequenceNumber) {
@@ -610,9 +664,11 @@ impl NoiseKVClient {
         let tx = binding.get_transaction(tx_id).unwrap().clone();
         self.send_message(
             tx.recipients,
+            tx.do_reader_recipients,
             &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
                 .unwrap(),
-        ).await;
+        )
+        .await;
     }
 
     /* Receiving-side functions */
@@ -997,8 +1053,6 @@ impl NoiseKVClient {
                 );
                 if res == Err(Error::TransactionConflictsError) {
                     self.send_abort_to_coordinator(sender, seq).await;
-                } else if sender != self.idkey() {
-                    self.send_commit_to_coordinator(sender, seq).await;
                 }
                 Ok(())
             }
@@ -1009,9 +1063,7 @@ impl NoiseKVClient {
                     &tx_id,
                     seq,
                 );
-                if resp == Err(Error::SendToAll) {
-                    self.send_commit_as_coordinator(tx_id).await;
-                } else if resp == Ok(()) {
+                if resp == Ok(()) {
                     self.apply_locally(tx_id).await;
                 }
                 Ok(())
@@ -1074,6 +1126,7 @@ impl NoiseKVClient {
         match self
             .send_message(
                 vec![idkey],
+                None,
                 &Operation::to_string(&Operation::UpdateLinked(
                     self.core.as_ref().unwrap().idkey(),
                     linked_name,
@@ -1113,6 +1166,7 @@ impl NoiseKVClient {
         match self
             .send_message(
                 vec![sender],
+                None,
                 &Operation::to_string(&Operation::ConfirmUpdateLinked(
                     perm_linked_name,
                     self.device
@@ -1209,6 +1263,7 @@ impl NoiseKVClient {
         match self
             .send_message(
                 vec![contact_idkey],
+                None,
                 &Operation::to_string(&Operation::AddContact(
                     self.core.as_ref().unwrap().idkey(),
                     linked_name,
@@ -1257,6 +1312,7 @@ impl NoiseKVClient {
         match self
             .send_message(
                 vec![sender],
+                None,
                 &Operation::to_string(&Operation::ConfirmAddContact(
                     linked_name,
                     linked_device_groups,
@@ -1283,6 +1339,7 @@ impl NoiseKVClient {
                     .as_ref()
                     .unwrap()
                     .linked_devices_excluding_self(),
+                None,
                 &Operation::to_string(&Operation::DeleteOtherDevice(
                     self.core.as_ref().unwrap().idkey(),
                 ))
@@ -1318,6 +1375,7 @@ impl NoiseKVClient {
                     .as_ref()
                     .unwrap()
                     .linked_devices_excluding_self_and_other(&to_delete),
+                None,
                 &Operation::to_string(&Operation::DeleteOtherDevice(
                     to_delete.clone(),
                 ))
@@ -1336,6 +1394,7 @@ impl NoiseKVClient {
                 match self
                     .send_message(
                         vec![to_delete.clone()],
+                        None,
                         &Operation::to_string(&Operation::DeleteSelfDevice)
                             .unwrap(),
                     )
@@ -1362,6 +1421,7 @@ impl NoiseKVClient {
                     .iter()
                     .map(|x| x.clone())
                     .collect::<Vec<String>>(),
+                None,
                 &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
             )
             .await
@@ -1426,9 +1486,11 @@ impl NoiseKVClient {
 
     pub async fn end_transaction(&self) {
         let (ops, prev_seq_number) = self.tx_coordinator.write().exit_tx();
-        self.initiate_transaction(self.idkey(), ops, prev_seq_number).await;
+        self.initiate_transaction(self.idkey(), ops, prev_seq_number)
+            .await;
     }
 
+    // TODO: change message to be a collection of messages
     async fn send_or_add_to_txn(
         &self,
         dst_idkeys: Vec<String>,
@@ -1439,7 +1501,11 @@ impl NoiseKVClient {
             Ok(())
         } else {
             match self
-                .send_message(dst_idkeys, &Operation::to_string(op).unwrap())
+                .send_message(
+                    dst_idkeys,
+                    None,
+                    &Operation::to_string(op).unwrap(),
+                )
                 .await
             {
                 Ok(_) => Ok(()),
@@ -1565,7 +1631,7 @@ impl NoiseKVClient {
                         &Operation::SetGroup(
                             group_val.group_id().to_string(),
                             group_val.clone(),
-                        )
+                        ),
                     )
                     .await;
 
@@ -1580,7 +1646,7 @@ impl NoiseKVClient {
                         &Operation::AddParent(
                             self.linked_name().to_string(),
                             group_val.group_id().to_string(),
-                        )
+                        ),
                     )
                     .await;
 
@@ -1622,11 +1688,12 @@ impl NoiseKVClient {
 
         // includes idkeys of _all_ permissions
         // (including data-only readers)
+        // TODO make separate for read-only memebers of txn
         self.send_or_add_to_txn(
-                device_ids.clone(),
-                &Operation::UpdateData(data_id, basic_data)
-            )
-            .await
+            device_ids.clone(),
+            &Operation::UpdateData(data_id, basic_data),
+        )
+        .await
     }
 
     // TODO remove_data
@@ -1917,7 +1984,7 @@ impl NoiseKVClient {
                         &Operation::SetPerm(
                             perm_val.perm_id().to_string(),
                             perm_val.clone(),
-                        )
+                        ),
                     )
                     .await;
 
@@ -1930,9 +1997,7 @@ impl NoiseKVClient {
                 res = self
                     .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::SetGroups(
-                            assoc_groups,
-                        )
+                        &Operation::SetGroups(assoc_groups),
                     )
                     .await;
 
@@ -1948,7 +2013,7 @@ impl NoiseKVClient {
                             perm_val.perm_id().to_string(),
                             group_id_opt,
                             new_members,
-                        )
+                        ),
                     )
                     .await;
 
@@ -2011,7 +2076,7 @@ mod tests {
                 .unwrap();
         println!("sending operation to device 0");
         client_1
-            .send_message(vec![client_0.idkey()], &operation)
+            .send_message(vec![client_0.idkey()], None, &operation)
             .await;
 
         loop {
@@ -2041,7 +2106,7 @@ mod tests {
                 .unwrap();
         println!("sending operation to device 0");
         client_1
-            .send_message(vec![client_0.idkey()], &operation_1)
+            .send_message(vec![client_0.idkey()], None, &operation_1)
             .await;
 
         loop {
@@ -2060,7 +2125,7 @@ mod tests {
                 .unwrap();
         println!("sending operation to device 1");
         client_0
-            .send_message(vec![client_1.idkey()], &operation_2)
+            .send_message(vec![client_1.idkey()], None, &operation_2)
             .await;
 
         loop {
@@ -2090,7 +2155,7 @@ mod tests {
                 .unwrap();
         println!("sending operation to device 0");
         client_1
-            .send_message(vec![client_0.idkey()], &operation_1)
+            .send_message(vec![client_0.idkey()], None, &operation_1)
             .await;
 
         // send operation 2
@@ -2099,7 +2164,7 @@ mod tests {
                 .unwrap();
         println!("sending operation to device 1");
         client_0
-            .send_message(vec![client_1.idkey()], &operation_2)
+            .send_message(vec![client_1.idkey()], None, &operation_2)
             .await;
 
         loop {
@@ -2228,8 +2293,12 @@ mod tests {
         let recipients_2 = vec![client_5.idkey()];
 
         // send the messages
-        client_0.send_message(recipients_1, &operation_1).await;
-        client_0.send_message(recipients_2, &operation_2).await;
+        client_0
+            .send_message(recipients_1, None, &operation_1)
+            .await;
+        client_0
+            .send_message(recipients_2, None, &operation_2)
+            .await;
 
         // client_0 loop is unnecessary
         loop {
@@ -3283,7 +3352,8 @@ mod tests {
 
         println!("data_val_0: {:?}", data_val_0);
         println!("data_val_1: {:?}", data_val_1);
-        // because in sequential kv, the reader has incorrectly modified the data locally
+        // because in sequential kv, the reader has incorrectly modified the
+        // data locally
         assert_ne!(data_val_0, data_val_1);
 
         let perm_val_0 = client_0
@@ -3502,5 +3572,4 @@ mod tests {
 
         // successfully added contact
     }
-
 }

@@ -74,6 +74,7 @@ enum Operation {
     DeleteSelfDevice,
     DeleteOtherDevice(String),
     Test(String),
+    Dummy(u64),
 }
 
 impl Operation {
@@ -90,9 +91,14 @@ impl Operation {
 pub struct NoiseKVClient {
     core: Option<Arc<Core<NoiseKVClient>>>,
     pub device: Arc<RwLock<Option<Device<BasicData>>>>,
-    ctr: Arc<Mutex<u32>>,
+    ctr: Arc<Mutex<u64>>,
     ctr_cv: Arc<Condvar>,
     sec_wait_to_apply: Arc<Option<u64>>,
+    block_writes: bool,
+    sync_reads: bool,
+    mult_outstanding: bool,
+    op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
+    op_id_ctr_cv: Arc<Condvar>,
 }
 
 #[async_trait]
@@ -153,8 +159,11 @@ impl NoiseKVClient {
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
         common_ct_size_filename: Option<&'static str>,
-        test_wait_num_callbacks: Option<u32>,
+        test_wait_num_callbacks: Option<u64>,
         sec_wait_to_apply: Option<u64>,
+        block_writes: bool,
+        sync_reads: bool,
+        mult_outstanding: bool,
     ) -> NoiseKVClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let mut client = NoiseKVClient {
@@ -163,6 +172,11 @@ impl NoiseKVClient {
             ctr: Arc::new(Mutex::new(ctr_val)),
             ctr_cv: Arc::new(Condvar::new()),
             sec_wait_to_apply: Arc::new(sec_wait_to_apply),
+            block_writes,
+            sync_reads,
+            mult_outstanding,
+            op_id_ctr: Arc::new(Mutex::new((0, HashSet::new()))),
+            op_id_ctr_cv: Arc::new(Condvar::new()),
         };
 
         let core = Core::new(
@@ -237,8 +251,10 @@ impl NoiseKVClient {
         operation: &Operation,
     ) -> Result<(), Error> {
         match operation {
-            /* Dummy op */
+            /* Test op */
             Operation::Test(msg) => Ok(()),
+            /* Dummy op */
+            Operation::Dummy(num) => Ok(()),
             // TODO need manual checks
             //Operation::UpdateLinked(
             //    sender,
@@ -596,6 +612,15 @@ impl NoiseKVClient {
                 .delete_device(idkey_to_delete)
                 .map_err(Error::from),
             Operation::Test(_) => Ok(()),
+            Operation::Dummy(op_id) => {
+                let mut op_id_ctr = self.op_id_ctr.lock();
+                // remove op_id from hashset
+                op_id_ctr.1.remove(&op_id);
+                self.op_id_ctr_cv.notify_all();
+                core::mem::drop(op_id_ctr);
+
+                Ok(())
+            },
         }
     }
 
@@ -981,6 +1006,64 @@ impl NoiseKVClient {
     //    }
     //}
 
+    pub async fn get_data(
+        &self,
+        data_id: &String,
+    ) -> Result<Option<BasicData>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self.send_message(
+            vec![self.idkey()],
+            &Operation::to_string(&Operation::Dummy(
+                op_id.clone()
+            )).unwrap()
+        ).await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(
+                res.err().unwrap().to_string(),
+            ));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        // read data
+        let device_guard = self.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let data = data_store_guard.get_data(data_id);
+        Ok(data.map(|d| d.clone()))
+    }
+
     // TODO add facility for setting and sharing data at the same time
 
     pub async fn set_data(
@@ -993,6 +1076,26 @@ impl NoiseKVClient {
         // data writers?
         data_reader_idkeys: Option<Vec<String>>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
         // FIXME check write permissions
 
         let device_guard = self.device.read();
@@ -1164,7 +1267,7 @@ impl NoiseKVClient {
             None => {}
         }
 
-        match self
+        let res = self
             .send_message(
                 // includes idkeys of _all_ permissions
                 // (including data-only readers)
@@ -1174,11 +1277,43 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(err) => Err(Error::SendFailed(err.to_string())),
+            .await;
+        if res.is_err() {
+            return Err(Error::SendFailed(
+                res.err().unwrap().to_string(),
+            ));
         }
+
+        // FIXME better way to do this
+        let res = self.send_message(
+            vec![self.idkey()],
+            &Operation::to_string(&Operation::Dummy(
+                op_id.clone()
+            )).unwrap()
+        ).await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(
+                res.err().unwrap().to_string(),
+            ));
+        }
+
+
+        ////////
+
+        // check if need to block on writes, and if so, if this write has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.block_writes && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     // TODO remove_data

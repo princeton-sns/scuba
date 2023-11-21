@@ -90,6 +90,7 @@ impl Operation {
 #[derive(Clone)]
 pub struct NoiseKVClient {
     core: Option<Arc<Core<NoiseKVClient>>>,
+    // TODO remove pub
     pub device: Arc<RwLock<Option<Device<BasicData>>>>,
     ctr: Arc<Mutex<u64>>,
     ctr_cv: Arc<Condvar>,
@@ -989,22 +990,26 @@ impl NoiseKVClient {
         vec
     }
 
-    //fn get_group_ids_from_perm_id(&self, perm_id: &String) -> Vec<String> {
-    //    match self
-    //        .device
-    //        .read()
-    //        .as_ref()
-    //        .unwrap()
-    //        .meta_store
-    //        .read()
-    //        .get_perm(perm_id)
-    //    {
-    //        Some(perm_val) => {
-    //            self.get_metadata_reader_groups_from_perm(perm_val)
-    //        }
-    //        None => { Vec::<String>::new() }
-    //    }
-    //}
+    /*
+     * Existing set_*() functions whose writes should abide by consistency rules:
+     * - create_standalone_device()
+     * - create_linked_device()
+     * - add_contact() ?
+     * - delete_*()
+     * - add_permissions()
+     */
+
+    /*
+     * New/existing get_*() functions whose reads should abide by consistency rules:
+     * - get_device()
+     * - get_linked_devices()
+     * - get_contacts() ? -- TODO should be refactored to be an app-specific thing; so will be included in get_data
+     * - get_all_data()
+     * - get_perm() / get_all_perms()
+     * - get_group() / get_all_groups()
+     * - get_idkey()
+     * - get_linked_name()
+     */
 
     pub async fn get_data(
         &self,
@@ -1345,13 +1350,6 @@ impl NoiseKVClient {
     // could group->perm backpointers (go up the group tree
     // until find a perm_id OR propagate perm_ids to all group
     // children? - latter seems worse)
-
-    //pub async fn add_readers(
-    //    &self,
-    //    data_id: String,
-    //    mut names: Vec<&String>,
-    //) -> Result<(), Error> {
-    //}
 
     pub async fn add_do_readers(
         &self,

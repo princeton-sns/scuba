@@ -177,6 +177,10 @@ impl FamilyApp {
             Some("familyapp.txt"),
             None,
             None,
+            // causal consistency
+            false,
+            false,
+            true
         )
         .await;
         Self { client }
@@ -446,8 +450,7 @@ impl FamilyApp {
         )))
     }
 
-    pub fn get_location(
-        _args: ArgMatches,
+    pub async fn get_location(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -456,17 +459,16 @@ impl FamilyApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-
-        let member_obj = data_store_guard
+        let member_obj = context.client
             .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
             .unwrap();
         let member: Member =
             serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
-        let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+        let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
         Ok(Some(String::from(format!("{}", loc_obj.data_val()))))
     }
@@ -542,9 +544,7 @@ impl FamilyApp {
         let fam_id = args.get_one::<String>("fam_id").unwrap();
         let contact_name = args.get_one::<String>("contact_name").unwrap();
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let fam_opt = data_store_guard.get_data(&fam_id);
+        let fam_opt = context.client.get_data(&fam_id).await.unwrap();
 
         match fam_opt {
             Some(fam_obj) => {
@@ -552,7 +552,6 @@ impl FamilyApp {
                     serde_json::from_str(fam_obj.data_val()).unwrap();
                 fam.add_member(contact_name);
                 let fam_json = serde_json::to_string(&fam).unwrap();
-                core::mem::drop(data_store_guard);
 
                 match context
                     .client
@@ -617,9 +616,7 @@ impl FamilyApp {
         let fam_id = args.get_one::<String>("fam_id").unwrap();
         let contents = args.get_one::<String>("post").unwrap();
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let fam_opt = data_store_guard.get_data(&fam_id);
+        let fam_opt = context.client.get_data(&fam_id).await.unwrap();
 
         // TODO might be good to put the three operations below in a transaction
         // (set post, share post, update family)
@@ -651,7 +648,6 @@ impl FamilyApp {
                             .iter()
                             .filter(|&x| *x != own_name)
                             .collect::<Vec<&String>>();
-                        core::mem::drop(data_store_guard);
 
                         // temporary hack b/c cannot set and share data
                         // at the same time, and sharing expects that
@@ -727,9 +723,7 @@ impl FamilyApp {
         let post_id = args.get_one::<String>("post_id").unwrap();
         let contents = args.get_one::<String>("comment").unwrap();
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let post_opt = data_store_guard.get_data(&post_id);
+        let post_opt = context.client.get_data(&post_id).await.unwrap();
 
         // TODO might be good to put the three operations below in a transaction
         // (set comment, share comment, update post)
@@ -758,7 +752,7 @@ impl FamilyApp {
                             serde_json::from_str(post_obj.data_val()).unwrap();
                         let fam_id = post.family_id.clone();
                         let fam_obj =
-                            data_store_guard.get_data(&fam_id).unwrap();
+                            context.client.get_data(&fam_id).await.unwrap().unwrap();
                         let fam: Family =
                             serde_json::from_str(fam_obj.data_val()).unwrap();
                         let own_name = context.client.linked_name();
@@ -767,7 +761,6 @@ impl FamilyApp {
                             .iter()
                             .filter(|&x| *x != own_name)
                             .collect::<Vec<&String>>();
-                        core::mem::drop(data_store_guard);
 
                         // temporary hack b/c cannot set and share data
                         // at the same time, and sharing expects that
@@ -839,17 +832,16 @@ impl FamilyApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-
-        let member_obj = data_store_guard
+        let member_obj = context.client
             .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
             .unwrap();
         let member: Member =
             serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
-        let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+        let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
         let mut loc: Location =
             serde_json::from_str(loc_obj.data_val()).unwrap();
@@ -888,8 +880,10 @@ impl FamilyApp {
         // get own location object
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let member_obj = data_store_guard
+        let member_obj = context.client
             .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
             .unwrap();
         let member: Member =
             serde_json::from_str(member_obj.data_val()).unwrap();
@@ -919,9 +913,7 @@ impl FamilyApp {
         }
 
         let fam_id = args.get_one::<String>("fam_id").unwrap();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let fam_opt = data_store_guard.get_data(&fam_id);
+        let fam_opt = context.client.get_data(&fam_id).await.unwrap();
 
         match fam_opt {
             Some(fam_obj) => {
@@ -931,14 +923,16 @@ impl FamilyApp {
                 let fam_members =
                     fam_clone.members.iter().collect::<Vec<&String>>();
 
-                let member_obj = data_store_guard
+                let member_obj = context.client
                     .get_data(&MEMBER_PREFIX.to_string())
+                    .await
+                    .unwrap()
                     .unwrap();
                 let member: Member =
                     serde_json::from_str(member_obj.data_val()).unwrap();
 
                 let loc_id = member.location_id;
-                let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+                let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
                 // add location object id to family
                 fam.add_location(&loc_id);
@@ -1139,7 +1133,9 @@ async fn main() -> ReplResult<()> {
             Command::new("get_linked_devices"),
             FamilyApp::get_linked_devices,
         )
-        .with_command(Command::new("get_location"), FamilyApp::get_location)
+        .with_command_async(Command::new("get_location"), |_, context| {
+            Box::pin(FamilyApp::get_location(context))
+        })
         .with_command_async(Command::new("init_family"), |_, context| {
             Box::pin(FamilyApp::init_family(context))
         })

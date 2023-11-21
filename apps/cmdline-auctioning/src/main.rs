@@ -189,6 +189,10 @@ impl AuctioningApp {
             Some("auctioning.txt"),
             None,
             None,
+            // sequential consistency
+            true,
+            false,
+            false,
         )
         .await;
         Self { client }
@@ -339,8 +343,8 @@ impl AuctioningApp {
         }
     }
 
-    pub fn get_data(
-        _args: ArgMatches,
+    pub async fn get_data(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -351,9 +355,22 @@ impl AuctioningApp {
 
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let data = data_store_guard.get_all_data().values();
-
-        Ok(Some(itertools::join(data, "\n")))
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_data(id).await {
+                Ok(Some(data)) => Ok(Some(String::from(format!("{}", data)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Data with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get data: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let data = data_store_guard.get_all_data().values();
+            Ok(Some(itertools::join(data, "\n")))
+        }
     }
 
     pub fn get_perms(
@@ -449,10 +466,8 @@ impl AuctioningApp {
 
         let client_id =
             args.get_one::<String>("client_id").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let open_clients_opt =
-            data_store_guard.get_data(&OPEN_CLIENTS_PREFIX.to_string());
+            context.client.get_data(&OPEN_CLIENTS_PREFIX.to_string()).await.unwrap();
         if open_clients_opt.is_none() {
             let mut open_clients = OpenAuctionClients::new();
             open_clients.add_client(&client_id);
@@ -519,10 +534,8 @@ impl AuctioningApp {
 
         let auction_id =
             args.get_one::<String>("auction_id").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let open_clients_opt =
-            data_store_guard.get_data(&OPEN_CLIENTS_PREFIX.to_string());
+            context.client.get_data(&OPEN_CLIENTS_PREFIX.to_string()).await.unwrap();
         if open_clients_opt.is_none() {
             return Ok(Some(String::from(
                 "Open clients list does not exist: add clients for open auction announcements."
@@ -655,11 +668,8 @@ impl AuctioningApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-
         let bid_id = args.get_one::<String>("bid_id").unwrap().to_string();
-        let bid_data_opt = data_store_guard.get_data(&bid_id);
+        let bid_data_opt = context.client.get_data(&bid_id).await.unwrap();
         if bid_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Bid with id {} does not exist",
@@ -670,7 +680,7 @@ impl AuctioningApp {
             serde_json::from_str(bid_data_opt.unwrap().data_val()).unwrap();
 
         let auction_id = bid.auction_id.clone();
-        let auction_data_opt = data_store_guard.get_data(&auction_id);
+        let auction_data_opt = context.client.get_data(&auction_id).await.unwrap();
         if auction_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Auction with id {} does not exist",
@@ -716,10 +726,8 @@ impl AuctioningApp {
 
         let auction_id =
             args.get_one::<String>("auction_id").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
 
-        let auction_data_opt = data_store_guard.get_data(&auction_id);
+        let auction_data_opt = context.client.get_data(&auction_id).await.unwrap();
         if auction_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Auction with id {} does not exist",
@@ -793,7 +801,13 @@ async fn main() -> ReplResult<()> {
             Command::new("get_linked_devices"),
             AuctioningApp::get_linked_devices,
         )
-        .with_command(Command::new("get_data"), AuctioningApp::get_data)
+        .with_command_async(
+            Command::new("get_data")
+                .arg(Arg::new("id").required(false)),
+            |args, context| {
+                Box::pin(AuctioningApp::get_data(args, context))
+            },
+        )
         .with_command(Command::new("get_perms"), AuctioningApp::get_perms)
         .with_command(Command::new("get_groups"), AuctioningApp::get_groups)
         .with_command_async(

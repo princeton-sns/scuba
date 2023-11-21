@@ -128,6 +128,7 @@ impl PasswordManager {
             Some("passmanager.txt"),
             None,
             None,
+            // linearizability
             true,
             true,
             false

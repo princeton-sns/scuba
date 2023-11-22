@@ -2,6 +2,7 @@ use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::Values;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::{thread, time};
@@ -12,6 +13,28 @@ use noise_core::core::{Core, CoreClient};
 use crate::data::{BasicData, NoiseData};
 use crate::devices::Device;
 use crate::metadata::{Group, PermType, PermissionSet};
+
+/*
+ * Existing set_*() functions whose writes should abide by consistency rules:
+ * - [x] create_standalone_device()
+ * - [x] create_linked_device()
+ * - [ ] delete_device_*() (when used)
+ * - [x] add_contact()
+ * - [x] add_permissions()
+ * - [ ] delete_data() (not impl)
+ * - [ ] remove_permissions() (not impl)
+ */
+
+/*
+ * New get_*() functions whose reads should abide by consistency rules:
+ * - [x] get_linked_devices()
+ * - [x] get_data()
+ * - [x] get_all_data()
+ * - [x] get_perm()
+ * - [x] get_all_perms()
+ * - [x] get_group()
+ * - [x] get_all_groups()
+ */
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -74,6 +97,7 @@ enum Operation {
     DeleteSelfDevice,
     DeleteOtherDevice(String),
     Test(String),
+    Dummy(u64),
 }
 
 impl Operation {
@@ -89,10 +113,17 @@ impl Operation {
 #[derive(Clone)]
 pub struct NoiseKVClient {
     core: Option<Arc<Core<NoiseKVClient>>>,
+    // TODO remove pub
     pub device: Arc<RwLock<Option<Device<BasicData>>>>,
-    ctr: Arc<Mutex<u32>>,
+    ctr: Arc<Mutex<u64>>,
     ctr_cv: Arc<Condvar>,
     sec_wait_to_apply: Arc<Option<u64>>,
+    block_writes: bool,
+    sync_reads: bool,
+    mult_outstanding: bool,
+    multikey: bool,
+    op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
+    op_id_ctr_cv: Arc<Condvar>,
 }
 
 #[async_trait]
@@ -153,8 +184,11 @@ impl NoiseKVClient {
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
         common_ct_size_filename: Option<&'static str>,
-        test_wait_num_callbacks: Option<u32>,
+        test_wait_num_callbacks: Option<u64>,
         sec_wait_to_apply: Option<u64>,
+        block_writes: bool,
+        sync_reads: bool,
+        mult_outstanding: bool,
     ) -> NoiseKVClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let mut client = NoiseKVClient {
@@ -163,6 +197,12 @@ impl NoiseKVClient {
             ctr: Arc::new(Mutex::new(ctr_val)),
             ctr_cv: Arc::new(Condvar::new()),
             sec_wait_to_apply: Arc::new(sec_wait_to_apply),
+            block_writes,
+            sync_reads,
+            mult_outstanding,
+            multikey: false,
+            op_id_ctr: Arc::new(Mutex::new((0, HashSet::new()))),
+            op_id_ctr_cv: Arc::new(Condvar::new()),
         };
 
         let core = Core::new(
@@ -192,41 +232,6 @@ impl NoiseKVClient {
         client
     }
 
-    //fn exists_device(&self) -> bool {
-    //    match self.device.read().as_ref() {
-    //        Some(_) => true,
-    //        None => false,
-    //    }
-    //}
-
-    pub fn idkey(&self) -> String {
-        self.core.as_ref().unwrap().idkey()
-    }
-
-    pub fn linked_name(&self) -> String {
-        self.device
-            .read()
-            .as_ref()
-            .unwrap()
-            .linked_name
-            .read()
-            .clone()
-    }
-
-    /* Sending-side functions */
-
-    async fn send_message(
-        &self,
-        dst_idkeys: Vec<String>,
-        payload: &String,
-    ) -> reqwest::Result<reqwest::Response> {
-        self.core
-            .as_ref()
-            .unwrap()
-            .send_message(dst_idkeys, payload)
-            .await
-    }
-
     /* Receiving-side functions */
 
     // TODO put each permission check in own function if will be used by
@@ -237,8 +242,10 @@ impl NoiseKVClient {
         operation: &Operation,
     ) -> Result<(), Error> {
         match operation {
-            /* Dummy op */
+            /* Test op */
             Operation::Test(msg) => Ok(()),
+            /* Dummy op */
+            Operation::Dummy(num) => Ok(()),
             // TODO need manual checks
             //Operation::UpdateLinked(
             //    sender,
@@ -555,7 +562,6 @@ impl NoiseKVClient {
             //    .remove_child(&group_id, &child_id)
             //    .map_err(Error::from),
             Operation::UpdateData(data_id, data_val) => {
-                //println!("\ndemux: ACQ DATA STORE WRITE LOCK\n");
                 self.device
                     .read()
                     .as_ref()
@@ -563,7 +569,6 @@ impl NoiseKVClient {
                     .data_store
                     .write()
                     .set_data(data_id, data_val);
-                //println!("\ndemux: DROPPED DATA STORE WRITE LOCK\n");
                 Ok(())
             }
             Operation::DeleteData(data_id) => {
@@ -596,10 +601,51 @@ impl NoiseKVClient {
                 .delete_device(idkey_to_delete)
                 .map_err(Error::from),
             Operation::Test(_) => Ok(()),
+            Operation::Dummy(op_id) => {
+                let mut op_id_ctr = self.op_id_ctr.lock();
+                // remove op_id from hashset
+                op_id_ctr.1.remove(&op_id);
+                self.op_id_ctr_cv.notify_all();
+                core::mem::drop(op_id_ctr);
+
+                Ok(())
+            }
         }
     }
 
+    /* Sending-side functions */
+
+    async fn send_message(
+        &self,
+        dst_idkeys: Vec<String>,
+        payload: &String,
+    ) -> reqwest::Result<reqwest::Response> {
+        self.core
+            .as_ref()
+            .unwrap()
+            .send_message(dst_idkeys, payload)
+            .await
+    }
+
     /* Remaining top-level functionality */
+
+    // Doesn't make sense to sync this read, since the idkey is needed to send
+    // the sync message anyway
+    pub fn idkey(&self) -> String {
+        self.core.as_ref().unwrap().idkey()
+    }
+
+    // Also doesn't make sense to sync this read, since there's no way to change
+    // this after a device is initialized (at the moment)
+    pub fn linked_name(&self) -> String {
+        self.device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone()
+    }
 
     /*
      * Creating/linking devices
@@ -607,15 +653,113 @@ impl NoiseKVClient {
 
     // TODO if no linked devices, linked_name can just == idkey
     // only create linked_group if link devices
-    pub fn create_standalone_device(&self) {
+    pub async fn create_standalone_device(&self) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // create device
         *self.device.write() =
             Some(Device::new(self.core.as_ref().unwrap().idkey(), None, None));
+        Ok(())
     }
 
     pub async fn create_linked_device(
         &self,
         idkey: String,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
         *self.device.write() = Some(Device::new(
             self.core.as_ref().unwrap().idkey(),
             None,
@@ -715,35 +859,115 @@ impl NoiseKVClient {
         }
     }
 
+    pub async fn get_linked_devices(&self) -> Result<HashSet<String>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read linked devices
+        Ok(self.device.read().as_ref().unwrap().linked_devices())
+    }
+
     /*
      * Contacts
      */
-
-    // FIXME breaks once share data; should probably be either app-level
-    // or impl differently
-    pub fn get_contacts(&self) -> HashSet<String> {
-        self.device.read().as_ref().unwrap().get_contacts()
-    }
-
-    fn is_contact(&self, name: &String) -> bool {
-        match self
-            .device
-            .read()
-            .as_ref()
-            .unwrap()
-            .meta_store
-            .read()
-            .get_group(name)
-        {
-            Some(group_val) => group_val.is_contact_name,
-            None => false,
-        }
-    }
 
     pub async fn add_contact(
         &self,
         contact_idkey: String,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
         let linked_name = self
             .device
             .read()
@@ -964,22 +1188,362 @@ impl NoiseKVClient {
         vec
     }
 
-    //fn get_group_ids_from_perm_id(&self, perm_id: &String) -> Vec<String> {
-    //    match self
-    //        .device
-    //        .read()
-    //        .as_ref()
-    //        .unwrap()
-    //        .meta_store
-    //        .read()
-    //        .get_perm(perm_id)
-    //    {
-    //        Some(perm_val) => {
-    //            self.get_metadata_reader_groups_from_perm(perm_val)
-    //        }
-    //        None => { Vec::<String>::new() }
-    //    }
-    //}
+    pub async fn get_perm(
+        &self,
+        perm_id: &String,
+    ) -> Result<Option<PermissionSet>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read perm
+        let device_guard = self.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let perm = meta_store_guard.get_perm(perm_id);
+        Ok(perm.map(|x| x.clone()))
+    }
+
+    pub async fn get_all_perms(&self) -> Result<Vec<PermissionSet>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read all perms
+        let device_guard = self.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let perms = meta_store_guard.get_all_perms().values();
+        let mut values = Vec::<PermissionSet>::new();
+        for perm in perms {
+            values.push(perm.clone())
+        }
+        Ok(values)
+    }
+
+    pub async fn get_group(
+        &self,
+        group_id: &String,
+    ) -> Result<Option<Group>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read group
+        let device_guard = self.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let group = meta_store_guard.get_group(group_id);
+        Ok(group.map(|x| x.clone()))
+    }
+
+    pub async fn get_all_groups(&self) -> Result<Vec<Group>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read all groups
+        let device_guard = self.device.read();
+        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
+        let groups = meta_store_guard.get_all_groups().values();
+        let mut values = Vec::<Group>::new();
+        for group in groups {
+            values.push(group.clone())
+        }
+        Ok(values)
+    }
+
+    pub async fn get_data(
+        &self,
+        data_id: &String,
+    ) -> Result<Option<BasicData>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read data
+        let device_guard = self.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let data = data_store_guard.get_data(data_id);
+        Ok(data.map(|x| x.clone()))
+    }
+
+    pub async fn get_all_data(&self) -> Result<Vec<BasicData>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read all data
+        let device_guard = self.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let data = data_store_guard.get_all_data().values();
+        let mut values = Vec::<BasicData>::new();
+        for datum in data {
+            values.push(datum.clone())
+        }
+        Ok(values)
+    }
 
     // TODO add facility for setting and sharing data at the same time
 
@@ -992,13 +1556,36 @@ impl NoiseKVClient {
         // setting? why just enabled for data readers and, e.g., not
         // data writers?
         data_reader_idkeys: Option<Vec<String>>,
+        add_perm_op_id: Option<u64>,
     ) -> Result<(), Error> {
+        let op_id;
+        if add_perm_op_id.is_none() {
+            // check if can have multiple outstanding ops, or if not, check that
+            // no other ops are outstanding
+            loop {
+                let mut op_id_ctr = self.op_id_ctr.lock();
+                if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                    // release the lock
+                    let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+                } else {
+                    // get op_id and inc id ctr
+                    op_id = op_id_ctr.0;
+                    op_id_ctr.0 += 1;
+                    // add op into hashset
+                    op_id_ctr.1.insert(op_id);
+                    break;
+                }
+            }
+        } else {
+            op_id = add_perm_op_id.unwrap();
+        }
+
+        /////////
+
         // FIXME check write permissions
 
         let device_guard = self.device.read();
-        //println!("\nset_data: ACQUIRED DEVICE READ LOCK\n");
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        //println!("\nset_data: ACQUIRED DATA STORE READ LOCK\n");
         let existing_val = data_store_guard.get_data(&data_id).clone();
 
         // if data exists, use existing perms; otherwise create new one
@@ -1135,7 +1722,6 @@ impl NoiseKVClient {
         }
 
         core::mem::drop(data_store_guard);
-        //println!("\nset_data: DROPPED DATA STORE READ LOCK\n");
 
         let basic_data = BasicData::new(
             data_id.clone(),
@@ -1164,7 +1750,7 @@ impl NoiseKVClient {
             None => {}
         }
 
-        match self
+        let res = self
             .send_message(
                 // includes idkeys of _all_ permissions
                 // (including data-only readers)
@@ -1174,11 +1760,39 @@ impl NoiseKVClient {
                 ))
                 .unwrap(),
             )
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(err) => Err(Error::SendFailed(err.to_string())),
+            .await;
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
+
+        // FIXME better way to do this
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        ////////
+
+        // check if need to block on writes, and if so, if this write has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.block_writes && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     // TODO remove_data
@@ -1211,18 +1825,29 @@ impl NoiseKVClient {
     // until find a perm_id OR propagate perm_ids to all group
     // children? - latter seems worse)
 
-    //pub async fn add_readers(
-    //    &self,
-    //    data_id: String,
-    //    mut names: Vec<&String>,
-    //) -> Result<(), Error> {
-    //}
-
     pub async fn add_do_readers(
         &self,
         data_id: String,
         do_readers: Vec<&String>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
         self.add_permissions(
             data_id,
             PermType::DOReaders(
@@ -1233,6 +1858,7 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
             ),
             do_readers,
+            op_id,
         )
         .await
     }
@@ -1242,6 +1868,24 @@ impl NoiseKVClient {
         data_id: String,
         readers: Vec<&String>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
         self.add_permissions(
             data_id,
             PermType::Readers(
@@ -1252,6 +1896,7 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
             ),
             readers,
+            op_id,
         )
         .await
     }
@@ -1261,6 +1906,24 @@ impl NoiseKVClient {
         data_id: String,
         writers: Vec<&String>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
         self.add_permissions(
             data_id,
             PermType::Writers(
@@ -1271,6 +1934,7 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
             ),
             writers,
+            op_id,
         )
         .await
     }
@@ -1280,10 +1944,9 @@ impl NoiseKVClient {
         data_id: String,
         new_members: PermType,
         mut new_members_refs: Vec<&String>, // FIXME one or the other
+        op_id: u64,
     ) -> Result<(), Error> {
-        //println!("\nadd_perm: ACQ DEVICE READ LOCK\n");
         let device_guard = self.device.read();
-        //println!("\nadd_perm: ACQ DATA STORE READ LOCK\n");
         let mut data_store_guard =
             device_guard.as_ref().unwrap().data_store.read();
 
@@ -1291,7 +1954,6 @@ impl NoiseKVClient {
         match data_store_guard.get_data(&data_id) {
             None => return Err(Error::NonexistentData(data_id)),
             Some(data_val) => {
-                //println!("\nadd_perm: ACQ METADATA STORE READ LOCK\n");
                 let mut meta_store_guard =
                     device_guard.as_ref().unwrap().meta_store.read();
 
@@ -1369,13 +2031,10 @@ impl NoiseKVClient {
                     PermType::Owners(_)
                     | PermType::Writers(_)
                     | PermType::Readers(_) => {
-                        //println!("\nNEW MEMBERS READ BOTH METADATA +
-                        // DATA\n");
                         metadata_readers.append(&mut new_members_refs.clone());
                         data_readers.append(&mut new_members_refs.clone());
                     }
                     PermType::DOReaders(_) => {
-                        //println!("\nNEW MEMBERS ONLY READ DATA\n");
                         data_readers.append(&mut new_members_refs.clone());
                     }
                 }
@@ -1389,10 +2048,6 @@ impl NoiseKVClient {
                     .resolve_group_ids(data_readers)
                     .into_iter()
                     .collect::<Vec<String>>();
-
-                //println!("\nmetadata_reader_idkeys: {:?}\n",
-                // metadata_reader_idkeys); println!("\
-                // ndata_reader_idkeys: {:?}\n", data_reader_idkeys);
 
                 // FIXME still need to send owner to data-only-readers so they
                 // can confirm that the src idkey can actually write the data
@@ -1466,8 +2121,6 @@ impl NoiseKVClient {
 
                 core::mem::drop(meta_store_guard);
 
-                //println!("\nadd_perm: DROPPED METADATA STORE READ LOCK\n");
-
                 // first send SetPerm for existing, unmodified perm_set
                 // TODO remove this device from the idkeys for this op only
                 let mut res = self
@@ -1535,16 +2188,14 @@ impl NoiseKVClient {
                 let data_val_interior = data_val.data_val().clone();
 
                 core::mem::drop(data_store_guard);
-                //println!("\nadd_perm: DROPPED DATA STORE READ LOCK\n");
-
                 core::mem::drop(device_guard);
-                //println!("\nadd_perm: DROPPED DEVICE READ LOCK\n");
 
                 self.set_data(
                     data_id,
                     data_type,
                     data_val_interior,
                     Some(data_reader_idkeys),
+                    Some(op_id),
                 )
                 .await
             }

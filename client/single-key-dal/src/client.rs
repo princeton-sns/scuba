@@ -26,7 +26,7 @@ use crate::metadata::{Group, PermType, PermissionSet};
 
 /*
  * New get_*() functions whose reads should abide by consistency rules:
- * - [?] get_linked_devices()
+ * - [x] get_linked_devices()
  * - [x] get_data()
  * - [x] get_all_data()
  * - [x] get_perm()

@@ -18,7 +18,7 @@ use crate::metadata::{Group, PermType, PermissionSet};
  * Existing set_*() functions whose writes should abide by consistency rules:
  * - [x] create_standalone_device()
  * - [x] create_linked_device()
- * - [ ] delete_device_*()
+ * - [ ] delete_device_*() (when used)
  * - [x] add_contact()
  * - [x] add_permissions()
  * - [ ] delete_data() (not impl)

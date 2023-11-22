@@ -10,8 +10,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
-    EncryptedCommonPayload, EncryptedOutboxMessage,
-    EncryptedPerRecipientPayload, Event, ServerComm, ToDelete,
+    EncryptedCommonPayload, EncryptedInboxMessage, EncryptedOutboxMessage,
+    EncryptedPerRecipientPayload, Event, EncryptedOutboxMessages, ServerComm, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -148,9 +148,11 @@ impl<C: CoreClient> Core<C> {
         self.crypto.get_idkey()
     }
 
+    // TODO: change message to be a collection of messages
     pub async fn send_message(
         &self,
-        dst_idkeys: Vec<String>,
+        dst_idkeys_w_metadata: Vec<String>,
+        dst_idkeys_wo_metadata: Vec<String>, //TODO: change to option
         payload: &String,
     ) -> reqwest::Result<reqwest::Response> {
         loop {
@@ -163,8 +165,12 @@ impl<C: CoreClient> Core<C> {
         }
 
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
+        let mut compose_dst_idkeys = Vec::new();
+        compose_dst_idkeys.append(&mut dst_idkeys_w_metadata.clone());
+        compose_dst_idkeys.append(&mut dst_idkeys_wo_metadata.clone());
+        // still need to get validation payload for all
         let (common_payload, val_payloads) = hash_vectors_guard
-            .prepare_message(dst_idkeys.clone(), payload.to_string());
+            .prepare_message(compose_dst_idkeys, payload.to_string());
 
         // FIXME What if common_payloads are identical?
         // If they're identical here, they can trigger a reordering detection,
@@ -200,6 +206,9 @@ impl<C: CoreClient> Core<C> {
             write!(f, "{}\n", common_ct.clone().len());
         }
 
+        // vector of messages to be sequences sequentially
+        let mut outgoing_messages = Vec::new();
+
         // Can't use .iter().map().collect() due to async/await
         let mut encrypted_per_recipient_payloads = HashMap::new();
         for (idkey, val_payload) in val_payloads {
@@ -216,18 +225,38 @@ impl<C: CoreClient> Core<C> {
                 )
                 .await;
 
-            // Ensure we're never encrypting to the same key twice
-            assert!(encrypted_per_recipient_payloads
-                .insert(
+            // if part of reader-only, don't include in main message
+            if dst_idkeys_w_metadata.contains(&idkey) {
+                // Ensure we're never encrypting to the same key twice
+                assert!(encrypted_per_recipient_payloads
+                    .insert(
+                        idkey.clone(),
+                        EncryptedPerRecipientPayload { c_type, ciphertext }
+                    )
+                    .is_none());
+            } else {
+                // TODO: check we didn't insert multiple times?
+                let mut map = HashMap::new(); // FIXME: change struct so it's not a map!
+                map.insert(
                     idkey,
-                    EncryptedPerRecipientPayload { c_type, ciphertext }
-                )
-                .is_none());
+                    EncryptedPerRecipientPayload { c_type, ciphertext },
+                );
+                outgoing_messages.push(EncryptedOutboxMessage {
+                    enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
+                    enc_recipients: map,
+                })
+            }
         }
 
-        let encrypted_message = EncryptedOutboxMessage {
+        let encrypted_message_with_metadata = EncryptedOutboxMessage {
             enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
             enc_recipients: encrypted_per_recipient_payloads,
+        };
+
+        // add "main" message with all those w/access to metadata
+        outgoing_messages.push(encrypted_message_with_metadata);
+        let outbox_messages = EncryptedOutboxMessages {
+            messages: outgoing_messages,
         };
 
         // loop until front of queue is ready to send
@@ -246,7 +275,7 @@ impl<C: CoreClient> Core<C> {
             .await
             .as_ref()
             .unwrap()
-            .send_message(&encrypted_message)
+            .send_message(&outbox_messages)
             .await
     }
 

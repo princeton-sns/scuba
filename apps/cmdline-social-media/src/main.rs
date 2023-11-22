@@ -1012,24 +1012,7 @@ impl FamilyApp {
         }
     }
 
-    pub fn get_perms(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perms = meta_store_guard.get_all_perms().values();
-
-        Ok(Some(itertools::join(perms, "\n")))
-    }
-
-    pub fn get_perm(
+    pub async fn get_perms(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -1039,38 +1022,25 @@ impl FamilyApp {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap();
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perm_opt = meta_store_guard.get_perm(&id);
-
-        match perm_opt {
-            Some(perm) => Ok(Some(String::from(format!("{}", perm)))),
-            None => Ok(Some(String::from(format!(
-                "Perm with id {} does not exist",
-                id
-            )))),
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_perm(id).await {
+                Ok(Some(perm)) => Ok(Some(String::from(format!("{}", perm)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Perm with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get perm: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let perms = context.client.get_all_perms().await.unwrap();
+            Ok(Some(itertools::join(perms, "\n")))
         }
     }
 
-    pub fn get_groups(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let groups = meta_store_guard.get_all_groups().values();
-
-        Ok(Some(itertools::join(groups, "\n")))
-    }
-
-    pub fn get_group(
+    pub async fn get_groups(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -1080,17 +1050,21 @@ impl FamilyApp {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap();
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let group_opt = meta_store_guard.get_group(&id);
-
-        match group_opt {
-            Some(group) => Ok(Some(String::from(format!("{}", group)))),
-            None => Ok(Some(String::from(format!(
-                "Group with id {} does not exist",
-                id
-            )))),
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_group(id).await {
+                Ok(Some(group)) => Ok(Some(String::from(format!("{}", group)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Group with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get group: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let groups = context.client.get_all_groups().await.unwrap();
+            Ok(Some(itertools::join(groups, "\n")))
         }
     }
 }
@@ -1167,15 +1141,13 @@ async fn main() -> ReplResult<()> {
             Command::new("get_data").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(FamilyApp::get_data(args, context)),
         )
-        .with_command(Command::new("get_perms"), FamilyApp::get_perms)
-        .with_command(
-            Command::new("get_perm").arg(Arg::new("id").required(true)),
-            FamilyApp::get_perm,
+        .with_command_async(
+            Command::new("get_perms").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(FamilyApp::get_perms(args, context)),
         )
-        .with_command(Command::new("get_groups"), FamilyApp::get_groups)
-        .with_command(
-            Command::new("get_group").arg(Arg::new("id").required(true)),
-            FamilyApp::get_group,
+        .with_command_async(
+            Command::new("get_groups").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(FamilyApp::get_groups(args, context)),
         );
 
     repl.run_async().await

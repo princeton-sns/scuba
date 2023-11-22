@@ -371,8 +371,8 @@ impl AuctioningApp {
         }
     }
 
-    pub fn get_perms(
-        _args: ArgMatches,
+    pub async fn get_perms(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -381,15 +381,26 @@ impl AuctioningApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perms = meta_store_guard.get_all_perms().values();
-
-        Ok(Some(itertools::join(perms, "\n")))
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_perm(id).await {
+                Ok(Some(perm)) => Ok(Some(String::from(format!("{}", perm)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Perm with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get perm: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let perms = context.client.get_all_perms().await.unwrap();
+            Ok(Some(itertools::join(perms, "\n")))
+        }
     }
 
-    pub fn get_groups(
-        _args: ArgMatches,
+    pub async fn get_groups(
+        args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -398,11 +409,22 @@ impl AuctioningApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let groups = meta_store_guard.get_all_groups().values();
-
-        Ok(Some(itertools::join(groups, "\n")))
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_group(id).await {
+                Ok(Some(group)) => Ok(Some(String::from(format!("{}", group)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Group with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get group: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let groups = context.client.get_all_groups().await.unwrap();
+            Ok(Some(itertools::join(groups, "\n")))
+        }
     }
 
     pub async fn share(
@@ -806,8 +828,20 @@ async fn main() -> ReplResult<()> {
                 Box::pin(AuctioningApp::get_data(args, context))
             },
         )
-        .with_command(Command::new("get_perms"), AuctioningApp::get_perms)
-        .with_command(Command::new("get_groups"), AuctioningApp::get_groups)
+        .with_command_async(
+            Command::new("get_perms")
+                .arg(Arg::new("id").required(false)),
+            |args, context| {
+                Box::pin(AuctioningApp::get_perms(args, context))
+            },
+        )
+        .with_command_async(
+            Command::new("get_groups")
+                .arg(Arg::new("id").required(false)),
+            |args, context| {
+                Box::pin(AuctioningApp::get_groups(args, context))
+            },
+        )
         .with_command_async(
             Command::new("create_auction")
                 .arg(

@@ -988,7 +988,7 @@ impl FamilyApp {
     }
     */
 
-    pub fn get_data(
+    pub async fn get_data(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -998,10 +998,8 @@ impl FamilyApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         if let Some(id) = args.get_one::<String>("id") {
-            match data_store_guard.get_data(id) {
+            match context.client.get_data(id).await.unwrap() {
                 Some(data) => Ok(Some(String::from(format!("{}", data)))),
                 None => Ok(Some(String::from(format!(
                     "Data with id {} does not exist",
@@ -1009,7 +1007,7 @@ impl FamilyApp {
                 )))),
             }
         } else {
-            let data = data_store_guard.get_all_data().values();
+            let data = context.client.get_all_data().await.unwrap();
             Ok(Some(itertools::join(data, "\n")))
         }
     }
@@ -1165,9 +1163,9 @@ async fn main() -> ReplResult<()> {
         .with_command_async(Command::new("update_location"), |_, context| {
             Box::pin(FamilyApp::update_location(context))
         })
-        .with_command(
+        .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),
-            FamilyApp::get_data,
+            |args, context| Box::pin(FamilyApp::get_data(args, context)),
         )
         .with_command(Command::new("get_perms"), FamilyApp::get_perms)
         .with_command(

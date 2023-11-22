@@ -307,18 +307,18 @@ impl AuctioningApp {
         )))
     }
 
-    pub fn get_contacts(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
+    //pub fn get_contacts(
+    //    _args: ArgMatches,
+    //    context: &mut Arc<Self>,
+    //) -> ReplResult<Option<String>> {
+    //    if !context.exists_device() {
+    //        return Ok(Some(String::from(
+    //            "Device does not exist, cannot run command.",
+    //        )));
+    //    }
 
-        Ok(Some(itertools::join(&context.client.get_contacts(), "\n")))
-    }
+    //    Ok(Some(itertools::join(&context.client.get_contacts(), "\n")))
+    //}
 
     pub async fn add_contact(
         args: ArgMatches,
@@ -353,8 +353,6 @@ impl AuctioningApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_data(id).await {
                 Ok(Some(data)) => Ok(Some(String::from(format!("{}", data)))),
@@ -368,7 +366,7 @@ impl AuctioningApp {
                 )))),
             }
         } else {
-            let data = data_store_guard.get_all_data().values();
+            let data = context.client.get_all_data().await.unwrap();
             Ok(Some(itertools::join(data, "\n")))
         }
     }

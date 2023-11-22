@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::{thread, time};
 use thiserror::Error;
+use std::collections::hash_map::Values;
 
 use noise_core::core::{Core, CoreClient};
 
@@ -214,6 +215,8 @@ impl NoiseKVClient {
     //    }
     //}
 
+    // Doesn't make sense to sync this read, since the idkey is needed to send
+    // the sync message anyway
     pub fn idkey(&self) -> String {
         self.core.as_ref().unwrap().idkey()
     }
@@ -747,24 +750,24 @@ impl NoiseKVClient {
 
     // FIXME breaks once share data; should probably be either app-level
     // or impl differently
-    pub fn get_contacts(&self) -> HashSet<String> {
-        self.device.read().as_ref().unwrap().get_contacts()
-    }
+    //pub fn get_contacts(&self) -> HashSet<String> {
+    //    self.device.read().as_ref().unwrap().get_contacts()
+    //}
 
-    fn is_contact(&self, name: &String) -> bool {
-        match self
-            .device
-            .read()
-            .as_ref()
-            .unwrap()
-            .meta_store
-            .read()
-            .get_group(name)
-        {
-            Some(group_val) => group_val.is_contact_name,
-            None => false,
-        }
-    }
+    //fn is_contact(&self, name: &String) -> bool {
+    //    match self
+    //        .device
+    //        .read()
+    //        .as_ref()
+    //        .unwrap()
+    //        .meta_store
+    //        .read()
+    //        .get_group(name)
+    //    {
+    //        Some(group_val) => group_val.is_contact_name,
+    //        None => false,
+    //    }
+    //}
 
     pub async fn add_contact(
         &self,
@@ -1001,14 +1004,17 @@ impl NoiseKVClient {
 
     /*
      * New/existing get_*() functions whose reads should abide by consistency rules:
+     * --NEW--
      * - get_device()
      * - get_linked_devices()
-     * - get_contacts() ? -- TODO should be refactored to be an app-specific thing; so will be included in get_data
      * - get_all_data()
      * - get_perm() / get_all_perms()
      * - get_group() / get_all_groups()
-     * - get_idkey()
-     * - get_linked_name()
+     * --EXISTING--
+     * - [x] get_idkey()
+     * - [x] get_linked_name()
+     * --TO REMOVE--
+     * - [x] get_contacts() ? -- TODO should be refactored to be an app-specific thing so will be included in get_data
      */
 
     pub async fn get_data(
@@ -1062,11 +1068,76 @@ impl NoiseKVClient {
             }
         }
 
+        /////////
+
         // read data
         let device_guard = self.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let data = data_store_guard.get_data(data_id);
         Ok(data.map(|d| d.clone()))
+    }
+
+    pub async fn get_all_data(
+        &self,
+    ) -> Result<Vec<BasicData>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self.send_message(
+            vec![self.idkey()],
+            &Operation::to_string(&Operation::Dummy(
+                op_id.clone()
+            )).unwrap()
+        ).await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(
+                res.err().unwrap().to_string(),
+            ));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read all data
+        let device_guard = self.device.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let data = data_store_guard.get_all_data().values();
+        let mut values = Vec::<BasicData>::new();
+        for datum in data {
+            values.push(datum.clone())
+        }
+        Ok(values)
     }
 
     // TODO add facility for setting and sharing data at the same time

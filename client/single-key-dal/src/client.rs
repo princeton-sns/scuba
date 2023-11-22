@@ -14,6 +14,27 @@ use crate::data::{BasicData, NoiseData};
 use crate::devices::Device;
 use crate::metadata::{Group, PermType, PermissionSet};
 
+/*
+ * Existing set_*() functions whose writes should abide by consistency rules:
+ * - [?] create_standalone_device()
+ * - [?] create_linked_device()
+ * - [?] delete_device_*()
+ * - [?] add_contact()
+ * - [ ] add_permissions()
+ * - [ ] delete_data()
+ */
+
+/*
+ * New get_*() functions whose reads should abide by consistency rules:
+ * - [?] get_linked_devices()
+ * - [x] get_data()
+ * - [x] get_all_data()
+ * - [x] get_perm()
+ * - [x] get_all_perms()
+ * - [x] get_group()
+ * - [x] get_all_groups()
+ */
+
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
     #[error("Device does not exist.")]
@@ -206,43 +227,6 @@ impl NoiseKVClient {
         client.core = Some(core.clone());
         core.set_client(Arc::new(client.clone())).await;
         client
-    }
-
-    //fn exists_device(&self) -> bool {
-    //    match self.device.read().as_ref() {
-    //        Some(_) => true,
-    //        None => false,
-    //    }
-    //}
-
-    // Doesn't make sense to sync this read, since the idkey is needed to send
-    // the sync message anyway
-    pub fn idkey(&self) -> String {
-        self.core.as_ref().unwrap().idkey()
-    }
-
-    pub fn linked_name(&self) -> String {
-        self.device
-            .read()
-            .as_ref()
-            .unwrap()
-            .linked_name
-            .read()
-            .clone()
-    }
-
-    /* Sending-side functions */
-
-    async fn send_message(
-        &self,
-        dst_idkeys: Vec<String>,
-        payload: &String,
-    ) -> reqwest::Result<reqwest::Response> {
-        self.core
-            .as_ref()
-            .unwrap()
-            .send_message(dst_idkeys, payload)
-            .await
     }
 
     /* Receiving-side functions */
@@ -628,7 +612,39 @@ impl NoiseKVClient {
         }
     }
 
+    /* Sending-side functions */
+
+    async fn send_message(
+        &self,
+        dst_idkeys: Vec<String>,
+        payload: &String,
+    ) -> reqwest::Result<reqwest::Response> {
+        self.core
+            .as_ref()
+            .unwrap()
+            .send_message(dst_idkeys, payload)
+            .await
+    }
+
     /* Remaining top-level functionality */
+
+    // Doesn't make sense to sync this read, since the idkey is needed to send
+    // the sync message anyway
+    pub fn idkey(&self) -> String {
+        self.core.as_ref().unwrap().idkey()
+    }
+
+    // Also doesn't make sense to sync this read, since there's no way to change
+    // this after a device is initialized (at the moment)
+    pub fn linked_name(&self) -> String {
+        self.device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone()
+    }
 
     /*
      * Creating/linking devices
@@ -744,30 +760,62 @@ impl NoiseKVClient {
         }
     }
 
+    pub async fn get_linked_devices(&self) -> Result<HashSet<String>, Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // read linked devices
+        Ok(self.device.read().as_ref().unwrap().linked_devices())
+    }
+
     /*
      * Contacts
      */
-
-    // FIXME breaks once share data; should probably be either app-level
-    // or impl differently
-    //pub fn get_contacts(&self) -> HashSet<String> {
-    //    self.device.read().as_ref().unwrap().get_contacts()
-    //}
-
-    //fn is_contact(&self, name: &String) -> bool {
-    //    match self
-    //        .device
-    //        .read()
-    //        .as_ref()
-    //        .unwrap()
-    //        .meta_store
-    //        .read()
-    //        .get_group(name)
-    //    {
-    //        Some(group_val) => group_val.is_contact_name,
-    //        None => false,
-    //    }
-    //}
 
     pub async fn add_contact(
         &self,
@@ -992,27 +1040,6 @@ impl NoiseKVClient {
         }
         vec
     }
-
-    /*
-     * Existing set_*() functions whose writes should abide by consistency
-     * rules:
-     * - [ ] create_standalone_device()
-     * - [ ] create_linked_device()
-     * - [ ] add_contact() ?
-     * - [ ] delete_*()
-     * - [ ] add_permissions()
-     */
-
-    /*
-     * New get_*() functions whose reads should abide by consistency rules:
-     * - [ ] get_linked_devices()
-     * - [x] get_data()
-     * - [x] get_all_data()
-     * - [x] get_perm()
-     * - [x] get_all_perms()
-     * - [x] get_group()
-     * - [x] get_all_groups()
-     */
 
     pub async fn get_perm(
         &self,

@@ -216,13 +216,15 @@ impl CalendarApp {
             Some("calendar.txt"),
             None,
             None,
+            // TODO fix for multi-key
+            true,
+            false,
+            true,
         )
         .await;
         Self { client }
     }
 
-    // FIXME this should go into the noise-kv library and top-level functions
-    // should return relevant Result
     fn exists_device(&self) -> bool {
         match self.client.device.read().as_ref() {
             Some(_) => true,
@@ -327,8 +329,7 @@ impl CalendarApp {
         ))))
     }
 
-    pub fn get_linked_devices(
-        _args: ArgMatches,
+    pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -337,32 +338,9 @@ impl CalendarApp {
             )));
         }
 
-        Ok(Some(itertools::join(
-            &context
-                .client
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices(),
-            "\n",
-        )))
+        let linked_devices = context.client.get_linked_devices().await.unwrap();
+        Ok(Some(itertools::join(linked_devices, "\n")))
     }
-
-    /*
-    pub fn get_contacts(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        Ok(Some(itertools::join(&context.client.get_contacts(), "\n")))
-    }
-    */
 
     // Called by provider only; upon contact addition, provider shares
     // availability object with client
@@ -993,7 +971,6 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("check_device"), CalendarApp::check_device)
         .with_command(Command::new("get_name"), CalendarApp::get_name)
         .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
-        //.with_command(Command::new("get_contacts"), CalendarApp::get_contacts)
         .with_command_async(
             Command::new("add_client").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_client(args, context)),
@@ -1015,9 +992,11 @@ async fn main() -> ReplResult<()> {
         // required(true).short('p')),    |args, context|
         // Box::pin(CalendarApp::add_provider(args, context)),
         //)
-        .with_command(
+        .with_command_async(
             Command::new("get_linked_devices"),
-            CalendarApp::get_linked_devices,
+            |_, context| {
+                Box::pin(CalendarApp::get_linked_devices(context))
+            },
         )
         .with_command(
             Command::new("get_data").arg(Arg::new("id").required(false)),

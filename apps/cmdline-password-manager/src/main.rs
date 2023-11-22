@@ -187,8 +187,6 @@ impl PasswordManager {
         }
     }
 
-    // FIXME this should go into the noise-kv library and top-level functions
-    // should return relevant Result
     fn exists_device(&self) -> bool {
         match self.client.device.read().as_ref() {
             Some(_) => true,
@@ -267,8 +265,7 @@ impl PasswordManager {
         ))))
     }
 
-    pub fn get_linked_devices(
-        _args: ArgMatches,
+    pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -277,31 +274,9 @@ impl PasswordManager {
             )));
         }
 
-        // FIXME
-        Ok(Some(itertools::join(
-            &context
-                .client
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices(),
-            "\n",
-        )))
+        let linked_devices = context.client.get_linked_devices().await.unwrap();
+        Ok(Some(itertools::join(linked_devices, "\n")))
     }
-
-    //pub fn get_contacts(
-    //    _args: ArgMatches,
-    //    context: &mut Arc<Self>,
-    //) -> ReplResult<Option<String>> {
-    //    if !context.exists_device() {
-    //        return Ok(Some(String::from(
-    //            "Device does not exist, cannot run command.",
-    //        )));
-    //    }
-
-    //    Ok(Some(itertools::join(&context.client.get_contacts(), "\n")))
-    //}
 
     pub async fn add_contact(
         args: ArgMatches,
@@ -787,19 +762,17 @@ async fn main() -> ReplResult<()> {
         )
         .with_command(Command::new("get_name"), PasswordManager::get_name)
         .with_command(Command::new("get_idkey"), PasswordManager::get_idkey)
-        //.with_command(
-        //    Command::new("get_contacts").about("broken - don't use"),
-        //    PasswordManager::get_contacts,
-        //)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| {
                 Box::pin(PasswordManager::add_contact(args, context))
             },
         )
-        .with_command(
+        .with_command_async(
             Command::new("get_linked_devices"),
-            PasswordManager::get_linked_devices,
+            |_, context| {
+                Box::pin(PasswordManager::get_linked_devices(context))
+            },
         )
         .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),

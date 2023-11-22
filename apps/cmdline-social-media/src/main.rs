@@ -428,8 +428,7 @@ impl FamilyApp {
         ))))
     }
 
-    pub fn get_linked_devices(
-        _args: ArgMatches,
+    pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -438,16 +437,8 @@ impl FamilyApp {
             )));
         }
 
-        Ok(Some(itertools::join(
-            &context
-                .client
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices(),
-            "\n",
-        )))
+        let linked_devices = context.client.get_linked_devices().await.unwrap();
+        Ok(Some(itertools::join(linked_devices, "\n")))
     }
 
     pub async fn get_location(
@@ -1108,9 +1099,11 @@ async fn main() -> ReplResult<()> {
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(FamilyApp::add_contact(args, context)),
         )
-        .with_command(
+        .with_command_async(
             Command::new("get_linked_devices"),
-            FamilyApp::get_linked_devices,
+            |_, context| {
+                Box::pin(FamilyApp::get_linked_devices(context))
+            },
         )
         .with_command_async(Command::new("get_location"), |_, context| {
             Box::pin(FamilyApp::get_location(context))

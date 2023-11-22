@@ -1,5 +1,5 @@
 [package]
-name = "sequential-noise-kv"
+name = "single-key-dal"
 version = "0.1.0"
 edition = "2021"
 

@@ -1,14 +1,15 @@
 [workspace]
 members = [
     "client/core",
-    "client/sequential-noise-kv",
+    "client/single-key-dal",
     "client/serializable-noise-kv",
     "client/merged-serializable-noise-kv",
-    "apps/cmdline-skeleton",
     "apps/cmdline-lightswitch",
     "apps/cmdline-period-tracking",
     "apps/cmdline-chess",
     "apps/cmdline-social-media",
     "apps/cmdline-password-manager",
     "apps/cmdline-calendar",
+    "apps/cmdline-auctioning",
 ]
+resolver = "2"

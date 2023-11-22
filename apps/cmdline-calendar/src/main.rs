@@ -28,7 +28,8 @@ use uuid::Uuid;
  * - [ ] providers can also block off times on their end without needing
  *   an appointment to be scheduled, e.g. for lunch breaks
  * - [x] the same device can act as both a patient and provider
- * - [ ] patients can have multiple providers
+ * - [x] patients can have multiple providers
+ * - [x] providers can have their own providers
  */
 
 // FIXME impl more helper methods, a lot of repetitive code
@@ -209,12 +210,22 @@ struct CalendarApp {
 
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = NoiseKVClient::new(
+            None,
+            None,
+            false,
+            Some("calendar.txt"),
+            None,
+            None,
+            // TODO fix for multi-key
+            true,
+            false,
+            true,
+        )
+        .await;
         Self { client }
     }
 
-    // FIXME this should go into the noise-kv library and top-level functions
-    // should return relevant Result
     fn exists_device(&self) -> bool {
         match self.client.device.read().as_ref() {
             Some(_) => true,
@@ -244,7 +255,7 @@ impl CalendarApp {
     pub async fn init_new_device(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context.client.create_standalone_device();
+        context.client.create_standalone_device().await;
 
         let roles_id = ROLES_PREFIX.to_owned();
         let roles_data = Roles::new();
@@ -256,6 +267,7 @@ impl CalendarApp {
                 roles_id.clone(),
                 ROLES_PREFIX.to_string(),
                 json_string,
+                None,
                 None,
             )
             .await
@@ -319,8 +331,7 @@ impl CalendarApp {
         ))))
     }
 
-    pub fn get_linked_devices(
-        _args: ArgMatches,
+    pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -329,32 +340,9 @@ impl CalendarApp {
             )));
         }
 
-        Ok(Some(itertools::join(
-            &context
-                .client
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices(),
-            "\n",
-        )))
+        let linked_devices = context.client.get_linked_devices().await.unwrap();
+        Ok(Some(itertools::join(linked_devices, "\n")))
     }
-
-    /*
-    pub fn get_contacts(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        Ok(Some(itertools::join(&context.client.get_contacts(), "\n")))
-    }
-    */
 
     // Called by provider only; upon contact addition, provider shares
     // availability object with patient
@@ -399,11 +387,12 @@ impl CalendarApp {
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let vec = vec![&patient];
 
-        match context
-            .client
-            .add_do_readers(AVAIL_PREFIX.to_string(), vec)
-            .await
-        {
+        let mut avail_id: String = AVAIL_PREFIX.to_owned();
+        avail_id.push_str("/");
+        // <avail_id> = avail/<provider_id>
+        avail_id.push_str(&context.client.linked_name());
+
+        match context.client.add_do_readers(avail_id, vec).await {
             Ok(_) => Ok(Some(String::from(format!(
                 "Availability shared with patient {}",
                 patient
@@ -645,15 +634,19 @@ impl CalendarApp {
 
                     // init Availability object
                     let avail = Availability::new();
-                    // TODO give avail a unique id in case of multiple providers
+                    let mut avail_id: String = AVAIL_PREFIX.to_owned();
+                    avail_id.push_str("/");
+                    // <avail_id> = avail/<provider_id>
+                    avail_id.push_str(&context.client.linked_name());
                     let json_avail = serde_json::to_string(&avail).unwrap();
 
                     let res = context
                         .client
                         .set_data(
-                            AVAIL_PREFIX.to_string(),
+                            avail_id,
                             AVAIL_PREFIX.to_string(),
                             json_avail,
+                            None,
                             None,
                         )
                         .await;
@@ -677,6 +670,7 @@ impl CalendarApp {
                         roles_id.clone(),
                         ROLES_PREFIX.to_string(),
                         json_string,
+                        None,
                         None,
                     )
                     .await
@@ -795,6 +789,7 @@ impl CalendarApp {
                                 id.clone(),
                                 APPT_PREFIX.to_owned(),
                                 json_string,
+                                None,
                                 None,
                             )
                             .await
@@ -982,7 +977,6 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("check_device"), CalendarApp::check_device)
         .with_command(Command::new("get_name"), CalendarApp::get_name)
         .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
-        //.with_command(Command::new("get_contacts"), CalendarApp::get_contacts)
         .with_command_async(
             Command::new("add_patient").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_patient(args, context)),
@@ -1004,9 +998,11 @@ async fn main() -> ReplResult<()> {
         // required(true).short('p')),    |args, context|
         // Box::pin(CalendarApp::add_provider(args, context)),
         //)
-        .with_command(
+        .with_command_async(
             Command::new("get_linked_devices"),
-            CalendarApp::get_linked_devices,
+            |_, context| {
+                Box::pin(CalendarApp::get_linked_devices(context))
+            },
         )
         .with_command(
             Command::new("get_data").arg(Arg::new("id").required(false)),
@@ -1082,15 +1078,15 @@ async fn main() -> ReplResult<()> {
         //    ),
         //    CalendarApp::get_patient_appointments,
         //)
-        .with_command(
-            Command::new("view_provider_availability").arg(
-                Arg::new("provider_id")
-                    .required(true)
-                    .long("provider_id")
-                    .short('p'),
-            ),
-            CalendarApp::view_provider_availability,
-        )
+        //.with_command(
+        //    Command::new("view_provider_availability").arg(
+        //        Arg::new("provider_id")
+        //            .required(true)
+        //            .long("provider_id")
+        //            .short('p'),
+        //    ),
+        //    CalendarApp::view_provider_availability,
+        //)
         .with_command_async(
             Command::new("request_appointment")
                 .arg(

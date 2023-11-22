@@ -3,10 +3,10 @@ use chrono::DateTime;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use sequential_noise_kv::client::NoiseKVClient;
-use sequential_noise_kv::data::NoiseData;
+use single_key_dal::client::NoiseKVClient;
+use single_key_dal::data::NoiseData;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,14 +16,14 @@ use uuid::Uuid;
  * - [x] each user can belong to one or more families
  * - possible data:
  *   - [x] posts
- *   - [ ] comments
+ *   - [x] comments
  *   - [ ] emoji reactions
  *   - [ ] chat groups
  *   - [x] live location
  *   - [ ] photos
  * - invariants:
  *   - [x] post length
- *   - [ ] comment length
+ *   - [x] comment length
  *   - [ ] reaction type (subset of emojies)
  * - [ ] moderator permissions can be granted to users to help keep
  *   messages appropriate
@@ -37,6 +37,7 @@ use uuid::Uuid;
 const MEMBER_PREFIX: &str = "member";
 const FAM_PREFIX: &str = "family";
 const POST_PREFIX: &str = "post";
+const COMMENT_PREFIX: &str = "comment";
 const LOC_PREFIX: &str = "location";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +45,7 @@ struct Family {
     members: Vec<String>,
     // for easy time-based ordering
     posts: BTreeMap<DateTime<Utc>, String>,
-    location_ids: Vec<String>,
+    //location_ids: Vec<String>,
 }
 
 impl Family {
@@ -52,7 +53,7 @@ impl Family {
         Family {
             members,
             posts: BTreeMap::new(),
-            location_ids: Vec::new(),
+            //location_ids: Vec::new(),
         }
     }
 
@@ -64,9 +65,9 @@ impl Family {
         self.posts.insert(post_time, post_id);
     }
 
-    fn add_location(&mut self, loc_id: &String) {
-        self.location_ids.push(loc_id.clone());
-    }
+    //fn add_location(&mut self, loc_id: &String) {
+    //    self.location_ids.push(loc_id.clone());
+    //}
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,12 +75,39 @@ struct Post {
     family_id: String,
     contents: String,
     creation_time: DateTime<Utc>,
+    comments: BTreeMap<DateTime<Utc>, String>,
 }
 
 impl Post {
     fn new(family_id: &String, contents: &String) -> Self {
         Post {
             family_id: family_id.to_string(),
+            contents: contents.to_string(),
+            creation_time: Utc::now(),
+            comments: BTreeMap::new(),
+        }
+    }
+
+    fn creation_time(&self) -> DateTime<Utc> {
+        self.creation_time
+    }
+
+    fn add_comment(&mut self, comment_time: DateTime<Utc>, comment_id: String) {
+        self.comments.insert(comment_time, comment_id);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Comment {
+    post_id: String,
+    contents: String,
+    creation_time: DateTime<Utc>,
+}
+
+impl Comment {
+    fn new(post_id: &String, contents: &String) -> Self {
+        Comment {
+            post_id: post_id.to_string(),
             contents: contents.to_string(),
             creation_time: Utc::now(),
         }
@@ -142,7 +170,19 @@ struct FamilyApp {
 
 impl FamilyApp {
     pub async fn new() -> FamilyApp {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = NoiseKVClient::new(
+            None,
+            None,
+            false,
+            Some("familyapp.txt"),
+            None,
+            None,
+            // causal consistency
+            false,
+            false,
+            true,
+        )
+        .await;
         Self { client }
     }
 
@@ -178,7 +218,7 @@ impl FamilyApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context.client.create_standalone_device();
+        context.client.create_standalone_device().await;
 
         let mut enable_loc_polling = false;
         if args.get_flag("enable_loc_polling") {
@@ -188,17 +228,32 @@ impl FamilyApp {
         let device_guard = context.client.device.read();
         let mut data_store_guard =
             device_guard.as_ref().unwrap().data_store.write();
+
+        // register callback that validates char limit for posts
         data_store_guard.validator().set_validate_callback_for_type(
             POST_PREFIX.to_string(),
-            // validate a 1000 char limit on posts
-            |id, val| {
+            |_, val| {
                 let post: Post = serde_json::from_str(val.data_val()).unwrap();
-                if post.contents.len() > 10 {
+                if post.contents.len() > 200 {
                     return false;
                 }
                 true
             },
         );
+
+        // register callback that validates char limit for comments
+        data_store_guard.validator().set_validate_callback_for_type(
+            COMMENT_PREFIX.to_string(),
+            |_, val| {
+                let comment: Comment =
+                    serde_json::from_str(val.data_val()).unwrap();
+                if comment.contents.len() > 100 {
+                    return false;
+                }
+                true
+            },
+        );
+
         core::mem::drop(data_store_guard);
 
         // Each "user" has a single Member object pertaining to themselves
@@ -219,6 +274,7 @@ impl FamilyApp {
                 LOC_PREFIX.to_string(),
                 loc_json.clone(),
                 None,
+                None,
             )
             .await
         {
@@ -229,6 +285,7 @@ impl FamilyApp {
                         member_id.clone(),
                         MEMBER_PREFIX.to_string(),
                         member_json,
+                        None,
                         None,
                     )
                     .await
@@ -283,7 +340,8 @@ impl FamilyApp {
                                         .set_data(
                                             task_loc_id.clone(),
                                             LOC_PREFIX.to_string(),
-                                            loc_json.clone(),
+                                            loc_json,
+                                            None,
                                             None,
                                         )
                                         .await
@@ -373,8 +431,7 @@ impl FamilyApp {
         ))))
     }
 
-    pub fn get_linked_devices(
-        _args: ArgMatches,
+    pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -383,20 +440,11 @@ impl FamilyApp {
             )));
         }
 
-        Ok(Some(itertools::join(
-            &context
-                .client
-                .device
-                .read()
-                .as_ref()
-                .unwrap()
-                .linked_devices(),
-            "\n",
-        )))
+        let linked_devices = context.client.get_linked_devices().await.unwrap();
+        Ok(Some(itertools::join(linked_devices, "\n")))
     }
 
-    pub fn get_location(
-        _args: ArgMatches,
+    pub async fn get_location(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -405,17 +453,17 @@ impl FamilyApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-
-        let member_obj = data_store_guard
+        let member_obj = context
+            .client
             .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
             .unwrap();
         let member: Member =
             serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
-        let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+        let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
         Ok(Some(String::from(format!("{}", loc_obj.data_val()))))
     }
@@ -465,7 +513,7 @@ impl FamilyApp {
 
         match context
             .client
-            .set_data(id.clone(), FAM_PREFIX.to_string(), json_fam, None)
+            .set_data(id.clone(), FAM_PREFIX.to_string(), json_fam, None, None)
             .await
         {
             Ok(_) => {
@@ -491,9 +539,7 @@ impl FamilyApp {
         let fam_id = args.get_one::<String>("fam_id").unwrap();
         let contact_name = args.get_one::<String>("contact_name").unwrap();
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let fam_opt = data_store_guard.get_data(&fam_id);
+        let fam_opt = context.client.get_data(&fam_id).await.unwrap();
 
         match fam_opt {
             Some(fam_obj) => {
@@ -501,7 +547,6 @@ impl FamilyApp {
                     serde_json::from_str(fam_obj.data_val()).unwrap();
                 fam.add_member(contact_name);
                 let fam_json = serde_json::to_string(&fam).unwrap();
-                core::mem::drop(data_store_guard);
 
                 match context
                     .client
@@ -509,6 +554,7 @@ impl FamilyApp {
                         fam_id.clone(),
                         FAM_PREFIX.to_owned(),
                         fam_json,
+                        None,
                         None,
                     )
                     .await
@@ -566,9 +612,7 @@ impl FamilyApp {
         let fam_id = args.get_one::<String>("fam_id").unwrap();
         let contents = args.get_one::<String>("post").unwrap();
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let fam_opt = data_store_guard.get_data(&fam_id);
+        let fam_opt = context.client.get_data(&fam_id).await.unwrap();
 
         // TODO might be good to put the three operations below in a transaction
         // (set post, share post, update family)
@@ -587,6 +631,7 @@ impl FamilyApp {
                         POST_PREFIX.to_owned(),
                         post_json,
                         None,
+                        None,
                     )
                     .await
                 {
@@ -600,7 +645,6 @@ impl FamilyApp {
                             .iter()
                             .filter(|&x| *x != own_name)
                             .collect::<Vec<&String>>();
-                        core::mem::drop(data_store_guard);
 
                         // temporary hack b/c cannot set and share data
                         // at the same time, and sharing expects that
@@ -630,6 +674,7 @@ impl FamilyApp {
                                         fam_id.clone(),
                                         FAM_PREFIX.to_owned(),
                                         fam_json,
+                                        None,
                                         None,
                                     )
                                     .await
@@ -663,6 +708,125 @@ impl FamilyApp {
         }
     }
 
+    pub async fn comment_on_post(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let post_id = args.get_one::<String>("post_id").unwrap();
+        let contents = args.get_one::<String>("comment").unwrap();
+
+        let post_opt = context.client.get_data(&post_id).await.unwrap();
+
+        // TODO might be good to put the three operations below in a transaction
+        // (set comment, share comment, update post)
+
+        match post_opt {
+            Some(post_obj) => {
+                // create post
+                let comment_id =
+                    Self::new_prefixed_id(&COMMENT_PREFIX.to_string());
+                let comment = Comment::new(post_id, contents);
+                let comment_json = serde_json::to_string(&comment).unwrap();
+
+                match context
+                    .client
+                    .set_data(
+                        comment_id.clone(),
+                        COMMENT_PREFIX.to_owned(),
+                        comment_json,
+                        None,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // share comment
+                        let mut post: Post =
+                            serde_json::from_str(post_obj.data_val()).unwrap();
+                        let fam_id = post.family_id.clone();
+                        let fam_obj = context
+                            .client
+                            .get_data(&fam_id)
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        let fam: Family =
+                            serde_json::from_str(fam_obj.data_val()).unwrap();
+                        let own_name = context.client.linked_name();
+                        let sharees = fam
+                            .members
+                            .iter()
+                            .filter(|&x| *x != own_name)
+                            .collect::<Vec<&String>>();
+
+                        // temporary hack b/c cannot set and share data
+                        // at the same time, and sharing expects that
+                        // the
+                        // data already exists, so must wait for
+                        // set_data
+                        // message to return from the server
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        match context
+                            .client
+                            .add_readers(comment_id.clone(), sharees)
+                            .await
+                        {
+                            Ok(_) => {
+                                // add to post
+                                post.add_comment(
+                                    comment.creation_time(),
+                                    comment_id.clone(),
+                                );
+                                let post_json =
+                                    serde_json::to_string(&post).unwrap();
+
+                                match context
+                                    .client
+                                    .set_data(
+                                        post_id.clone(),
+                                        POST_PREFIX.to_owned(),
+                                        post_json,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => Ok(Some(String::from(format!(
+                                        "Comment with id {} added to post with id {}",
+                                        comment_id, post_id
+                                    )))),
+                                    Err(err) => Ok(Some(String::from(format!(
+                                        "Could not store updated post: {}",
+                                        err.to_string()
+                                    )))),
+                                }
+                            }
+                            Err(err) => Ok(Some(String::from(format!(
+                                "Could not share comment: {}",
+                                err.to_string()
+                            )))),
+                        }
+                    }
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Could not store comment: {}",
+                        err.to_string()
+                    )))),
+                }
+            }
+            None => Ok(Some(String::from(format!(
+                "Post with id {} does not exist.",
+                post_id,
+            )))),
+        }
+    }
+
     pub async fn update_location(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -672,17 +836,17 @@ impl FamilyApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-
-        let member_obj = data_store_guard
+        let member_obj = context
+            .client
             .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
             .unwrap();
         let member: Member =
             serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
-        let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+        let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
         let mut loc: Location =
             serde_json::from_str(loc_obj.data_val()).unwrap();
@@ -695,6 +859,7 @@ impl FamilyApp {
                 loc_id.clone(),
                 LOC_PREFIX.to_string(),
                 loc_json.clone(),
+                None,
                 None,
             )
             .await
@@ -717,10 +882,45 @@ impl FamilyApp {
             )));
         }
 
-        let fam_id = args.get_one::<String>("fam_id").unwrap();
+        let member_id = args.get_one::<String>("member_id").unwrap();
+        // get own location object
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let fam_opt = data_store_guard.get_data(&fam_id);
+        let member_obj = context
+            .client
+            .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let member: Member =
+            serde_json::from_str(member_obj.data_val()).unwrap();
+
+        let loc_id = member.location_id;
+        let readers = vec![member_id];
+
+        // share location object
+        match context.client.add_readers(loc_id, readers).await {
+            Ok(_) => Ok(Some(String::from("Shared location"))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Could not share location: {}",
+                err.to_string()
+            )))),
+        }
+    }
+
+    /*
+    pub async fn share_location_with_fam(
+        args: ArgMatches,
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let fam_id = args.get_one::<String>("fam_id").unwrap();
+        let fam_opt = context.client.get_data(&fam_id).await.unwrap();
 
         match fam_opt {
             Some(fam_obj) => {
@@ -730,14 +930,16 @@ impl FamilyApp {
                 let fam_members =
                     fam_clone.members.iter().collect::<Vec<&String>>();
 
-                let member_obj = data_store_guard
+                let member_obj = context.client
                     .get_data(&MEMBER_PREFIX.to_string())
+                    .await
+                    .unwrap()
                     .unwrap();
                 let member: Member =
                     serde_json::from_str(member_obj.data_val()).unwrap();
 
                 let loc_id = member.location_id;
-                let loc_obj = data_store_guard.get_data(&loc_id).unwrap();
+                let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
                 // add location object id to family
                 fam.add_location(&loc_id);
@@ -749,6 +951,7 @@ impl FamilyApp {
                         fam_id.clone(),
                         FAM_PREFIX.to_string(),
                         fam_json,
+                        None,
                         None,
                     )
                     .await
@@ -791,8 +994,9 @@ impl FamilyApp {
             )))),
         }
     }
+    */
 
-    pub fn get_data(
+    pub async fn get_data(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -802,10 +1006,8 @@ impl FamilyApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         if let Some(id) = args.get_one::<String>("id") {
-            match data_store_guard.get_data(id) {
+            match context.client.get_data(id).await.unwrap() {
                 Some(data) => Ok(Some(String::from(format!("{}", data)))),
                 None => Ok(Some(String::from(format!(
                     "Data with id {} does not exist",
@@ -813,29 +1015,12 @@ impl FamilyApp {
                 )))),
             }
         } else {
-            let data = data_store_guard.get_all_data().values();
+            let data = context.client.get_all_data().await.unwrap();
             Ok(Some(itertools::join(data, "\n")))
         }
     }
 
-    pub fn get_perms(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perms = meta_store_guard.get_all_perms().values();
-
-        Ok(Some(itertools::join(perms, "\n")))
-    }
-
-    pub fn get_perm(
+    pub async fn get_perms(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -845,38 +1030,25 @@ impl FamilyApp {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap();
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perm_opt = meta_store_guard.get_perm(&id);
-
-        match perm_opt {
-            Some(perm) => Ok(Some(String::from(format!("{}", perm)))),
-            None => Ok(Some(String::from(format!(
-                "Perm with id {} does not exist",
-                id
-            )))),
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_perm(id).await {
+                Ok(Some(perm)) => Ok(Some(String::from(format!("{}", perm)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Perm with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get perm: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let perms = context.client.get_all_perms().await.unwrap();
+            Ok(Some(itertools::join(perms, "\n")))
         }
     }
 
-    pub fn get_groups(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let groups = meta_store_guard.get_all_groups().values();
-
-        Ok(Some(itertools::join(groups, "\n")))
-    }
-
-    pub fn get_group(
+    pub async fn get_groups(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -886,17 +1058,21 @@ impl FamilyApp {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap();
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let group_opt = meta_store_guard.get_group(&id);
-
-        match group_opt {
-            Some(group) => Ok(Some(String::from(format!("{}", group)))),
-            None => Ok(Some(String::from(format!(
-                "Group with id {} does not exist",
-                id
-            )))),
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_group(id).await {
+                Ok(Some(group)) => Ok(Some(String::from(format!("{}", group)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Group with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get group: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let groups = context.client.get_all_groups().await.unwrap();
+            Ok(Some(itertools::join(groups, "\n")))
         }
     }
 }
@@ -933,11 +1109,15 @@ async fn main() -> ReplResult<()> {
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(FamilyApp::add_contact(args, context)),
         )
-        .with_command(
+        .with_command_async(
             Command::new("get_linked_devices"),
-            FamilyApp::get_linked_devices,
+            |_, context| {
+                Box::pin(FamilyApp::get_linked_devices(context))
+            },
         )
-        .with_command(Command::new("get_location"), FamilyApp::get_location)
+        .with_command_async(Command::new("get_location"), |_, context| {
+            Box::pin(FamilyApp::get_location(context))
+        })
         .with_command_async(Command::new("init_family"), |_, context| {
             Box::pin(FamilyApp::init_family(context))
         })
@@ -954,26 +1134,30 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(FamilyApp::post_to_family(args, context)),
         )
         .with_command_async(
+            Command::new("comment_on_post")
+                .arg(Arg::new("post_id").short('p').required(true))
+                .arg(Arg::new("comment").short('c').required(true)),
+            |args, context| Box::pin(FamilyApp::comment_on_post(args, context)),
+        )
+        .with_command_async(
             Command::new("share_location")
-                .arg(Arg::new("fam_id").short('f').required(true)),
+                .arg(Arg::new("member_id").short('m').required(true)),
             |args, context| Box::pin(FamilyApp::share_location(args, context)),
         )
         .with_command_async(Command::new("update_location"), |_, context| {
             Box::pin(FamilyApp::update_location(context))
         })
-        .with_command(
+        .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),
-            FamilyApp::get_data,
+            |args, context| Box::pin(FamilyApp::get_data(args, context)),
         )
-        .with_command(Command::new("get_perms"), FamilyApp::get_perms)
-        .with_command(
-            Command::new("get_perm").arg(Arg::new("id").required(true)),
-            FamilyApp::get_perm,
+        .with_command_async(
+            Command::new("get_perms").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(FamilyApp::get_perms(args, context)),
         )
-        .with_command(Command::new("get_groups"), FamilyApp::get_groups)
-        .with_command(
-            Command::new("get_group").arg(Arg::new("id").required(true)),
-            FamilyApp::get_group,
+        .with_command_async(
+            Command::new("get_groups").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(FamilyApp::get_groups(args, context)),
         );
 
     repl.run_async().await

@@ -2,6 +2,8 @@ use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -81,6 +83,7 @@ pub struct Core<C: CoreClient> {
     incoming_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
     oq_cv: Condvar,
     iq_cv: Condvar,
+    common_ct_size_filename: Option<&'static str>,
 }
 
 impl<C: CoreClient> Core<C> {
@@ -88,6 +91,7 @@ impl<C: CoreClient> Core<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
+        common_ct_size_filename: Option<&'static str>,
         client: Option<Arc<C>>,
     ) -> Arc<Core<C>> {
         let crypto = Crypto::new(turn_encryption_off);
@@ -114,6 +118,7 @@ impl<C: CoreClient> Core<C> {
             )),
             oq_cv: Condvar::new(),
             iq_cv: Condvar::new(),
+            common_ct_size_filename,
         });
 
         {
@@ -159,12 +164,7 @@ impl<C: CoreClient> Core<C> {
             }
         }
 
-        //println!("");
-        //println!("---sending message ({:?})", self.idkey());
-        //println!("");
-        //println!("...TRYING SEND LOCK...");
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
-        //println!("...GOT SEND LOCK...");
         let mut compose_dst_idkeys = Vec::new();
         compose_dst_idkeys.append(&mut dst_idkeys_w_metadata.clone());
         compose_dst_idkeys.append(&mut dst_idkeys_wo_metadata.clone());
@@ -189,15 +189,22 @@ impl<C: CoreClient> Core<C> {
             .lock()
             .await
             .push_back(common_payload.clone());
-        //println!("-----ADDING CP TO OQ: {:?}", common_payload.clone());
 
         core::mem::drop(hash_vectors_guard);
-        //println!("...UNLOCKED SEND...");
 
         // symmetrically encrypt common_payload once
         let (common_ct, key, iv) = self
             .crypto
             .symmetric_encrypt(CommonPayload::to_string(&common_payload));
+
+        if let Some(filename) = &self.common_ct_size_filename {
+            let mut f = File::options()
+                .append(true)
+                .create(true)
+                .open(filename)
+                .unwrap();
+            write!(f, "{}\n", common_ct.clone().len());
+        }
 
         // vector of messages to be sequences sequentially
         let mut outgoing_messages = Vec::new();
@@ -255,12 +262,9 @@ impl<C: CoreClient> Core<C> {
         // loop until front of queue is ready to send
         loop {
             let mut oq_guard = self.outgoing_queue.lock().await;
-            //println!("-----SEND LOOP");
-            //println!("oq_guard.front(): {:?}", oq_guard.front());
             if oq_guard.front() != Some(&common_payload) {
                 let _ = self.oq_cv.wait_no_relock(oq_guard).await;
             } else {
-                //println!("~~POPPING~~");
                 oq_guard.pop_front();
                 break;
             }
@@ -279,9 +283,6 @@ impl<C: CoreClient> Core<C> {
         &self,
         event: eventsource_client::Result<Event>,
     ) {
-        //println!("");
-        //println!("---receiving message ({:?})", self.idkey());
-        //println!("");
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
@@ -375,9 +376,7 @@ impl<C: CoreClient> Core<C> {
                 // on the conflict resolution schemes, X could overwrite the
                 // changes made by Y, which were intended to come after X.
 
-                //println!("...TRYING RECV LOCK...");
                 let mut hash_vectors_guard = self.hash_vectors.lock().await;
-                //println!("...GOT RECV LOCK...");
                 let parsed_res = hash_vectors_guard.parse_message(
                     &msg.sender,
                     common_payload.clone(),
@@ -389,23 +388,15 @@ impl<C: CoreClient> Core<C> {
                     .lock()
                     .await
                     .push_back(common_payload.clone());
-                //println!(
-                //    "-----ADDING CP TO IQ: {:?}",
-                //    common_payload.clone()
-                //);
 
                 core::mem::drop(hash_vectors_guard);
-                //println!("...UNLOCKED RECV...");
 
                 // loop until front of queue is ready to forward
                 loop {
                     let mut iq_guard = self.incoming_queue.lock().await;
-                    //println!("-----RECV LOOP");
-                    //println!("iq_guard.front(): {:?}", iq_guard.front());
                     if iq_guard.front() != Some(&common_payload) {
                         let _ = self.iq_cv.wait_no_relock(iq_guard).await;
                     } else {
-                        //println!("~~POPPING~~");
                         iq_guard.pop_front();
                         break;
                     }
@@ -414,11 +405,9 @@ impl<C: CoreClient> Core<C> {
                 match parsed_res {
                     // No message to forward
                     Ok(None) => {
-                        //println!("val only");
                     }
                     // Forward message
                     Ok(Some((seq, message))) => {
-                        //println!("forwarding");
                         self.client
                             .read()
                             .await

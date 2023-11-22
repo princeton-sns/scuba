@@ -174,7 +174,7 @@ impl PasswordManager {
 
         match context
             .client
-            .set_data(id.clone(), CONFIG_PREFIX.to_string(), json_string, None)
+            .set_data(id.clone(), CONFIG_PREFIX.to_string(), json_string, None, None)
             .await
         {
             Ok(_) => {
@@ -480,6 +480,7 @@ impl PasswordManager {
                     HOTP_PREFIX.to_string(),
                     json_string,
                     None,
+                    None,
                 )
                 .await
             {
@@ -503,6 +504,7 @@ impl PasswordManager {
                     id.clone(),
                     TOTP_PREFIX.to_string(),
                     json_string,
+                    None,
                     None,
                 )
                 .await
@@ -555,6 +557,7 @@ impl PasswordManager {
                             id.clone(),
                             HOTP_PREFIX.to_string(),
                             hotp_json,
+                            None,
                             None,
                         )
                         .await
@@ -626,6 +629,7 @@ impl PasswordManager {
                             HOTP_PREFIX.to_string(),
                             json_string,
                             None,
+                            None,
                         )
                         .await
                     {
@@ -650,6 +654,7 @@ impl PasswordManager {
                             id.clone(),
                             TOTP_PREFIX.to_string(),
                             json_string,
+                            None,
                             None,
                         )
                         .await

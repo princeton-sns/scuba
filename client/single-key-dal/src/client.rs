@@ -18,9 +18,9 @@ use crate::metadata::{Group, PermType, PermissionSet};
  * Existing set_*() functions whose writes should abide by consistency rules:
  * - [?] create_standalone_device()
  * - [?] create_linked_device()
- * - [?] delete_device_*()
- * - [?] add_contact()
- * - [ ] add_permissions()
+ * - [ ] delete_device_*()
+ * - [ ] add_contact()
+ * - [x] add_permissions()
  * - [ ] delete_data()
  */
 
@@ -120,6 +120,7 @@ pub struct NoiseKVClient {
     block_writes: bool,
     sync_reads: bool,
     mult_outstanding: bool,
+    multikey: bool,
     op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
     op_id_ctr_cv: Arc<Condvar>,
 }
@@ -198,6 +199,7 @@ impl NoiseKVClient {
             block_writes,
             sync_reads,
             mult_outstanding,
+            multikey: false,
             op_id_ctr: Arc::new(Mutex::new((0, HashSet::new()))),
             op_id_ctr_cv: Arc::new(Condvar::new()),
         };
@@ -1407,23 +1409,28 @@ impl NoiseKVClient {
         // setting? why just enabled for data readers and, e.g., not
         // data writers?
         data_reader_idkeys: Option<Vec<String>>,
+        add_perm_op_id: Option<u64>,
     ) -> Result<(), Error> {
-        // check if can have multiple outstanding ops, or if not, check that
-        // no other ops are outstanding
         let op_id;
-        loop {
-            let mut op_id_ctr = self.op_id_ctr.lock();
-            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
-                // release the lock
-                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
-            } else {
-                // get op_id and inc id ctr
-                op_id = op_id_ctr.0;
-                op_id_ctr.0 += 1;
-                // add op into hashset
-                op_id_ctr.1.insert(op_id);
-                break;
+        if add_perm_op_id.is_none() {
+            // check if can have multiple outstanding ops, or if not, check that
+            // no other ops are outstanding
+            loop {
+                let mut op_id_ctr = self.op_id_ctr.lock();
+                if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                    // release the lock
+                    let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+                } else {
+                    // get op_id and inc id ctr
+                    op_id = op_id_ctr.0;
+                    op_id_ctr.0 += 1;
+                    // add op into hashset
+                    op_id_ctr.1.insert(op_id);
+                    break;
+                }
             }
+        } else {
+            op_id = add_perm_op_id.unwrap();
         }
 
         /////////
@@ -1676,6 +1683,24 @@ impl NoiseKVClient {
         data_id: String,
         do_readers: Vec<&String>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
         self.add_permissions(
             data_id,
             PermType::DOReaders(
@@ -1686,6 +1711,7 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
             ),
             do_readers,
+            op_id,
         )
         .await
     }
@@ -1695,6 +1721,24 @@ impl NoiseKVClient {
         data_id: String,
         readers: Vec<&String>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
         self.add_permissions(
             data_id,
             PermType::Readers(
@@ -1705,6 +1749,7 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
             ),
             readers,
+            op_id,
         )
         .await
     }
@@ -1714,6 +1759,24 @@ impl NoiseKVClient {
         data_id: String,
         writers: Vec<&String>,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
         self.add_permissions(
             data_id,
             PermType::Writers(
@@ -1724,6 +1787,7 @@ impl NoiseKVClient {
                     .collect::<Vec<String>>(),
             ),
             writers,
+            op_id,
         )
         .await
     }
@@ -1733,6 +1797,7 @@ impl NoiseKVClient {
         data_id: String,
         new_members: PermType,
         mut new_members_refs: Vec<&String>, // FIXME one or the other
+        op_id: u64,
     ) -> Result<(), Error> {
         let device_guard = self.device.read();
         let mut data_store_guard =
@@ -1983,6 +2048,7 @@ impl NoiseKVClient {
                     data_type,
                     data_val_interior,
                     Some(data_reader_idkeys),
+                    Some(op_id),
                 )
                 .await
             }

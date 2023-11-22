@@ -480,6 +480,7 @@ impl AuctioningApp {
                     OPEN_CLIENTS_PREFIX.to_string(),
                     open_clients_json,
                     None,
+                    None,
                 )
                 .await
             {
@@ -505,6 +506,7 @@ impl AuctioningApp {
                     OPEN_CLIENTS_PREFIX.to_string(),
                     OPEN_CLIENTS_PREFIX.to_string(),
                     open_clients_json,
+                    None,
                     None,
                 )
                 .await
@@ -616,7 +618,7 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(auction_id, AUCTION_PREFIX.to_owned(), auction_json, None)
+            .set_data(auction_id, AUCTION_PREFIX.to_owned(), auction_json, None, None)
             .await
         {
             Ok(_) => Ok(Some(String::from("Successfully created auction"))),
@@ -648,7 +650,7 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(bid_id, BID_PREFIX.to_owned(), bid_json, None)
+            .set_data(bid_id, BID_PREFIX.to_owned(), bid_json, None, None)
             .await
         {
             Ok(_) => Ok(Some(String::from("Successfully created bid"))),
@@ -702,6 +704,7 @@ impl AuctioningApp {
                     AUCTION_PREFIX.to_string(),
                     auction_json,
                     None,
+                    None,
                 )
                 .await
             {
@@ -750,6 +753,7 @@ impl AuctioningApp {
                     auction_id,
                     AUCTION_PREFIX.to_string(),
                     auction_json,
+                    None,
                     None,
                 )
                 .await

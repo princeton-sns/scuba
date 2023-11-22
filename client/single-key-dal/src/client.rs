@@ -16,12 +16,13 @@ use crate::metadata::{Group, PermType, PermissionSet};
 
 /*
  * Existing set_*() functions whose writes should abide by consistency rules:
- * - [?] create_standalone_device()
- * - [?] create_linked_device()
+ * - [x] create_standalone_device()
+ * - [x] create_linked_device()
  * - [ ] delete_device_*()
- * - [ ] add_contact()
+ * - [x] add_contact()
  * - [x] add_permissions()
- * - [ ] delete_data()
+ * - [ ] delete_data() (not impl)
+ * - [ ] remove_permissions() (not impl)
  */
 
 /*
@@ -652,15 +653,113 @@ impl NoiseKVClient {
 
     // TODO if no linked devices, linked_name can just == idkey
     // only create linked_group if link devices
-    pub fn create_standalone_device(&self) {
+    pub async fn create_standalone_device(&self) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
+        // create device
         *self.device.write() =
             Some(Device::new(self.core.as_ref().unwrap().idkey(), None, None));
+        Ok(())
     }
 
     pub async fn create_linked_device(
         &self,
         idkey: String,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
         *self.device.write() = Some(Device::new(
             self.core.as_ref().unwrap().idkey(),
             None,
@@ -821,6 +920,54 @@ impl NoiseKVClient {
         &self,
         contact_idkey: String,
     ) -> Result<(), Error> {
+        // check if can have multiple outstanding ops, or if not, check that
+        // no other ops are outstanding
+        let op_id;
+        loop {
+            let mut op_id_ctr = self.op_id_ctr.lock();
+            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                // get op_id and inc id ctr
+                op_id = op_id_ctr.0;
+                op_id_ctr.0 += 1;
+                // add op into hashset
+                op_id_ctr.1.insert(op_id);
+                break;
+            }
+        }
+
+        /////////
+
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
+
+        if res.is_err() {
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+
+        /////////
+
+        // check if need to block on reads, and if so, if this read has
+        // returned from the server yet
+        loop {
+            let op_id_ctr = self.op_id_ctr.lock();
+            if self.sync_reads && op_id_ctr.1.contains(&op_id) {
+                // release the lock
+                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
+            } else {
+                break;
+            }
+        }
+
+        /////////
+
         let linked_name = self
             .device
             .read()

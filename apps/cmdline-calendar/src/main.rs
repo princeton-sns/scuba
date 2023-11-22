@@ -254,7 +254,7 @@ impl CalendarApp {
     pub async fn init_new_device(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context.client.create_standalone_device();
+        context.client.create_standalone_device().await;
 
         let roles_id = ROLES_PREFIX.to_owned();
         let roles_data = Roles::new();

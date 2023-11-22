@@ -206,11 +206,10 @@ impl PasswordManager {
         }
     }
 
-    pub fn init_new_device(
-        _args: ArgMatches,
+    pub async fn init_new_device(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context.client.create_standalone_device();
+        context.client.create_standalone_device().await;
         Ok(Some(String::from("Standalone device created.")))
     }
 
@@ -750,9 +749,11 @@ async fn main() -> ReplResult<()> {
         .with_name("Password Manager App")
         .with_version("v0.1.0")
         .with_description("Noise password manager app")
-        .with_command(
+        .with_command_async(
             Command::new("init_new_device"),
-            PasswordManager::init_new_device,
+            |_, context| {
+                Box::pin(PasswordManager::init_new_device(context))
+            },
         )
         .with_command_async(
             Command::new("init_linked_device")

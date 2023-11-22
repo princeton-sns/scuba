@@ -224,11 +224,10 @@ impl AuctioningApp {
         }
     }
 
-    pub fn init_new_device(
-        _args: ArgMatches,
+    pub async fn init_new_device(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context.client.create_standalone_device();
+        context.client.create_standalone_device().await;
         Ok(Some(String::from("Standalone device created.")))
     }
 
@@ -783,9 +782,9 @@ async fn main() -> ReplResult<()> {
         .with_name("Auctioning App")
         .with_version("v0.1.0")
         .with_description("Noise online auctioning app")
-        .with_command(
+        .with_command_async(
             Command::new("init_new_device"),
-            AuctioningApp::init_new_device,
+            |_, context| Box::pin(AuctioningApp::init_new_device(context)),
         )
         .with_command_async(
             Command::new("init_linked_device")

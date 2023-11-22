@@ -218,7 +218,7 @@ impl FamilyApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        context.client.create_standalone_device();
+        context.client.create_standalone_device().await;
 
         let mut enable_loc_polling = false;
         if args.get_flag("enable_loc_polling") {

@@ -2,11 +2,11 @@ use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::Values;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::{thread, time};
 use thiserror::Error;
-use std::collections::hash_map::Values;
 
 use noise_core::core::{Core, CoreClient};
 
@@ -624,7 +624,7 @@ impl NoiseKVClient {
                 core::mem::drop(op_id_ctr);
 
                 Ok(())
-            },
+            }
         }
     }
 
@@ -994,7 +994,8 @@ impl NoiseKVClient {
     }
 
     /*
-     * Existing set_*() functions whose writes should abide by consistency rules:
+     * Existing set_*() functions whose writes should abide by consistency
+     * rules:
      * - [ ] create_standalone_device()
      * - [ ] create_linked_device()
      * - [ ] add_contact() ?
@@ -1037,17 +1038,16 @@ impl NoiseKVClient {
 
         /////////
 
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         /////////
@@ -1073,9 +1073,7 @@ impl NoiseKVClient {
         Ok(perm.map(|x| x.clone()))
     }
 
-    pub async fn get_all_perms(
-        &self,
-    ) -> Result<Vec<PermissionSet>, Error> {
+    pub async fn get_all_perms(&self) -> Result<Vec<PermissionSet>, Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -1096,17 +1094,16 @@ impl NoiseKVClient {
 
         /////////
 
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         /////////
@@ -1160,17 +1157,16 @@ impl NoiseKVClient {
 
         /////////
 
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         /////////
@@ -1196,9 +1192,7 @@ impl NoiseKVClient {
         Ok(group.map(|x| x.clone()))
     }
 
-    pub async fn get_all_groups(
-        &self,
-    ) -> Result<Vec<Group>, Error> {
+    pub async fn get_all_groups(&self) -> Result<Vec<Group>, Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -1219,17 +1213,16 @@ impl NoiseKVClient {
 
         /////////
 
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         /////////
@@ -1283,17 +1276,16 @@ impl NoiseKVClient {
 
         /////////
 
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         /////////
@@ -1319,9 +1311,7 @@ impl NoiseKVClient {
         Ok(data.map(|x| x.clone()))
     }
 
-    pub async fn get_all_data(
-        &self,
-    ) -> Result<Vec<BasicData>, Error> {
+    pub async fn get_all_data(&self) -> Result<Vec<BasicData>, Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -1342,17 +1332,16 @@ impl NoiseKVClient {
 
         /////////
 
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         /////////
@@ -1597,25 +1586,21 @@ impl NoiseKVClient {
             )
             .await;
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
         // FIXME better way to do this
-        let res = self.send_message(
-            vec![self.idkey()],
-            &Operation::to_string(&Operation::Dummy(
-                op_id.clone()
-            )).unwrap()
-        ).await;
+        let res = self
+            .send_message(
+                vec![self.idkey()],
+                &Operation::to_string(&Operation::Dummy(op_id.clone()))
+                    .unwrap(),
+            )
+            .await;
 
         if res.is_err() {
-            return Err(Error::SendFailed(
-                res.err().unwrap().to_string(),
-            ));
+            return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
-
 
         ////////
 

@@ -486,8 +486,11 @@ impl AuctioningApp {
 
         let client_id =
             args.get_one::<String>("client_id").unwrap().to_string();
-        let open_clients_opt =
-            context.client.get_data(&OPEN_CLIENTS_PREFIX.to_string()).await.unwrap();
+        let open_clients_opt = context
+            .client
+            .get_data(&OPEN_CLIENTS_PREFIX.to_string())
+            .await
+            .unwrap();
         if open_clients_opt.is_none() {
             let mut open_clients = OpenAuctionClients::new();
             open_clients.add_client(&client_id);
@@ -554,8 +557,11 @@ impl AuctioningApp {
 
         let auction_id =
             args.get_one::<String>("auction_id").unwrap().to_string();
-        let open_clients_opt =
-            context.client.get_data(&OPEN_CLIENTS_PREFIX.to_string()).await.unwrap();
+        let open_clients_opt = context
+            .client
+            .get_data(&OPEN_CLIENTS_PREFIX.to_string())
+            .await
+            .unwrap();
         if open_clients_opt.is_none() {
             return Ok(Some(String::from(
                 "Open clients list does not exist: add clients for open auction announcements."
@@ -700,7 +706,8 @@ impl AuctioningApp {
             serde_json::from_str(bid_data_opt.unwrap().data_val()).unwrap();
 
         let auction_id = bid.auction_id.clone();
-        let auction_data_opt = context.client.get_data(&auction_id).await.unwrap();
+        let auction_data_opt =
+            context.client.get_data(&auction_id).await.unwrap();
         if auction_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Auction with id {} does not exist",
@@ -747,7 +754,8 @@ impl AuctioningApp {
         let auction_id =
             args.get_one::<String>("auction_id").unwrap().to_string();
 
-        let auction_data_opt = context.client.get_data(&auction_id).await.unwrap();
+        let auction_data_opt =
+            context.client.get_data(&auction_id).await.unwrap();
         if auction_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Auction with id {} does not exist",
@@ -822,25 +830,16 @@ async fn main() -> ReplResult<()> {
             AuctioningApp::get_linked_devices,
         )
         .with_command_async(
-            Command::new("get_data")
-                .arg(Arg::new("id").required(false)),
-            |args, context| {
-                Box::pin(AuctioningApp::get_data(args, context))
-            },
+            Command::new("get_data").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(AuctioningApp::get_data(args, context)),
         )
         .with_command_async(
-            Command::new("get_perms")
-                .arg(Arg::new("id").required(false)),
-            |args, context| {
-                Box::pin(AuctioningApp::get_perms(args, context))
-            },
+            Command::new("get_perms").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(AuctioningApp::get_perms(args, context)),
         )
         .with_command_async(
-            Command::new("get_groups")
-                .arg(Arg::new("id").required(false)),
-            |args, context| {
-                Box::pin(AuctioningApp::get_groups(args, context))
-            },
+            Command::new("get_groups").arg(Arg::new("id").required(false)),
+            |args, context| Box::pin(AuctioningApp::get_groups(args, context)),
         )
         .with_command_async(
             Command::new("create_auction")

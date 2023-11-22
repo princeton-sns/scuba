@@ -180,7 +180,7 @@ impl FamilyApp {
             // causal consistency
             false,
             false,
-            true
+            true,
         )
         .await;
         Self { client }
@@ -459,7 +459,8 @@ impl FamilyApp {
             )));
         }
 
-        let member_obj = context.client
+        let member_obj = context
+            .client
             .get_data(&MEMBER_PREFIX.to_string())
             .await
             .unwrap()
@@ -751,8 +752,12 @@ impl FamilyApp {
                         let mut post: Post =
                             serde_json::from_str(post_obj.data_val()).unwrap();
                         let fam_id = post.family_id.clone();
-                        let fam_obj =
-                            context.client.get_data(&fam_id).await.unwrap().unwrap();
+                        let fam_obj = context
+                            .client
+                            .get_data(&fam_id)
+                            .await
+                            .unwrap()
+                            .unwrap();
                         let fam: Family =
                             serde_json::from_str(fam_obj.data_val()).unwrap();
                         let own_name = context.client.linked_name();
@@ -832,7 +837,8 @@ impl FamilyApp {
             )));
         }
 
-        let member_obj = context.client
+        let member_obj = context
+            .client
             .get_data(&MEMBER_PREFIX.to_string())
             .await
             .unwrap()
@@ -880,7 +886,8 @@ impl FamilyApp {
         // get own location object
         let device_guard = context.client.device.read();
         let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let member_obj = context.client
+        let member_obj = context
+            .client
             .get_data(&MEMBER_PREFIX.to_string())
             .await
             .unwrap()

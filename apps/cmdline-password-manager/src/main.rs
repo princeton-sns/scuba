@@ -131,7 +131,7 @@ impl PasswordManager {
             // linearizability
             true,
             true,
-            false
+            false,
         )
         .await;
         Self { client }
@@ -488,7 +488,9 @@ impl PasswordManager {
         let password;
         match args.get_one::<String>("password") {
             Some(arg_pass) => password = arg_pass.to_string(),
-            None => password = context.gen_password_from_config(&app_name).await,
+            None => {
+                password = context.gen_password_from_config(&app_name).await
+            }
         }
 
         if hotp {
@@ -631,7 +633,8 @@ impl PasswordManager {
                 match args.get_one::<String>("password") {
                     Some(arg_pass) => password = arg_pass.to_string(),
                     None => {
-                        password = context.gen_password_from_config(&app_name).await
+                        password =
+                            context.gen_password_from_config(&app_name).await
                     }
                 }
 
@@ -800,15 +803,11 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),
-            |args, context| {
-                Box::pin(PasswordManager::get_data(args, context))
-            },
+            |args, context| Box::pin(PasswordManager::get_data(args, context)),
         )
         .with_command_async(
             Command::new("get_perms").arg(Arg::new("id").required(true)),
-            |args, context| {
-                Box::pin(PasswordManager::get_perms(args, context))
-            },
+            |args, context| Box::pin(PasswordManager::get_perms(args, context)),
         )
         .with_command_async(
             Command::new("get_groups").arg(Arg::new("id").required(true)),
@@ -817,8 +816,7 @@ async fn main() -> ReplResult<()> {
             },
         )
         .with_command_async(
-            Command::new("get_password")
-                .arg(Arg::new("id").required(true)),
+            Command::new("get_password").arg(Arg::new("id").required(true)),
             |args, context| {
                 Box::pin(PasswordManager::get_password(args, context))
             },
@@ -896,8 +894,7 @@ async fn main() -> ReplResult<()> {
             },
         )
         .with_command_async(
-            Command::new("get_otp")
-                .arg(Arg::new("id").required(true)),
+            Command::new("get_otp").arg(Arg::new("id").required(true)),
             |args, context| Box::pin(PasswordManager::get_otp(args, context)),
         )
         .with_command_async(

@@ -1,15 +1,23 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use actix::{Actor, Addr, Arbiter};
 use actix_web::{
-    delete, error, get, http::header, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
+    delete, error, get, http::header, post, web, HttpMessage, HttpRequest,
+    HttpResponse, Responder,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
+
+use self::intershard::IntershardRoutedEpochBatch;
 
 const ACTOR_MAILBOX_CAP: usize = 1024;
 
 pub mod client_protocol {
+    use rkyv::{bytecheck, Archive, CheckBytes};
     use serde::{Deserialize, Serialize};
     use std::borrow::{Borrow, Cow};
     use std::collections::BTreeMap;
@@ -17,11 +25,13 @@ pub mod client_protocol {
     // -------------------------------------------------------------------------
     // HTTP API Types
 
-    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[derive(Archive, CheckBytes, Debug, Serialize, Deserialize, Clone)]
+    #[archive(check_bytes)]
     #[serde(transparent)]
     pub struct EncryptedCommonPayload(pub Vec<u8>);
 
-    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[derive(Archive, CheckBytes, Debug, Serialize, Deserialize, Clone)]
+    #[archive(check_bytes)]
     pub struct EncryptedPerRecipientPayload {
         pub c_type: usize,
         pub ciphertext: Vec<u8>,
@@ -33,7 +43,8 @@ pub mod client_protocol {
         pub enc_recipients: BTreeMap<String, EncryptedPerRecipientPayload>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[derive(Archive, CheckBytes, Debug, Serialize, Deserialize, Clone)]
+    #[archive(check_bytes)]
     pub struct EncryptedInboxMessage {
         pub sender: String,
         // Must be sorted in key order
@@ -131,13 +142,18 @@ pub mod client_protocol {
             hasher.finalize_into((&mut attestation_messages_hash).into());
 
             let mut attestation_data = [0; 48];
-            attestation_data[0..8].copy_from_slice(&u64::to_le_bytes(first_epoch));
-            attestation_data[8..16].copy_from_slice(&u64::to_le_bytes(next_epoch));
+            attestation_data[0..8]
+                .copy_from_slice(&u64::to_le_bytes(first_epoch));
+            attestation_data[8..16]
+                .copy_from_slice(&u64::to_le_bytes(next_epoch));
             attestation_data[16..].copy_from_slice(&attestation_messages_hash);
             AttestationData(attestation_data)
         }
 
-        pub fn attest(&self, attestation_key: &ed25519_dalek::Keypair) -> Attestation {
+        pub fn attest(
+            &self,
+            attestation_key: &ed25519_dalek::Keypair,
+        ) -> Attestation {
             use ed25519_dalek::Signer;
             let signature = attestation_key.sign(&self.0);
 
@@ -161,7 +177,8 @@ pub mod client_protocol {
             }
 
             // Generate the hash-table to be passed alongside the attestation:
-            let message_hash_table: Vec<_> = Self::message_hash_table(messages.iter()).collect();
+            let message_hash_table: Vec<_> =
+                Self::message_hash_table(messages.iter()).collect();
 
             // Sanity check that the claim we're producing is supported by the
             // passed attestation:
@@ -221,8 +238,8 @@ pub mod client_protocol {
             public_key: &ed25519_dalek::PublicKey,
         ) -> bool {
             // Two claims support each other when
-            // - one contains a message at a sequence number that the other
-            //   does not (positive + negative claim), or
+            // - one contains a message at a sequence number that the other does
+            //   not (positive + negative claim), or
             // - both contain a message with an identical sequence number but
             //   differing receipients or common payload (positive + positive).
             //
@@ -235,40 +252,50 @@ pub mod client_protocol {
                 (other, self)
             };
 
-            let (p_idx, claim_p_recipients) = if let Some(p) = &claim_p.message_recipients {
-                p
-            } else {
-                // At least one positive claim required!
-                return false;
-            };
+            let (p_idx, claim_p_recipients) =
+                if let Some(p) = &claim_p.message_recipients {
+                    p
+                } else {
+                    // At least one positive claim required!
+                    return false;
+                };
 
             // Need to handle positive + positive & positive + negative
             // differently:
             if let Some((pn_idx, _recipients)) = &claim_pn.message_recipients {
                 // Positive + positive claim! Compare sequence numbers. If they
                 // match, recipients and payload must be identical.
-                let (p_seqid, p_recipients, p_payload) = claim_p.message_hash_table[*p_idx];
-                let (pn_seqid, pn_recipients, pn_payload) = claim_pn.message_hash_table[*pn_idx];
+                let (p_seqid, p_recipients, p_payload) =
+                    claim_p.message_hash_table[*p_idx];
+                let (pn_seqid, pn_recipients, pn_payload) =
+                    claim_pn.message_hash_table[*pn_idx];
 
-                if p_seqid != pn_seqid || (p_recipients == pn_recipients && p_payload == pn_payload)
+                if p_seqid != pn_seqid
+                    || (p_recipients == pn_recipients
+                        && p_payload == pn_payload)
                 {
                     return false;
                 }
 
-            // Claims support each other, but individual claims not verified yet!
+            // Claims support each other, but individual claims not
+            // verified yet!
             } else {
                 // Positive + negative claim! The positive claim can only be
                 // supported by the negative claim if the offending message's
                 // sequence number is contained within the negative claim's
                 // sequence space, so verify that.
-                let (p_seqid, p_recipients, _p_payload) = claim_p.message_hash_table[*p_idx];
+                let (p_seqid, p_recipients, _p_payload) =
+                    claim_p.message_hash_table[*p_idx];
 
                 // Is there a better way to do this which doesn't involve
                 // bitshifting & casting?
                 let [e0, e1, e2, e3, e4, e5, e6, e7, _, _, _, _, _, _, _, _] =
                     u128::to_be_bytes(p_seqid);
-                let p_epoch = u64::from_be_bytes([e0, e1, e2, e3, e4, e5, e6, e7]);
-                if p_epoch < claim_pn.first_epoch || p_epoch >= claim_pn.next_epoch {
+                let p_epoch =
+                    u64::from_be_bytes([e0, e1, e2, e3, e4, e5, e6, e7]);
+                if p_epoch < claim_pn.first_epoch
+                    || p_epoch >= claim_pn.next_epoch
+                {
                     return false;
                 }
 
@@ -323,7 +350,8 @@ pub mod client_protocol {
                     return false;
                 }
 
-                // Claims support each other, but individual claims not verified yet!
+                // Claims support each other, but individual claims not
+                // verified yet!
             }
 
             // Verify each of the invidual claim's cryptographic validity. If
@@ -383,15 +411,15 @@ pub mod client_protocol {
 
         pub fn first_epoch(&self) -> u64 {
             u64::from_le_bytes([
-                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6],
-                self.0[7],
+                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4],
+                self.0[5], self.0[6], self.0[7],
             ])
         }
 
         pub fn next_epoch(&self) -> u64 {
             u64::from_le_bytes([
-                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12], self.0[13], self.0[14],
-                self.0[15],
+                self.0[8], self.0[9], self.0[10], self.0[11], self.0[12],
+                self.0[13], self.0[14], self.0[15],
             ])
         }
 
@@ -403,9 +431,13 @@ pub mod client_protocol {
             data.0 == self.0[0..48] && self.verify_trusted(public_key)
         }
 
-        pub fn verify_trusted(&self, public_key: &ed25519_dalek::PublicKey) -> bool {
+        pub fn verify_trusted(
+            &self,
+            public_key: &ed25519_dalek::PublicKey,
+        ) -> bool {
             use ed25519_dalek::Verifier;
-            let signature = ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
+            let signature =
+                ed25519_dalek::Signature::from_bytes(&self.0[48..]).unwrap();
             public_key.verify(&self.0[..48], &signature).is_ok()
         }
     }
@@ -438,7 +470,8 @@ pub mod outbox {
     #[rtype(result = "Result<u64, EventError>")]
     pub struct EventBatch {
         pub sender: String,
-        pub messages: LinkedList<super::client_protocol::EncryptedOutboxMessage>,
+        pub messages:
+            LinkedList<super::client_protocol::EncryptedOutboxMessage>,
     }
 
     #[derive(Debug)]
@@ -459,7 +492,8 @@ pub mod outbox {
     pub struct RoutedEpochBatch {
         pub epoch_id: u64,
         pub outbox_id: u8,
-        pub messages: Vec<(String, super::client_protocol::EncryptedInboxMessage)>,
+        pub messages:
+            Vec<(String, super::client_protocol::EncryptedInboxMessage)>,
     }
 
     pub struct RouterActor {
@@ -495,19 +529,29 @@ pub mod outbox {
         fn handle(&mut self, msg: OutboxEpoch, _ctx: &mut Context<Self>) {
             use std::io::Write;
 
-            let OutboxEpoch(state, epoch_id, shard_id, (queue_length, queue)) = msg;
+            let OutboxEpoch(state, epoch_id, shard_id, (queue_length, queue)) =
+                msg;
 
             // At least a few file system blocks, RAM is cheap
-            let mut writer = std::io::BufWriter::with_capacity(128 * 4069, &mut self.persist_file);
+            let mut writer = std::io::BufWriter::with_capacity(
+                128 * 4069,
+                &mut self.persist_file,
+            );
 
-            bincode::serialize_into(&mut writer, &PersistRecord::Epoch(epoch_id)).unwrap();
+            bincode::serialize_into(
+                &mut writer,
+                &PersistRecord::Epoch(epoch_id),
+            )
+            .unwrap();
 
             // Allocate a bunch of vectors for the individual intershard
             // routers. We preallocate the maximum capacity (queue_length) for
             // each and rely on the OS performing lazy zero-page CoW allocation
             // to avoid excessive memory consumption. This allows us to avoid
-            // per-message allocations (LinkedList) or re-allocating the vectors.
-            let mut intershard = vec![vec![]; state.intershard_router_actors.len()];
+            // per-message allocations (LinkedList) or re-allocating the
+            // vectors.
+            let mut intershard =
+                vec![vec![]; state.intershard_router_actors.len()];
             intershard.iter_mut().for_each(|v| v.reserve(queue_length));
 
             let mut ev_seq: u64 = 0;
@@ -521,23 +565,31 @@ pub mod outbox {
                 for message in ev_batch.messages {
                     // By means of this being a BTreeMap, the recipients
                     // will be sorted in key order
-                    let receivers: Vec<_> = message.enc_recipients.keys().cloned().collect();
+                    let receivers: Vec<_> =
+                        message.enc_recipients.keys().cloned().collect();
 
                     let seq = (epoch_id as u128) << 64
                         | ((ev_seq as u128) & 0x0000FFFFFFFFFFFF)
                         | ((self.id as u128) << 48)
                         | ((shard_id as u128) << 56);
 
-                    for (recipient, enc_recipient_payload) in message.enc_recipients.into_iter() {
-                        let bucket = hash_into_bucket(&recipient, intershard.len(), true);
+                    for (recipient, enc_recipient_payload) in
+                        message.enc_recipients.into_iter()
+                    {
+                        let bucket = hash_into_bucket(
+                            &recipient,
+                            intershard.len(),
+                            true,
+                        );
 
-                        let ibmsg = super::client_protocol::EncryptedInboxMessage {
-                            sender: ev_batch.sender.clone(),
-                            recipients: receivers.clone(),
-                            enc_common: message.enc_common.clone(),
-                            enc_recipient: enc_recipient_payload,
-                            seq_id: seq,
-                        };
+                        let ibmsg =
+                            super::client_protocol::EncryptedInboxMessage {
+                                sender: ev_batch.sender.clone(),
+                                recipients: receivers.clone(),
+                                enc_common: message.enc_common.clone(),
+                                enc_recipient: enc_recipient_payload,
+                                seq_id: seq,
+                            };
 
                         intershard[bucket].push((recipient, ibmsg));
                     }
@@ -600,7 +652,11 @@ pub mod outbox {
     impl Handler<Initialize> for OutboxActor {
         type Result = ();
 
-        fn handle(&mut self, msg: Initialize, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: Initialize,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             self.state = Some(msg.0);
         }
     }
@@ -611,7 +667,11 @@ pub mod outbox {
         // TODO: this must accept at most 2**48 events per epoch. Reaching that
         // count would appear to be impossible, but we also don't have any
         // checks in place for this.
-        fn handle(&mut self, evs: EventBatch, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            evs: EventBatch,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             if let Some(ref epoch_id) = self.epoch {
                 // Simply add the event to the queue:
                 self.queue.0 += evs.messages.len();
@@ -626,7 +686,11 @@ pub mod outbox {
     impl Handler<EpochStart> for OutboxActor {
         type Result = ();
 
-        fn handle(&mut self, sequencer_msg: EpochStart, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            sequencer_msg: EpochStart,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             use std::mem;
 
             let EpochStart(next_epoch) = sequencer_msg;
@@ -639,7 +703,8 @@ pub mod outbox {
                 assert!(*cur_epoch + 1 == next_epoch);
 
                 // Swap out the queue and send it to the router:
-                let cur_queue = mem::replace(&mut self.queue, (0, LinkedList::new()));
+                let cur_queue =
+                    mem::replace(&mut self.queue, (0, LinkedList::new()));
                 self.router.do_send(OutboxEpoch(
                     self.state.as_ref().unwrap().clone(),
                     *cur_epoch,
@@ -655,6 +720,7 @@ pub mod outbox {
 
 pub mod intershard {
     use actix::{Actor, Context, Handler, Message, ResponseFuture};
+    use rkyv::{bytecheck, Archive, CheckBytes};
     use serde::{Deserialize, Serialize};
 
     use std::mem;
@@ -667,16 +733,21 @@ pub mod intershard {
         pub src_shard_id: u8,
         pub dst_shard_id: u8,
         pub epoch_id: u64,
-        pub messages: Vec<(String, super::client_protocol::EncryptedInboxMessage)>,
+        pub messages:
+            Vec<(String, super::client_protocol::EncryptedInboxMessage)>,
     }
 
-    #[derive(Message, Serialize, Deserialize, Clone, Debug)]
+    #[derive(
+        Archive, CheckBytes, Message, Serialize, Deserialize, Clone, Debug,
+    )]
+    #[archive(check_bytes)]
     #[rtype(result = "()")]
     pub struct IntershardRoutedEpochBatch {
         pub src_shard_id: u8,
         pub dst_shard_id: u8,
         pub epoch_id: u64,
-        pub messages: Vec<Vec<(String, super::client_protocol::EncryptedInboxMessage)>>,
+        pub messages:
+            Vec<Vec<(String, super::client_protocol::EncryptedInboxMessage)>>,
     }
 
     #[derive(Message, Clone)]
@@ -712,7 +783,11 @@ pub mod intershard {
     impl Handler<Initialize> for InterShardRouterActor {
         type Result = ();
 
-        fn handle(&mut self, msg: Initialize, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: Initialize,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             let Initialize(state) = msg;
             self.input_queues = (0, vec![None; state.outbox_actors.len()]);
             self.state = Some(state);
@@ -740,11 +815,15 @@ pub mod intershard {
                     &mut self.input_queues,
                     (
                         0,
-                        vec![None; self.state.as_ref().unwrap().outbox_actors.len()],
+                        vec![
+                            None;
+                            self.state.as_ref().unwrap().outbox_actors.len()
+                        ],
                     ),
                 );
 
-                // To avoid copying, build a 2D vector of input queues to serialize:
+                // To avoid copying, build a 2D vector of input queues to
+                // serialize:
                 let shard_batch = input_queues
                     .1
                     .into_iter()
@@ -757,36 +836,80 @@ pub mod intershard {
                         IntershardRoutedEpochBatch {
                             src_shard_id: self.src_shard_id,
                             dst_shard_id: self.dst_shard_id,
-                            epoch_id: epoch_id,
+                            epoch_id,
                             messages: shard_batch,
                         },
                     );
                     Box::pin(async move {})
                 } else {
-                    let dst_shard_url =
-                        self.state.as_ref().unwrap().shard_map[self.dst_shard_id as usize].clone();
-                    let (src_shard_id, dst_shard_id) = (self.src_shard_id, self.dst_shard_id);
-                    let httpc = self.state.as_ref().unwrap().httpc.clone();
+                    let (src_shard_id, dst_shard_id) =
+                        (self.src_shard_id, self.dst_shard_id);
+                    let (dst_shard_url, dst_shard_isb_socket_opt) =
+                        self.state.as_ref().unwrap().shard_map
+                            [self.dst_shard_id as usize]
+                            .clone();
+                    if let Some(dst_shard_isb_socket) = dst_shard_isb_socket_opt
+                    {
+                        let dst_shard_isb_socket_cloned =
+                            dst_shard_isb_socket.clone();
+                        Box::pin(async move {
+                            use futures_util::sink::SinkExt;
+                            use std::ops::DerefMut;
 
-                    let payload = bincode::serialize(&IntershardRoutedEpochBatch {
-                        src_shard_id: src_shard_id,
-                        dst_shard_id: dst_shard_id,
-                        epoch_id: epoch_id,
-                        messages: shard_batch,
-                    })
-                    .unwrap();
-                    Box::pin(async move {
-                        let resp = httpc
-                            .post(format!("{}/intershard-batch", dst_shard_url))
-                            .body(payload)
-                            .send()
+                            let mut socket_guard =
+                                dst_shard_isb_socket_cloned.lock().await;
+                            let socket_buffered: tokio::io::BufWriter<_> =
+                                tokio::io::BufWriter::with_capacity(
+                                    1024 * 1024 * 64,
+                                    socket_guard.deref_mut(),
+                                );
+                            let mut async_bincode_writer =
+				&mut async_bincode::tokio::AsyncBincodeWriter::from(socket_buffered).for_async();
+                            let mut sink: std::pin::Pin<
+                                &mut async_bincode::tokio::AsyncBincodeWriter<
+                                    _,
+                                    IntershardRoutedEpochBatch,
+                                    async_bincode::AsyncDestination,
+                                >,
+                            > = std::pin::Pin::new(&mut async_bincode_writer);
+                            sink.send(IntershardRoutedEpochBatch {
+                                src_shard_id,
+                                dst_shard_id,
+                                epoch_id,
+                                messages: shard_batch,
+                            })
                             .await
                             .unwrap();
+                        })
+                    } else {
+                        let (src_shard_id, dst_shard_id) =
+                            (self.src_shard_id, self.dst_shard_id);
+                        let httpc = self.state.as_ref().unwrap().httpc.clone();
 
-                        if !resp.status().is_success() {
-                            panic!("Received non-success on /intershard-batch: {:?}", resp);
-                        }
-                    })
+                        let payload =
+                            bincode::serialize(&IntershardRoutedEpochBatch {
+                                src_shard_id,
+                                dst_shard_id,
+                                epoch_id,
+                                messages: shard_batch,
+                            })
+                            .unwrap();
+                        Box::pin(async move {
+                            let resp = httpc
+                                .post(format!(
+                                    "{}/intershard-batch",
+                                    dst_shard_url
+                                ))
+                                .body(payload)
+                                .send()
+                                .await
+                                .unwrap();
+
+                            if !resp.status().is_success() {
+                                panic!("Received non-success on /intershard-batch: {:?}", resp);
+                            }
+                        })
+                    }
                 }
             } else {
                 Box::pin(async move {})
@@ -810,7 +933,8 @@ pub mod intershard {
         inboxes.iter_mut().for_each(|v| v.reserve(batch_size));
 
         for message in batch.messages.into_iter().flat_map(|v| v.into_iter()) {
-            let bucket = super::hash_into_bucket(&message.0, inboxes.len(), false);
+            let bucket =
+                super::hash_into_bucket(&message.0, inboxes.len(), false);
             inboxes[bucket].push(message);
         }
 
@@ -819,7 +943,9 @@ pub mod intershard {
         // actual number of messages delivered to an inbox was very small.
         inboxes.iter_mut().for_each(|v| v.shrink_to_fit());
 
-        for (messages, inbox) in inboxes.into_iter().zip(state.inbox_actors.iter()) {
+        for (messages, inbox) in
+            inboxes.into_iter().zip(state.inbox_actors.iter())
+        {
             let routed_batch = RoutedEpochBatch {
                 epoch_id: batch.epoch_id,
                 src_shard_id: batch.src_shard_id,
@@ -858,7 +984,11 @@ pub mod intershard {
     impl Handler<Initialize> for EpochCollectorActor {
         type Result = ();
 
-        fn handle(&mut self, msg: Initialize, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: Initialize,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             let Initialize(state) = msg;
             self.input_queues = (0, vec![None; state.inbox_actors.len()]);
             self.state = Some(state);
@@ -888,11 +1018,13 @@ pub mod intershard {
 
             // check if every element of input_queus has been written to
             if self.input_queues.0 == self.input_queues.1.len() {
-                let seq_url = self.state.as_ref().unwrap().sequencer_url.clone();
+                let seq_url =
+                    self.state.as_ref().unwrap().sequencer_url.clone();
                 let self_shard_id = self.state.as_ref().unwrap().shard_id;
                 let httpc = self.state.as_ref().unwrap().httpc.clone();
 
-                let received_messages = self.input_queues.1.iter().map(|orm| orm.unwrap()).sum();
+                let received_messages =
+                    self.input_queues.1.iter().map(|orm| orm.unwrap()).sum();
 
                 self.input_queues = (
                     0,
@@ -913,7 +1045,10 @@ pub mod intershard {
                         .await
                         .unwrap();
                     if !resp.status().is_success() {
-                        panic!("Received non-success on /end-epoch: {:?}", resp);
+                        panic!(
+                            "Received non-success on /end-epoch: {:?}",
+                            resp
+                        );
                     }
                 })
             } else {
@@ -967,7 +1102,11 @@ pub mod inbox {
     impl Handler<Initialize> for ReceiverActor {
         type Result = ();
 
-        fn handle(&mut self, msg: Initialize, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: Initialize,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             self.input_queues = (0, vec![None; msg.0.shard_map.len()]);
             self.state = Some(msg.0);
         }
@@ -993,7 +1132,13 @@ pub mod inbox {
 
                 let input_queues = mem::replace(
                     &mut self.input_queues,
-                    (0, vec![None; self.state.as_ref().unwrap().shard_map.len()]),
+                    (
+                        0,
+                        vec![
+                            None;
+                            self.state.as_ref().unwrap().shard_map.len()
+                        ],
+                    ),
                 );
 
                 let epoch_message_count = input_queues
@@ -1007,10 +1152,13 @@ pub mod inbox {
                     for message in batch.messages.into_iter() {
                         output_map
                             .entry(message.0)
-                            .or_insert_with(|| Vec::with_capacity(epoch_message_count))
+                            .or_insert_with(|| {
+                                Vec::with_capacity(epoch_message_count)
+                            })
                             .push(message.1);
-                        // // Use this instead of .entry().or_insert_with() to
-                        // // avoid unconditionally cloning the device_id string:
+                        // // Use this instead of .entry().or_insert_with()
+                        // to // avoid unconditionally
+                        // cloning the device_id string:
                         // if !output_map.contains_key(&message.0) {
                         //     output_map.insert(
                         //         message.0.clone(),
@@ -1047,7 +1195,10 @@ pub mod inbox {
             String,
             (
                 u64,
-                LinkedList<(u64, Vec<super::client_protocol::EncryptedInboxMessage>)>,
+                LinkedList<(
+                    u64,
+                    Vec<super::client_protocol::EncryptedInboxMessage>,
+                )>,
             ),
         >,
         state: Option<Arc<super::ShardState>>,
@@ -1106,7 +1257,9 @@ pub mod inbox {
     );
 
     #[derive(MessageResponse)]
-    pub struct DeviceMessages(pub LinkedList<super::client_protocol::EncryptedInboxMessage>);
+    pub struct DeviceMessages(
+        pub LinkedList<super::client_protocol::EncryptedInboxMessage>,
+    );
 
     #[derive(Message, Clone, Debug)]
     #[rtype(result = "DeviceMessages")]
@@ -1137,7 +1290,11 @@ pub mod inbox {
     impl Handler<AddOtkeys> for InboxActor {
         type Result = ();
 
-        fn handle(&mut self, msg: AddOtkeys, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: AddOtkeys,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             let AddOtkeys(client_id, key_map) = msg;
 
             self.otkeys
@@ -1150,19 +1307,24 @@ pub mod inbox {
     impl Handler<GetOtkey> for InboxActor {
         type Result = Otkey;
 
-        fn handle(&mut self, msg: GetOtkey, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: GetOtkey,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             let GetOtkey(client_id) = msg;
 
-            let (res, key_map_len) = if let Some(key_map) = self.otkeys.get_mut(&client_id) {
-                if let Some(k) = key_map.keys().next().cloned() {
-                    let v = key_map.remove(&k).unwrap();
-                    (Otkey(Some((k, v))), key_map.len())
+            let (res, key_map_len) =
+                if let Some(key_map) = self.otkeys.get_mut(&client_id) {
+                    if let Some(k) = key_map.keys().next().cloned() {
+                        let v = key_map.remove(&k).unwrap();
+                        (Otkey(Some((k, v))), key_map.len())
+                    } else {
+                        (Otkey(None), 0)
+                    }
                 } else {
                     (Otkey(None), 0)
-                }
-            } else {
-                (Otkey(None), 0)
-            };
+                };
 
             if key_map_len < 10 {
                 self.request_otkeys(client_id);
@@ -1174,7 +1336,11 @@ pub mod inbox {
 
     impl Handler<ClearAllMessages> for InboxActor {
         type Result = ();
-        fn handle(&mut self, _msg: ClearAllMessages, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            _msg: ClearAllMessages,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             self.client_mailboxes = HashMap::new();
         }
     }
@@ -1190,7 +1356,11 @@ pub mod inbox {
     impl Handler<Initialize> for InboxActor {
         type Result = ();
 
-        fn handle(&mut self, msg: Initialize, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: Initialize,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             self.state = Some(msg.0);
         }
     }
@@ -1203,17 +1373,22 @@ pub mod inbox {
             epoch_batch: DeviceEpochBatch,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
-            let DeviceEpochBatch(epoch_id, device_messages, message_count) = epoch_batch;
+            let DeviceEpochBatch(epoch_id, device_messages, message_count) =
+                epoch_batch;
 
             for (device, messages) in device_messages.into_iter() {
-                // Insert the messages into the data structure and immediately get a reference to it:
+                // Insert the messages into the data structure and immediately
+                // get a reference to it:
                 let (prev_epoch, current_epoch_messages_ref) =
                     if let Some((_, ref mut device_mailbox)) =
                         self.client_mailboxes.get_mut(&device)
                     {
                         device_mailbox.push_back((epoch_id, messages));
                         (
-                            device_mailbox.iter().nth_back(1).map(|(epoch, _)| epoch),
+                            device_mailbox
+                                .iter()
+                                .nth_back(1)
+                                .map(|(epoch, _)| epoch),
                             &device_mailbox.back().unwrap().1,
                         )
                     } else {
@@ -1291,11 +1466,9 @@ pub mod inbox {
 
             self.next_epoch = epoch_id + 1;
 
-            self.state
-                .as_ref()
-                .unwrap()
-                .epoch_collector_actor
-                .do_send(super::inbox::EndEpoch(epoch_id, self.id, message_count));
+            self.state.as_ref().unwrap().epoch_collector_actor.do_send(
+                super::inbox::EndEpoch(epoch_id, self.id, message_count),
+            );
         }
     }
 
@@ -1317,8 +1490,8 @@ pub mod inbox {
             let (tx, rx) = sse::channel(128);
             self.client_streams.insert(client_id.clone(), tx);
 
-            // let otkey_count = self.otkeys.get(&client_id).map(|hm| hm.len()).unwrap_or(0);
-            // if otkey_count < 10 {
+            // let otkey_count = self.otkeys.get(&client_id).map(|hm|
+            // hm.len()).unwrap_or(0); if otkey_count < 10 {
             self.request_otkeys(client_id);
             // }
 
@@ -1329,7 +1502,11 @@ pub mod inbox {
     impl Handler<GetDeviceMessages> for InboxActor {
         type Result = DeviceMessages;
 
-        fn handle(&mut self, msg: GetDeviceMessages, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: GetDeviceMessages,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             let (ref mut _client_next_epoch, ref mut client_msgs) = self
                 .client_mailboxes
                 .entry(msg.0)
@@ -1347,16 +1524,17 @@ pub mod inbox {
     // impl Handler<DeleteDeviceMessages> for InboxActor {
     //     type Result = DeviceMessages;
 
-    //     fn handle(&mut self, msg: DeleteDeviceMessages, _ctx: &mut Context<Self>) -> Self::Result {
-    //         let (ref mut client_next_epoch, ref mut client_msgs) = self
-    //             .client_mailboxes
-    //             .entry(msg.0)
+    //     fn handle(&mut self, msg: DeleteDeviceMessages, _ctx: &mut
+    // Context<Self>) -> Self::Result {         let (ref mut
+    // client_next_epoch, ref mut client_msgs) = self
+    // .client_mailboxes             .entry(msg.0)
     //             .or_insert_with(|| (0, LinkedList::new()));
 
     //         *client_next_epoch = self.next_epoch;
 
     //         //FIX: use drain filter if we're ok with experimental
-    //         //let leftover_msgs = client_msgs.drain_filter(|x| *x.seq < msg.1).collect::<LinkedList<_>>();
+    //         //let leftover_msgs = client_msgs.drain_filter(|x| *x.seq <
+    // msg.1).collect::<LinkedList<_>>();
 
     //         let mut index = 0;
     //         for m in client_msgs.iter().flat_map(|(_, v)| v.iter()) {
@@ -1381,7 +1559,11 @@ pub mod inbox {
     impl Handler<ClearDeviceMessages> for InboxActor {
         type Result = DeviceMessages;
 
-        fn handle(&mut self, msg: ClearDeviceMessages, _ctx: &mut Context<Self>) -> Self::Result {
+        fn handle(
+            &mut self,
+            msg: ClearDeviceMessages,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
             let (ref mut client_next_epoch, ref mut client_msgs) = self
                 .client_mailboxes
                 .entry(msg.0)
@@ -1430,12 +1612,18 @@ impl header::Header for BearerToken {
             .get(Self::name())
             .ok_or(error::ParseError::Header)
             .and_then(|h| h.to_str().map_err(|_| error::ParseError::Header))
-            .and_then(|h| h.strip_prefix("Bearer ").ok_or(error::ParseError::Header))
+            .and_then(|h| {
+                h.strip_prefix("Bearer ").ok_or(error::ParseError::Header)
+            })
             .map(|t| BearerToken(t.to_string()))
     }
 }
 
-fn hash_into_bucket(device_id: &str, bucket_count: usize, upper_bits: bool) -> usize {
+fn hash_into_bucket(
+    device_id: &str,
+    bucket_count: usize,
+    upper_bits: bool,
+) -> usize {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -1465,9 +1653,13 @@ async fn inbox_shard(
     auth: web::Header<BearerToken>,
 ) -> impl Responder {
     let device_id = auth.into_inner().into_token();
-    let bucket = hash_into_bucket(&device_id, state.intershard_router_actors.len(), true);
+    let bucket = hash_into_bucket(
+        &device_id,
+        state.intershard_router_actors.len(),
+        true,
+    );
 
-    state.shard_map[bucket].clone()
+    state.shard_map[bucket].clone().0
 }
 
 #[derive(Deserialize)]
@@ -1480,19 +1672,26 @@ async fn inbox_shard_batch(
     state: web::Data<ShardState>,
     query: web::Query<BatchHashQuery>,
 ) -> impl Responder {
-    let mut map = HashMap::new();
+    let mut map: HashMap<String, String> = HashMap::new();
 
     for i in 0..(query.count) {
         let device_id = format!("{}", i);
-        let bucket = hash_into_bucket(&device_id, state.intershard_router_actors.len(), true);
-        map.insert(device_id, state.shard_map[bucket].clone());
+        let bucket = hash_into_bucket(
+            &device_id,
+            state.intershard_router_actors.len(),
+            true,
+        );
+        map.insert(device_id, state.shard_map[bucket].0.clone());
     }
 
     web::Json(map)
 }
 
 #[get("/inboxidx")]
-async fn inbox_idx(state: web::Data<ShardState>, auth: web::Header<BearerToken>) -> impl Responder {
+async fn inbox_idx(
+    state: web::Data<ShardState>,
+    auth: web::Header<BearerToken>,
+) -> impl Responder {
     let device_id = auth.into_inner().into_token();
     let bucket = hash_into_bucket(&device_id, state.inbox_actors.len(), false);
 
@@ -1504,12 +1703,16 @@ async fn inbox_idx_batch(
     state: web::Data<ShardState>,
     query: web::Query<BatchHashQuery>,
 ) -> impl Responder {
-    let mut map = HashMap::new();
+    let mut map: HashMap<String, String> = HashMap::new();
 
     for i in 0..(query.count) {
         let device_id = format!("{}", i);
-        let bucket = hash_into_bucket(&device_id, state.intershard_router_actors.len(), false);
-        map.insert(device_id, state.shard_map[bucket].clone());
+        let bucket = hash_into_bucket(
+            &device_id,
+            state.intershard_router_actors.len(),
+            false,
+        );
+        map.insert(device_id, state.shard_map[bucket].0.clone());
     }
 
     web::Json(map)
@@ -1522,14 +1725,18 @@ async fn handle_message(
     req: HttpRequest,
 ) -> impl Responder {
     // Check whether we are the right shard for this client_id:
-    let shard_bucket = hash_into_bucket(auth.token(), state.intershard_router_actors.len(), true);
+    let shard_bucket = hash_into_bucket(
+        auth.token(),
+        state.intershard_router_actors.len(),
+        true,
+    );
     if (state.shard_id as usize) != shard_bucket {
         HttpResponse::TemporaryRedirect()
             .append_header((
                 "Location",
                 format!(
                     "{}{}?{}",
-                    state.shard_map[shard_bucket],
+                    state.shard_map[shard_bucket].0,
                     req.path(),
                     req.query_string()
                 ),
@@ -1556,7 +1763,9 @@ async fn handle_message(
 
 #[post("/message")]
 async fn handle_message_json(
-    msgs: web::Json<std::collections::LinkedList<client_protocol::EncryptedOutboxMessage>>,
+    msgs: web::Json<
+        std::collections::LinkedList<client_protocol::EncryptedOutboxMessage>,
+    >,
     state: web::Data<ShardState>,
     auth: web::Header<BearerToken>,
     req: HttpRequest,
@@ -1629,7 +1838,8 @@ async fn clear_all_messages(state: web::Data<ShardState>) -> impl Responder {
 // ) -> impl Responder {
 //     let device_id = auth.into_inner().into_token();
 //     let inbox_actors_cnt = state.inbox_actors.len();
-//     let actor_idx = hash_into_bucket(&device_id, inbox_actors_cnt, false);
+//     let actor_idx = hash_into_bucket(&device_id, inbox_actors_cnt,
+// false);
 
 //     let messages = state.inbox_actors[actor_idx]
 //         .1
@@ -1660,7 +1870,10 @@ async fn retrieve_messages(
     web::Json(messages.0)
 }
 #[post("/epoch/{epoch_id}")]
-async fn start_epoch(state: web::Data<ShardState>, epoch_id: web::Path<u64>) -> impl Responder {
+async fn start_epoch(
+    state: web::Data<ShardState>,
+    epoch_id: web::Path<u64>,
+) -> impl Responder {
     // println!("Received start_epoch request: {}", *epoch_id);
     for outbox in state.outbox_actors.iter() {
         outbox.send(outbox::EpochStart(*epoch_id)).await.unwrap();
@@ -1723,15 +1936,18 @@ async fn get_otkey(
     println!("Get otkey request for {:?}", &query.device_id);
 
     // Check whether we are the right shard for this client_id:
-    let shard_bucket =
-        hash_into_bucket(&query.device_id, state.intershard_router_actors.len(), true);
+    let shard_bucket = hash_into_bucket(
+        &query.device_id,
+        state.intershard_router_actors.len(),
+        true,
+    );
     if (state.shard_id as usize) != shard_bucket {
         HttpResponse::TemporaryRedirect()
             .append_header((
                 "Location",
                 format!(
                     "{}{}?{}",
-                    state.shard_map[shard_bucket],
+                    state.shard_map[shard_bucket].0,
                     req.path(),
                     req.query_string()
                 ),
@@ -1739,7 +1955,8 @@ async fn get_otkey(
             .finish()
     } else {
         let inbox_actors_cnt = state.inbox_actors.len();
-        let actor_idx = hash_into_bucket(&query.device_id, inbox_actors_cnt, false);
+        let actor_idx =
+            hash_into_bucket(&query.device_id, inbox_actors_cnt, false);
 
         let opt_otkey = state.inbox_actors[actor_idx]
             .1
@@ -1758,10 +1975,83 @@ async fn get_otkey(
     }
 }
 
+// Rkyv implementation. Because we only get a reference to the archived
+// type and can't destruct or move it around, this would require a more
+// significant refactor of our codebase. Ideally we'd like a refcounted
+// AlignedVec which, through a typestate implementation, remembers that its
+// contents have been validated to conform to a given type and allows
+// taking "owned" copies of subtypes that are represented as an offset in
+// the underlying Rc'd buffer.
+//
+//
+// async fn isb_socket_conn(
+//     stream: tokio::net::TcpStream,
+//     addr: std::net::SocketAddr,
+// ) {
+//     use rkyv::{AlignedVec, Deserialize, Infallible, VarintLength};
+//     use rkyv_codec::archive_stream;
+//     use tokio_util::compat::TokioAsyncReadCompatExt;
+//
+//     // Required because rkyv_codec expects futures_io AsyncRead
+//     let mut compat_stream = stream.compat();
+//     let mut buffer = AlignedVec::new();
+//
+//     loop {
+//         match archive_stream::<_, IntershardRoutedEpochBatch,
+// VarintLength>(             &mut compat_stream,
+//             &mut buffer,
+//         )
+//         .await
+//         {
+//             Ok(archived) => {
+//                 let _: () = archived;
+//                 println!(
+//                     "Received archived! {:?}",
+//                     archived.deserialize(&mut Infallible)
+//                 );
+//             }
+//             Err(e) => {
+//                 println!("Error getting ISB from stream: {:?}", e);
+//                 return;
+//             }
+//         }
+//     }
+// }
+
+async fn isb_socket_conn(
+    state: std::sync::Arc<ShardState>,
+    stream: tokio::net::TcpStream,
+    _addr: std::net::SocketAddr,
+) {
+    use tokio_stream::StreamExt;
+
+    let mut async_bincode_reader: async_bincode::tokio::AsyncBincodeReader<
+        _,
+        IntershardRoutedEpochBatch,
+    > = async_bincode::tokio::AsyncBincodeReader::from(stream);
+
+    loop {
+        match async_bincode_reader.next().await {
+            Some(Ok(batch)) => {
+                // println!("Received TCP ISB!");
+                intershard::distribute_intershard_batch(&*state, batch);
+            }
+            Some(Err(e)) => {
+                println!("Error getting ISB from stream: {:?}", e);
+                return;
+            }
+            None => {
+                println!("Stream closed!");
+                return;
+            }
+        }
+    }
+}
+
 pub struct ShardState {
     httpc: reqwest::Client,
     shard_id: u8,
-    shard_map: Vec<String>,
+    shard_map: Vec<(String, Option<Arc<Mutex<TcpStream>>>)>,
     sequencer_url: String,
     outbox_actors: Vec<Addr<outbox::OutboxActor>>,
     intershard_router_actors: Vec<Addr<intershard::InterShardRouterActor>>,
@@ -1775,6 +2065,7 @@ pub async fn init(
     sequencer_base_url: String,
     outbox_count: u8,
     inbox_count: u8,
+    isb_socket: Option<(u16, String)>,
 ) -> impl Fn(&mut web::ServiceConfig) + Clone + Send + 'static {
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
@@ -1806,11 +2097,26 @@ pub async fn init(
 
     {
         use base64::{engine::general_purpose, Engine as _};
-        let encoded = general_purpose::STANDARD_NO_PAD.encode(&keypair.public.to_bytes());
+        let encoded =
+            general_purpose::STANDARD_NO_PAD.encode(&keypair.public.to_bytes());
         println!("Loaded attestation key, public key: {}", encoded);
     }
 
     fs::create_dir("./persist-outbox").unwrap();
+
+    // If requested, we create a TcpStream socket to accept incoming
+    // intershard batches. Create this before registering, to allow
+    // other shards to attempt to connect already:
+    let isb_socket_listener: Option<TcpListener> =
+        if let Some((ref port, ref _addr)) = isb_socket {
+            Some(
+                TcpListener::bind(&format!("0.0.0.0:{}", port))
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
 
     let httpc = reqwest::Client::new();
     let mut arbiters = Vec::new();
@@ -1827,6 +2133,7 @@ pub async fn init(
             base_url: shard_base_url,
             outbox_count,
             inbox_count,
+            isb_socket: isb_socket.map(|(_port, addr)| addr),
         })
         .send()
         .await
@@ -1865,7 +2172,87 @@ pub async fn init(
         }
     }
     println!("Retrieved shard map!");
-    let shard_map = shard_map_opt.unwrap().shards;
+    let shard_addr_map = shard_map_opt.unwrap().shards;
+
+    // Start accepting ISB TCP connections.
+    let isb_socket_state_ref: Arc<Mutex<Option<Arc<ShardState>>>> =
+        Arc::new(Mutex::new(None));
+    let isb_socket_state_notify = Arc::new(tokio::sync::Notify::default());
+    if let Some(listener) = isb_socket_listener {
+        let isb_socket_state_ref_cloned = isb_socket_state_ref.clone();
+        let isb_socket_state_notify_cloned = isb_socket_state_notify.clone();
+        tokio::spawn(async move {
+            println!("Listening on ISB socket.");
+            loop {
+                match listener.accept().await {
+                    Ok((socket, addr)) => {
+                        println!(
+                            "Accepted ISB socket connection from {}",
+                            addr
+                        );
+                        let isb_socket_state_ref_cloned2 =
+                            isb_socket_state_ref_cloned.clone();
+                        let isb_socket_state_notify_cloned2 =
+                            isb_socket_state_notify_cloned.clone();
+                        tokio::spawn(async move {
+                            // Try to acquire a state reference. We can clone it
+                            // out of the RwLock, so future waiters and / or
+                            // writers won't be blocked on us.
+                            let mut state_ref: Option<Arc<ShardState>> = None;
+                            let mut locked =
+                                isb_socket_state_ref_cloned2.lock().await;
+
+                            while state_ref.is_none() {
+                                if let Some(ref state_ref_locked) = *locked {
+                                    state_ref = Some(state_ref_locked.clone());
+                                } else {
+                                    // Release the lock and wait for
+                                    // notify. Avoid racing by requesting
+                                    // .notified() first, then dropping the lock
+                                    // guard, and finally awaiting the Notify.
+                                    let fut = isb_socket_state_notify_cloned2
+                                        .notified();
+                                    std::mem::drop(locked);
+                                    println!("Waiting on shared state notify for ISB conn from {}", addr);
+                                    fut.await;
+                                    locked = isb_socket_state_ref_cloned2
+                                        .lock()
+                                        .await;
+                                }
+                            }
+                            std::mem::drop(locked);
+                            println!(
+                                "Got shared state ref for ISB conn from {}",
+                                addr
+                            );
+
+                            isb_socket_conn(state_ref.unwrap(), socket, addr)
+                                .await;
+                        });
+                    }
+                    Err(e) => {
+                        println!("Error accepting client connection: {:?}", e)
+                    }
+                }
+            }
+        });
+    }
+
+    // If other shards expose ISB TCP sockets, connect to them:
+    let mut shard_socket_map: Vec<(String, Option<Arc<Mutex<TcpStream>>>)> =
+        Vec::new();
+    for (shard_url, shard_isb_socket_addr) in shard_addr_map {
+        if let Some(addr) = shard_isb_socket_addr {
+            shard_socket_map.push((
+                shard_url,
+                Some(Arc::new(Mutex::new(
+                    TcpStream::connect(&addr).await.unwrap(),
+                ))),
+            ))
+        } else {
+            shard_socket_map.push((shard_url, None));
+        }
+    }
 
     // Boot up a set of outbox actors on individual arbiters
     let mut outbox_actors: Vec<Addr<outbox::OutboxActor>> = Vec::new();
@@ -1891,13 +2278,18 @@ pub async fn init(
     }
 
     // Boot up a set of intershard routers:
-    let mut intershard_router_actors: Vec<Addr<intershard::InterShardRouterActor>> = Vec::new();
-    for id in 0..shard_map.len() {
+    let mut intershard_router_actors: Vec<
+        Addr<intershard::InterShardRouterActor>,
+    > = Vec::new();
+    for id in 0..shard_socket_map.len() {
         let (isr_tx, mut isr_rx) = mpsc::channel(1);
         let isr_arbiter = Arbiter::new();
         assert!(isr_arbiter.spawn(async move {
-            let addr =
-                intershard::InterShardRouterActor::new(register_resp.shard_id, id as u8).start();
+            let addr = intershard::InterShardRouterActor::new(
+                register_resp.shard_id,
+                id as u8,
+            )
+            .start();
             isr_tx.send(addr).await.unwrap();
         }));
         arbiters.push(isr_arbiter);
@@ -1905,7 +2297,10 @@ pub async fn init(
     }
 
     // Boot up a set of inbox actors on individual arbiters:
-    let mut inbox_actors: Vec<(Addr<inbox::ReceiverActor>, Addr<inbox::InboxActor>)> = Vec::new();
+    let mut inbox_actors: Vec<(
+        Addr<inbox::ReceiverActor>,
+        Addr<inbox::InboxActor>,
+    )> = Vec::new();
     for id in 0..inbox_count {
         let (inbox_tx, mut inbox_rx) = mpsc::channel(1);
         let inbox_arbiter = Arbiter::new();
@@ -1942,13 +2337,18 @@ pub async fn init(
         httpc,
         sequencer_url: sequencer_base_url,
         shard_id: register_resp.shard_id,
-        shard_map,
+        shard_map: shard_socket_map,
         outbox_actors,
         intershard_router_actors,
         inbox_actors,
         epoch_collector_actor: epoch_collector_actor.clone(),
         attestation_key: keypair,
     });
+
+    {
+        *(isb_socket_state_ref.lock().await) = Some(state.clone().into_inner());
+        isb_socket_state_notify.notify_waiters();
+    }
 
     for outbox_actor in state.outbox_actors.iter() {
         outbox_actor

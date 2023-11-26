@@ -12,7 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-use self::intershard::IntershardRoutedEpochBatch;
+use self::intershard::IntershardRoutedEpochMessage;
 
 const ACTOR_MAILBOX_CAP: usize = 1024;
 
@@ -756,14 +756,22 @@ pub mod intershard {
 
     use std::sync::Arc;
 
-    #[derive(Message, Clone, Debug)]
+    #[derive(Message, Clone, Debug, Serialize, Deserialize)]
     #[rtype(result = "()")]
-    pub struct RoutedEpochBatch {
+    pub struct RoutedEpochBatchMessages {
         pub src_shard_id: u8,
         pub dst_shard_id: u8,
         pub epoch_id: u64,
         pub messages:
             Vec<(String, super::client_protocol::EncryptedInboxMessage)>,
+    }
+
+    #[derive(Message, Clone, Debug, Serialize, Deserialize)]
+    #[rtype(result = "()")]
+    pub struct RoutedEpochBatchDone {
+        pub src_shard_id: u8,
+        pub dst_shard_id: u8,
+        pub epoch_id: u64,
     }
 
     #[derive(
@@ -777,6 +785,13 @@ pub mod intershard {
         pub epoch_id: u64,
         pub messages:
             Vec<Vec<(String, super::client_protocol::EncryptedInboxMessage)>>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum IntershardRoutedEpochMessage {
+        Batch(IntershardRoutedEpochBatch),
+        PartialBatch(RoutedEpochBatchMessages),
+        EpochDone(RoutedEpochBatchDone),
     }
 
     #[derive(Message, Clone)]
@@ -851,23 +866,25 @@ pub mod intershard {
                     ),
                 );
 
-                // To avoid copying, build a 2D vector of input queues to
-                // serialize:
-                let shard_batch = input_queues
-                    .1
-                    .into_iter()
-                    .map(|oq| oq.unwrap().messages)
-                    .collect();
-
                 if self.src_shard_id == self.dst_shard_id {
-                    distribute_intershard_batch(
+                    // To avoid copying, build a 2D vector of input
+                    // queues to serialize:
+                    let shard_batch = input_queues
+                        .1
+                        .into_iter()
+                        .map(|oq| oq.unwrap().messages)
+                        .collect();
+
+                    distribute_intershard_msg(
                         self.state.as_ref().unwrap(),
-                        IntershardRoutedEpochBatch {
-                            src_shard_id: self.src_shard_id,
-                            dst_shard_id: self.dst_shard_id,
-                            epoch_id,
-                            messages: shard_batch,
-                        },
+                        IntershardRoutedEpochMessage::Batch(
+                            IntershardRoutedEpochBatch {
+                                src_shard_id: self.src_shard_id,
+                                dst_shard_id: self.dst_shard_id,
+                                epoch_id,
+                                messages: shard_batch,
+                            },
+                        ),
                     );
                     Box::pin(async move {})
                 } else {
@@ -877,6 +894,7 @@ pub mod intershard {
                         self.state.as_ref().unwrap().shard_map
                             [self.dst_shard_id as usize]
                             .clone();
+
                     if let Some(dst_shard_isb_socket) = dst_shard_isb_socket_opt
                     {
                         let dst_shard_isb_socket_cloned =
@@ -897,16 +915,43 @@ pub mod intershard {
                             let mut sink: std::pin::Pin<
                                 &mut async_bincode::tokio::AsyncBincodeWriter<
                                     _,
-                                    IntershardRoutedEpochBatch,
+                                    IntershardRoutedEpochMessage,
                                     async_bincode::AsyncDestination,
                                 >,
                             > = std::pin::Pin::new(&mut async_bincode_writer);
-                            sink.send(IntershardRoutedEpochBatch {
-                                src_shard_id,
-                                dst_shard_id,
-                                epoch_id,
-                                messages: shard_batch,
-                            })
+
+                            // Interate over chunks of messages:
+                            let shard_batch_iter =
+                                input_queues.1.into_iter().flat_map(|oq| {
+                                    oq.unwrap().messages.into_iter()
+                                });
+
+                            use itertools::Itertools;
+                            for messages_chunk in
+                                &shard_batch_iter.chunks(16 * 1024)
+                            {
+                                sink.feed(
+                                    IntershardRoutedEpochMessage::PartialBatch(
+                                        RoutedEpochBatchMessages {
+                                            src_shard_id,
+                                            dst_shard_id,
+                                            epoch_id,
+                                            messages: messages_chunk.collect(),
+                                        },
+                                    ),
+                                )
+                                .await
+                                .unwrap();
+                            }
+
+                            // This flushes internally:
+                            sink.send(IntershardRoutedEpochMessage::EpochDone(
+                                RoutedEpochBatchDone {
+                                    epoch_id,
+                                    src_shard_id,
+                                    dst_shard_id,
+                                },
+                            ))
                             .await
                             .unwrap();
                         })
@@ -915,14 +960,25 @@ pub mod intershard {
                             (self.src_shard_id, self.dst_shard_id);
                         let httpc = self.state.as_ref().unwrap().httpc.clone();
 
-                        let payload =
-                            bincode::serialize(&IntershardRoutedEpochBatch {
-                                src_shard_id,
-                                dst_shard_id,
-                                epoch_id,
-                                messages: shard_batch,
-                            })
-                            .unwrap();
+                        // To avoid copying, build a 2D vector of
+                        // input queues to serialize:
+                        let shard_batch = input_queues
+                            .1
+                            .into_iter()
+                            .map(|oq| oq.unwrap().messages)
+                            .collect();
+
+                        let payload = bincode::serialize(
+                            &IntershardRoutedEpochMessage::Batch(
+                                IntershardRoutedEpochBatch {
+                                    src_shard_id,
+                                    dst_shard_id,
+                                    epoch_id,
+                                    messages: shard_batch,
+                                },
+                            ),
+                        )
+                        .unwrap();
                         Box::pin(async move {
                             let resp = httpc
                                 .post(format!(
@@ -946,43 +1002,113 @@ pub mod intershard {
         }
     }
 
-    pub fn distribute_intershard_batch(
+    pub fn distribute_intershard_msg(
         state: &super::ShardState,
-        batch: IntershardRoutedEpochBatch,
+        batch: IntershardRoutedEpochMessage,
     ) {
-        assert!(batch.dst_shard_id == state.shard_id);
+        match batch {
+            IntershardRoutedEpochMessage::Batch(batch) => {
+                assert!(batch.dst_shard_id == state.shard_id);
 
-        // Allocate a bunch of vectors for the individual inbox receivers. We
-        // preallocate the maximum capacity (queue_length) for each and rely on
-        // the OS performing lazy zero-page CoW allocation to avoid excessive
-        // memory consumption. This allows us to avoid per-message allocations
-        // (LinkedList) or re-allocating the vectors.
-        let batch_size = batch.messages.iter().map(|v| v.len()).sum();
-        let mut inboxes = vec![Vec::new(); state.inbox_actors.len()];
-        inboxes.iter_mut().for_each(|v| v.reserve(batch_size));
+                // Allocate a bunch of vectors for the individual inbox
+                // receivers. We preallocate the maximum
+                // capacity (queue_length) for each and rely on
+                // the OS performing lazy zero-page CoW allocation to avoid
+                // excessive memory consumption. This allows us
+                // to avoid per-message allocations (LinkedList)
+                // or re-allocating the vectors.
+                let batch_size = batch.messages.iter().map(|v| v.len()).sum();
+                let mut inboxes = vec![Vec::new(); state.inbox_actors.len()];
+                inboxes.iter_mut().for_each(|v| v.reserve(batch_size));
 
-        for message in batch.messages.into_iter().flat_map(|v| v.into_iter()) {
-            let bucket =
-                super::hash_into_bucket(&message.0, inboxes.len(), false);
-            inboxes[bucket].push(message);
-        }
+                for message in
+                    batch.messages.into_iter().flat_map(|v| v.into_iter())
+                {
+                    let bucket = super::hash_into_bucket(
+                        &message.0,
+                        inboxes.len(),
+                        false,
+                    );
+                    inboxes[bucket].push(message);
+                }
 
-        // Now free up any unused memory. This shouldn't move the vector on the
-        // heap, but perhaps enable some new allocations, especially if the
-        // actual number of messages delivered to an inbox was very small.
-        inboxes.iter_mut().for_each(|v| v.shrink_to_fit());
+                // Now free up any unused memory. This shouldn't move the vector
+                // on the heap, but perhaps enable some new
+                // allocations, especially if the actual number
+                // of messages delivered to an inbox was very small.
+                inboxes.iter_mut().for_each(|v| v.shrink_to_fit());
 
-        for (messages, inbox) in
-            inboxes.into_iter().zip(state.inbox_actors.iter())
-        {
-            let routed_batch = RoutedEpochBatch {
-                epoch_id: batch.epoch_id,
-                src_shard_id: batch.src_shard_id,
-                dst_shard_id: state.shard_id,
-                messages,
-            };
+                for (messages, inbox) in
+                    inboxes.into_iter().zip(state.inbox_actors.iter())
+                {
+                    let routed_batch = RoutedEpochBatchMessages {
+                        epoch_id: batch.epoch_id,
+                        src_shard_id: batch.src_shard_id,
+                        dst_shard_id: state.shard_id,
+                        messages,
+                    };
 
-            inbox.0.do_send(routed_batch);
+                    inbox.0.do_send(routed_batch);
+
+                    inbox.0.do_send(RoutedEpochBatchDone {
+                        epoch_id: batch.epoch_id,
+                        src_shard_id: batch.src_shard_id,
+                        dst_shard_id: state.shard_id,
+                    })
+                }
+            }
+
+            // TODO: deduplicate this with the above branch
+            IntershardRoutedEpochMessage::PartialBatch(pbatch) => {
+                assert!(pbatch.dst_shard_id == state.shard_id);
+
+                // Allocate a bunch of vectors for the individual inbox
+                // receivers. We preallocate the maximum
+                // capacity (queue_length) for each and rely on
+                // the OS performing lazy zero-page CoW allocation to avoid
+                // excessive memory consumption. This allows us
+                // to avoid per-message allocations (LinkedList)
+                // or re-allocating the vectors.
+                let batch_size = pbatch.messages.len();
+                let mut inboxes = vec![Vec::new(); state.inbox_actors.len()];
+                inboxes.iter_mut().for_each(|v| v.reserve(batch_size));
+
+                for message in pbatch.messages.into_iter() {
+                    let bucket = super::hash_into_bucket(
+                        &message.0,
+                        inboxes.len(),
+                        false,
+                    );
+                    inboxes[bucket].push(message);
+                }
+
+                // Now free up any unused memory. This shouldn't move the vector
+                // on the heap, but perhaps enable some new
+                // allocations, especially if the actual number
+                // of messages delivered to an inbox was very small.
+                inboxes.iter_mut().for_each(|v| v.shrink_to_fit());
+
+                for (messages, inbox) in
+                    inboxes.into_iter().zip(state.inbox_actors.iter())
+                {
+                    let routed_batch = RoutedEpochBatchMessages {
+                        epoch_id: pbatch.epoch_id,
+                        src_shard_id: pbatch.src_shard_id,
+                        dst_shard_id: state.shard_id,
+                        messages,
+                    };
+
+                    inbox.0.do_send(routed_batch);
+                }
+            }
+
+            IntershardRoutedEpochMessage::EpochDone(epoch_done) => {
+                assert!(epoch_done.dst_shard_id == state.shard_id);
+
+                for inbox in state.inbox_actors.iter() {
+                    inbox.0.do_send(epoch_done.clone())
+                }
+            }
         }
     }
 
@@ -1107,7 +1233,13 @@ pub mod inbox {
         _id: u8,
         inbox_address: Addr<InboxActor>,
         state: Option<Arc<super::ShardState>>,
-        input_queues: (usize, Vec<Option<super::intershard::RoutedEpochBatch>>),
+        input_queues: (
+            usize,
+            Vec<(
+                bool,
+                LinkedList<super::intershard::RoutedEpochBatchMessages>,
+            )>,
+        ),
     }
 
     impl ReceiverActor {
@@ -1137,26 +1269,39 @@ pub mod inbox {
             msg: Initialize,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
-            self.input_queues = (0, vec![None; msg.0.shard_map.len()]);
+            self.input_queues =
+                (0, vec![(false, LinkedList::new()); msg.0.shard_map.len()]);
             self.state = Some(msg.0);
         }
     }
 
-    impl Handler<super::intershard::RoutedEpochBatch> for ReceiverActor {
+    impl Handler<super::intershard::RoutedEpochBatchMessages> for ReceiverActor {
         type Result = ();
 
         fn handle(
             &mut self,
-            msg: super::intershard::RoutedEpochBatch,
+            msg: super::intershard::RoutedEpochBatchMessages,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
             let shard_id = msg.src_shard_id as usize;
-            let epoch_id = msg.epoch_id as u64;
-            assert!(self.input_queues.1[shard_id].is_none());
-            self.input_queues.1[shard_id] = Some(msg);
+            self.input_queues.1[shard_id].1.push_back(msg);
+        }
+    }
+
+    impl Handler<super::intershard::RoutedEpochBatchDone> for ReceiverActor {
+        type Result = ();
+
+        fn handle(
+            &mut self,
+            msg: super::intershard::RoutedEpochBatchDone,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
+            let shard_id = msg.src_shard_id as usize;
+            assert!(self.input_queues.1[shard_id].0 == false);
+            self.input_queues.1[shard_id].0 = true;
             self.input_queues.0 += 1;
 
-            // check if every element of input_queues has been written to
+            // check if every element of input_queues has been marked as ended
             if self.input_queues.0 == self.input_queues.1.len() {
                 let mut output_map = HashMap::new();
 
@@ -1165,7 +1310,7 @@ pub mod inbox {
                     (
                         0,
                         vec![
-                            None;
+                            (false, LinkedList::new());
                             self.state.as_ref().unwrap().shard_map.len()
                         ],
                     ),
@@ -1174,32 +1319,21 @@ pub mod inbox {
                 let epoch_message_count = input_queues
                     .1
                     .iter()
-                    .map(|ov| ov.as_ref().map(|b| b.messages.len()).unwrap())
+                    .map(|(_, batches)| {
+                        batches.iter().map(|b| b.messages.len()).sum::<usize>()
+                    })
                     .sum();
 
-                for b in input_queues.1.into_iter() {
-                    let batch = b.unwrap();
-                    for message in batch.messages.into_iter() {
-                        output_map
-                            .entry(message.0)
-                            .or_insert_with(|| {
-                                Vec::with_capacity(epoch_message_count)
-                            })
-                            .push(message.1);
-                        // // Use this instead of .entry().or_insert_with()
-                        // to // avoid unconditionally
-                        // cloning the device_id string:
-                        // if !output_map.contains_key(&message.0) {
-                        //     output_map.insert(
-                        //         message.0.clone(),
-                        //         Vec::with_capacity(epoch_message_count),
-                        //     );
-                        // }
-
-                        // output_map
-                        //     .get_mut(&message.0)
-                        //     .unwrap()
-                        //     .push(message);
+                for (_, batches) in input_queues.1.into_iter() {
+                    for batch in batches {
+                        for message in batch.messages.into_iter() {
+                            output_map
+                                .entry(message.0)
+                                .or_insert_with(|| {
+                                    Vec::with_capacity(epoch_message_count)
+                                })
+                                .push(message.1);
+                        }
                     }
                 }
 
@@ -1207,7 +1341,7 @@ pub mod inbox {
                 output_map.iter_mut().for_each(|(_k, v)| v.shrink_to_fit());
 
                 self.inbox_address.do_send(DeviceEpochBatch(
-                    epoch_id,
+                    msg.epoch_id,
                     output_map,
                     epoch_message_count,
                 ))
@@ -1939,8 +2073,9 @@ async fn intershard_batch(
     // batch: web::Json<intershard::IntershardRoutedEpochBatch>,
 ) -> impl Responder {
     use web::Buf;
-    let batch = bincode::deserialize_from(body.reader()).unwrap();
-    intershard::distribute_intershard_batch(&*state, batch);
+    let batch: IntershardRoutedEpochMessage =
+        bincode::deserialize_from(body.reader()).unwrap();
+    intershard::distribute_intershard_msg(&*state, batch);
     ""
 }
 
@@ -2078,14 +2213,14 @@ async fn isb_socket_conn(
 
     let mut async_bincode_reader: async_bincode::tokio::AsyncBincodeReader<
         _,
-        IntershardRoutedEpochBatch,
+        IntershardRoutedEpochMessage,
     > = async_bincode::tokio::AsyncBincodeReader::from(stream);
 
     loop {
         match async_bincode_reader.next().await {
             Some(Ok(batch)) => {
                 // println!("Received TCP ISB!");
-                intershard::distribute_intershard_batch(&*state, batch);
+                intershard::distribute_intershard_msg(&*state, batch);
             }
             Some(Err(e)) => {
                 println!("Error getting ISB from stream: {:?}", e);

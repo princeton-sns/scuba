@@ -627,6 +627,7 @@ pub mod outbox {
         epoch: Option<u64>,
         router: Addr<RouterActor>,
         state: Option<Arc<super::ShardState>>,
+	pending_epoch_start: Option<EpochStart>,
     }
 
     impl OutboxActor {
@@ -637,7 +638,38 @@ pub mod outbox {
                 epoch: None,
                 router,
                 state: None,
+		pending_epoch_start: None,
             }
+        }
+
+        fn process_epoch_start(
+            &mut self,
+            sequencer_msg: EpochStart,
+            _ctx: &mut Context<Self>,
+        ) {
+            use std::mem;
+
+            let EpochStart(next_epoch) = sequencer_msg;
+
+            // If we've already started an epoch, ensure that this is
+            // the subsequent epoch and move the current queue
+            // contents to the router.
+            if let Some(ref cur_epoch) = self.epoch {
+                // println!("cur_epoch: {}", cur_epoch);
+                assert!(*cur_epoch + 1 == next_epoch);
+
+                // Swap out the queue and send it to the router:
+                let cur_queue =
+                    mem::replace(&mut self.queue, (0, LinkedList::new()));
+                self.router.do_send(OutboxEpoch(
+                    self.state.as_ref().unwrap().clone(),
+                    *cur_epoch,
+                    self.state.as_ref().unwrap().shard_id,
+                    cur_queue,
+                ));
+            }
+
+            self.epoch = Some(next_epoch);
         }
     }
 
@@ -670,13 +702,19 @@ pub mod outbox {
         fn handle(
             &mut self,
             evs: EventBatch,
-            _ctx: &mut Context<Self>,
+            ctx: &mut Context<Self>,
         ) -> Self::Result {
-            if let Some(ref epoch_id) = self.epoch {
+            if let Some(epoch_id) = self.epoch {
                 // Simply add the event to the queue:
                 self.queue.0 += evs.messages.len();
                 self.queue.1.push_back(evs);
-                Ok(*epoch_id)
+
+		if let Some(epoch_start) = self.pending_epoch_start.take() {
+		    println!("Taking pending_epoch_start");
+		    self.process_epoch_start(epoch_start, ctx);
+		}
+
+                Ok(epoch_id)
             } else {
                 Err(EventError::NoEpoch)
             }
@@ -689,31 +727,17 @@ pub mod outbox {
         fn handle(
             &mut self,
             sequencer_msg: EpochStart,
-            _ctx: &mut Context<Self>,
+            ctx: &mut Context<Self>,
         ) -> Self::Result {
-            use std::mem;
-
-            let EpochStart(next_epoch) = sequencer_msg;
-
-            // If we've already started an epoch, ensure that this is
-            // the subsequent epoch and move the current queue
-            // contents to the router.
-            if let Some(ref cur_epoch) = self.epoch {
-                // println!("cur_epoch: {}", cur_epoch);
-                assert!(*cur_epoch + 1 == next_epoch);
-
-                // Swap out the queue and send it to the router:
-                let cur_queue =
-                    mem::replace(&mut self.queue, (0, LinkedList::new()));
-                self.router.do_send(OutboxEpoch(
-                    self.state.as_ref().unwrap().clone(),
-                    *cur_epoch,
-                    self.state.as_ref().unwrap().shard_id,
-                    cur_queue,
-                ));
-            }
-
-            self.epoch = Some(next_epoch);
+	    // Let epoch 0 pass through immediately. The coordinator will follow
+	    // up with an epoch 1 before waiting to get 0 back.
+	    if sequencer_msg.0 != 0 && self.state.as_ref().unwrap().block_outbox_epoch {
+		println!("Setting pending_epoch_start {:?}", sequencer_msg);
+		assert!(self.pending_epoch_start.is_none(), "Received EpochStart with pending_epoch_start");
+		self.pending_epoch_start = Some(sequencer_msg);
+	    } else {
+		self.process_epoch_start(sequencer_msg, ctx)
+	    }
         }
     }
 }
@@ -2058,6 +2082,7 @@ pub struct ShardState {
     inbox_actors: Vec<(Addr<inbox::ReceiverActor>, Addr<inbox::InboxActor>)>,
     epoch_collector_actor: Addr<intershard::EpochCollectorActor>,
     attestation_key: ed25519_dalek::Keypair,
+    block_outbox_epoch: bool,
 }
 
 pub async fn init(
@@ -2066,6 +2091,7 @@ pub async fn init(
     outbox_count: u8,
     inbox_count: u8,
     isb_socket: Option<(u16, String)>,
+    block_outbox_epoch: bool,
 ) -> impl Fn(&mut web::ServiceConfig) + Clone + Send + 'static {
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
@@ -2343,6 +2369,7 @@ pub async fn init(
         inbox_actors,
         epoch_collector_actor: epoch_collector_actor.clone(),
         attestation_key: keypair,
+	block_outbox_epoch,
     });
 
     {

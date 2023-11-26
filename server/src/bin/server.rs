@@ -36,6 +36,23 @@ enum Commands {
         #[arg(long)]
         isb_socket_addr: Option<String>,
     },
+
+    SingleShard {
+	#[arg(long)]
+	sequencer_port: u16,
+
+	#[arg(long)]
+	shard_port: u16,
+
+	#[arg(long)]
+        public_shard_url: String,
+
+	#[arg(long)]
+        inbox_count: u8,
+
+        #[arg(long)]
+        outbox_count: u8,
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -83,6 +100,7 @@ async fn main() -> std::io::Result<()> {
                 inbox_count,
                 outbox_count,
                 isb_socket_spec,
+		false,
             )
             .await;
 
@@ -90,6 +108,41 @@ async fn main() -> std::io::Result<()> {
                 .bind(("0.0.0.0", port))?
                 .run()
                 .await
-        }
+        },
+
+	Commands::SingleShard {
+	    sequencer_port,
+	    shard_port,
+	    public_shard_url,
+	    inbox_count,
+	    outbox_count,
+	} => {
+	    tokio::try_join!(
+		async move {
+		    let sequencer_closure = sequencer::init(1).await;
+
+		    HttpServer::new(move || App::new().configure(sequencer_closure.clone()))
+			.bind(("127.0.0.1", sequencer_port))?
+			.run()
+			.await
+		},
+
+		async move {
+		    let shard_closure = shard::init(
+			public_shard_url,
+			format!("http://127.0.0.1:{}", sequencer_port),
+			inbox_count,
+			outbox_count,
+			None,
+			true,
+		    ).await;
+
+		    HttpServer::new(move || App::new().configure(shard_closure.clone()))
+			.bind(("0.0.0.0", shard_port))?
+			.run()
+			.await
+		},
+	    ).map(|_| ())
+	},
     }
 }

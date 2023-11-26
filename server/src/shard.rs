@@ -57,7 +57,7 @@ pub mod client_protocol {
     // -------------------------------------------------------------------------
     // EventSource Messages
 
-    #[derive(Serialize, Clone, Debug)]
+    #[derive(Serialize, Deserialize, Clone, Debug)]
     pub struct MessageBatch<'a> {
         pub start_epoch_id: u64,
         pub end_epoch_id: u64,

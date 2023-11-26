@@ -1883,6 +1883,20 @@ name = "noise-server-bench"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "clap",
+ "noise-server",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "noise-server-goose-bench"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "clap",
  "goose",
  "goose-eggs",
  "noise-server",

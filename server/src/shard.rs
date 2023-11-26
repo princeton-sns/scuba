@@ -1088,6 +1088,7 @@ pub mod inbox {
     use std::collections::{HashMap, LinkedList};
     use std::mem;
     use std::sync::Arc;
+    use serde::{Serialize, Deserialize};
 
     #[derive(Message, Clone)]
     #[rtype(result = "()")]
@@ -1280,10 +1281,12 @@ pub mod inbox {
         pub usize,
     );
 
-    #[derive(MessageResponse)]
-    pub struct DeviceMessages(
-        pub LinkedList<super::client_protocol::EncryptedInboxMessage>,
-    );
+    #[derive(Serialize, Deserialize, MessageResponse)]
+    pub struct DeviceMessages {
+	pub from_epoch: u64,
+	pub to_epoch: u64,
+        pub messages: LinkedList<(u64, Vec<super::client_protocol::EncryptedInboxMessage>)>,
+    }
 
     #[derive(Message, Clone, Debug)]
     #[rtype(result = "DeviceMessages")]
@@ -1531,17 +1534,23 @@ pub mod inbox {
             msg: GetDeviceMessages,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
-            let (ref mut _client_next_epoch, ref mut client_msgs) = self
+            let (ref mut client_next_epoch, ref mut client_msgs) = self
                 .client_mailboxes
                 .entry(msg.0)
                 .or_insert_with(|| (0, LinkedList::new()));
 
-            DeviceMessages(
-                client_msgs
+	    let last_epoch = client_msgs.back().map(|(e, _)| e);
+
+            DeviceMessages {
+		from_epoch: *client_next_epoch,
+		// If we have no messages, we can't be sure the epoch's over
+		// yet. Then, set from_epoch and to_epoch equal:
+		to_epoch: last_epoch.map(|last| last + 1).unwrap_or(*client_next_epoch),
+                messages: client_msgs
                     .into_iter()
-                    .flat_map(|(_, v)| v.into_iter().map(|m| m.clone()))
+                    .map(|(e, v)| (*e, v.clone()))
                     .collect(),
-            )
+	    }
         }
     }
 
@@ -1593,15 +1602,19 @@ pub mod inbox {
                 .entry(msg.0)
                 .or_insert_with(|| (0, LinkedList::new()));
 
+	    let next_epoch = *client_next_epoch;
             *client_next_epoch = self.next_epoch;
 
             let msgs = mem::replace(client_msgs, LinkedList::new());
 
-            DeviceMessages(
-                msgs.into_iter()
-                    .flat_map(|(_, v)| v.into_iter().map(|m| m.clone()))
-                    .collect(),
-            )
+	    let last_epoch = msgs.back().map(|(e, _)| e);
+            DeviceMessages {
+		from_epoch: next_epoch,
+		// If we have no messages, we can't be sure the epoch's over
+		// yet. Then, set from_epoch and to_epoch equal:
+		to_epoch: last_epoch.map(|last| last + 1).unwrap_or(next_epoch),
+                messages: msgs,
+	    }
         }
     }
 }
@@ -1841,7 +1854,7 @@ async fn delete_messages(
         .await
         .unwrap();
 
-    web::Json(messages.0)
+    web::Json(messages)
 }
 
 #[delete("/inbox/clear-all")]
@@ -1891,7 +1904,7 @@ async fn retrieve_messages(
         .await
         .unwrap();
 
-    web::Json(messages.0)
+    web::Json(messages)
 }
 #[post("/epoch/{epoch_id}")]
 async fn start_epoch(

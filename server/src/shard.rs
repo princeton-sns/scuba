@@ -627,7 +627,7 @@ pub mod outbox {
         epoch: Option<u64>,
         router: Addr<RouterActor>,
         state: Option<Arc<super::ShardState>>,
-	pending_epoch_start: Option<EpochStart>,
+        pending_epoch_start: Option<EpochStart>,
     }
 
     impl OutboxActor {
@@ -638,7 +638,7 @@ pub mod outbox {
                 epoch: None,
                 router,
                 state: None,
-		pending_epoch_start: None,
+                pending_epoch_start: None,
             }
         }
 
@@ -709,10 +709,10 @@ pub mod outbox {
                 self.queue.0 += evs.messages.len();
                 self.queue.1.push_back(evs);
 
-		if let Some(epoch_start) = self.pending_epoch_start.take() {
-		    println!("Taking pending_epoch_start");
-		    self.process_epoch_start(epoch_start, ctx);
-		}
+                if let Some(epoch_start) = self.pending_epoch_start.take() {
+                    println!("Taking pending_epoch_start");
+                    self.process_epoch_start(epoch_start, ctx);
+                }
 
                 Ok(epoch_id)
             } else {
@@ -729,15 +729,20 @@ pub mod outbox {
             sequencer_msg: EpochStart,
             ctx: &mut Context<Self>,
         ) -> Self::Result {
-	    // Let epoch 0 pass through immediately. The coordinator will follow
-	    // up with an epoch 1 before waiting to get 0 back.
-	    if sequencer_msg.0 != 0 && self.state.as_ref().unwrap().block_outbox_epoch {
-		println!("Setting pending_epoch_start {:?}", sequencer_msg);
-		assert!(self.pending_epoch_start.is_none(), "Received EpochStart with pending_epoch_start");
-		self.pending_epoch_start = Some(sequencer_msg);
-	    } else {
-		self.process_epoch_start(sequencer_msg, ctx)
-	    }
+            // Let epoch 0 pass through immediately. The coordinator will follow
+            // up with an epoch 1 before waiting to get 0 back.
+            if sequencer_msg.0 != 0
+                && self.state.as_ref().unwrap().block_outbox_epoch
+            {
+                println!("Setting pending_epoch_start {:?}", sequencer_msg);
+                assert!(
+                    self.pending_epoch_start.is_none(),
+                    "Received EpochStart with pending_epoch_start"
+                );
+                self.pending_epoch_start = Some(sequencer_msg);
+            } else {
+                self.process_epoch_start(sequencer_msg, ctx)
+            }
         }
     }
 }
@@ -1085,10 +1090,10 @@ pub mod intershard {
 pub mod inbox {
     use actix::{Actor, Addr, Context, Handler, Message, MessageResponse};
     use actix_web_lab::sse::{self, ChannelStream, Sse, TrySendError};
+    use serde::{Deserialize, Serialize};
     use std::collections::{HashMap, LinkedList};
     use std::mem;
     use std::sync::Arc;
-    use serde::{Serialize, Deserialize};
 
     #[derive(Message, Clone)]
     #[rtype(result = "()")]
@@ -1283,9 +1288,12 @@ pub mod inbox {
 
     #[derive(Serialize, Deserialize, MessageResponse)]
     pub struct DeviceMessages {
-	pub from_epoch: u64,
-	pub to_epoch: u64,
-        pub messages: LinkedList<(u64, Vec<super::client_protocol::EncryptedInboxMessage>)>,
+        pub from_epoch: u64,
+        pub to_epoch: u64,
+        pub messages: LinkedList<(
+            u64,
+            Vec<super::client_protocol::EncryptedInboxMessage>,
+        )>,
     }
 
     #[derive(Message, Clone, Debug)]
@@ -1543,18 +1551,20 @@ pub mod inbox {
                 .entry(msg.0)
                 .or_insert_with(|| (0, LinkedList::new()));
 
-	    let last_epoch = client_msgs.back().map(|(e, _)| e);
+            let last_epoch = client_msgs.back().map(|(e, _)| e);
 
             DeviceMessages {
-		from_epoch: *client_next_epoch,
-		// If we have no messages, we can't be sure the epoch's over
-		// yet. Then, set from_epoch and to_epoch equal:
-		to_epoch: last_epoch.map(|last| last + 1).unwrap_or(*client_next_epoch),
+                from_epoch: *client_next_epoch,
+                // If we have no messages, we can't be sure the epoch's over
+                // yet. Then, set from_epoch and to_epoch equal:
+                to_epoch: last_epoch
+                    .map(|last| last + 1)
+                    .unwrap_or(*client_next_epoch),
                 messages: client_msgs
                     .into_iter()
                     .map(|(e, v)| (*e, v.clone()))
                     .collect(),
-	    }
+            }
         }
     }
 
@@ -1606,19 +1616,19 @@ pub mod inbox {
                 .entry(msg.0)
                 .or_insert_with(|| (0, LinkedList::new()));
 
-	    let next_epoch = *client_next_epoch;
+            let next_epoch = *client_next_epoch;
             *client_next_epoch = self.next_epoch;
 
             let msgs = mem::replace(client_msgs, LinkedList::new());
 
-	    let last_epoch = msgs.back().map(|(e, _)| e);
+            let last_epoch = msgs.back().map(|(e, _)| e);
             DeviceMessages {
-		from_epoch: next_epoch,
-		// If we have no messages, we can't be sure the epoch's over
-		// yet. Then, set from_epoch and to_epoch equal:
-		to_epoch: last_epoch.map(|last| last + 1).unwrap_or(next_epoch),
+                from_epoch: next_epoch,
+                // If we have no messages, we can't be sure the epoch's over
+                // yet. Then, set from_epoch and to_epoch equal:
+                to_epoch: last_epoch.map(|last| last + 1).unwrap_or(next_epoch),
                 messages: msgs,
-	    }
+            }
         }
     }
 }
@@ -2388,8 +2398,8 @@ pub async fn init(
         inbox_actors,
         epoch_collector_actor: epoch_collector_actor.clone(),
         attestation_key: keypair,
-	block_outbox_epoch,
-	inbox_drop_messages,
+        block_outbox_epoch,
+        inbox_drop_messages,
     });
 
     {

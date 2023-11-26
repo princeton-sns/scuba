@@ -36,26 +36,26 @@ enum Commands {
         #[arg(long)]
         isb_socket_addr: Option<String>,
 
-	#[arg(long, action)]
-	inbox_drop_messages: bool,
+        #[arg(long, action)]
+        inbox_drop_messages: bool,
     },
 
     SingleShard {
-	#[arg(long)]
-	sequencer_port: u16,
+        #[arg(long)]
+        sequencer_port: u16,
 
-	#[arg(long)]
-	shard_port: u16,
+        #[arg(long)]
+        shard_port: u16,
 
-	#[arg(long)]
+        #[arg(long)]
         public_shard_url: String,
 
-	#[arg(long)]
+        #[arg(long)]
         inbox_count: u8,
 
         #[arg(long)]
         outbox_count: u8,
-    }
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -87,7 +87,7 @@ async fn main() -> std::io::Result<()> {
             outbox_count,
             isb_socket_addr,
             isb_socket_port,
-	    inbox_drop_messages,
+            inbox_drop_messages,
         } => {
             if (isb_socket_addr.is_some() as u8)
                 ^ (isb_socket_port.is_some() as u8)
@@ -104,8 +104,8 @@ async fn main() -> std::io::Result<()> {
                 inbox_count,
                 outbox_count,
                 isb_socket_spec,
-		false,
-		inbox_drop_messages,
+                false,
+                inbox_drop_messages,
             )
             .await;
 
@@ -113,42 +113,45 @@ async fn main() -> std::io::Result<()> {
                 .bind(("0.0.0.0", port))?
                 .run()
                 .await
-        },
+        }
 
-	Commands::SingleShard {
-	    sequencer_port,
-	    shard_port,
-	    public_shard_url,
-	    inbox_count,
-	    outbox_count,
-	} => {
-	    tokio::try_join!(
-		async move {
-		    let sequencer_closure = sequencer::init(1).await;
+        Commands::SingleShard {
+            sequencer_port,
+            shard_port,
+            public_shard_url,
+            inbox_count,
+            outbox_count,
+        } => tokio::try_join!(
+            async move {
+                let sequencer_closure = sequencer::init(1).await;
 
-		    HttpServer::new(move || App::new().configure(sequencer_closure.clone()))
-			.bind(("127.0.0.1", sequencer_port))?
-			.run()
-			.await
-		},
+                HttpServer::new(move || {
+                    App::new().configure(sequencer_closure.clone())
+                })
+                .bind(("127.0.0.1", sequencer_port))?
+                .run()
+                .await
+            },
+            async move {
+                let shard_closure = shard::init(
+                    public_shard_url,
+                    format!("http://127.0.0.1:{}", sequencer_port),
+                    inbox_count,
+                    outbox_count,
+                    None,
+                    true,
+                    false,
+                )
+                .await;
 
-		async move {
-		    let shard_closure = shard::init(
-			public_shard_url,
-			format!("http://127.0.0.1:{}", sequencer_port),
-			inbox_count,
-			outbox_count,
-			None,
-			true,
-			false,
-		    ).await;
-
-		    HttpServer::new(move || App::new().configure(shard_closure.clone()))
-			.bind(("0.0.0.0", shard_port))?
-			.run()
-			.await
-		},
-	    ).map(|_| ())
-	},
+                HttpServer::new(move || {
+                    App::new().configure(shard_closure.clone())
+                })
+                .bind(("0.0.0.0", shard_port))?
+                .run()
+                .await
+            },
+        )
+        .map(|_| ()),
     }
 }

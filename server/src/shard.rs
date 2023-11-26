@@ -58,10 +58,11 @@ pub mod client_protocol {
     // EventSource Messages
 
     #[derive(Serialize, Clone, Debug)]
-    pub struct EpochMessageBatch<'a> {
-        pub epoch_id: u64,
-        pub messages: Cow<'a, Vec<EncryptedInboxMessage>>,
-        pub attestation: String,
+    pub struct MessageBatch<'a> {
+        pub start_epoch_id: u64,
+        pub end_epoch_id: u64,
+        pub messages: Cow<'a, Vec<(u64, Cow<'a, Vec<EncryptedInboxMessage>>)>>,
+        pub attestation: Vec<u8>,
     }
 
     #[derive(Serialize, Clone, Debug)]
@@ -1607,9 +1608,10 @@ pub mod inbox {
                     if let Some(tx) = self.client_streams.get_mut(&device) {
                         use std::borrow::Cow;
 
-                        let epoch_batch = super::client_protocol::EpochMessageBatch {
-                            epoch_id,
-                            messages: Cow::Borrowed(current_epoch_messages_ref),
+                        let epoch_batch = super::client_protocol::MessageBatch {
+                            start_epoch_id: epoch_id,
+			    end_epoch_id: epoch_id,
+                            messages: Cow::Owned(vec![(epoch_id, Cow::Borrowed(current_epoch_messages_ref))]),
                             attestation: super::client_protocol::AttestationData::from_inbox_epochs(
                                 &device,
                                 prev_epoch.map(|eid| eid + 1).unwrap_or(0),
@@ -1636,7 +1638,8 @@ pub mod inbox {
                                 // ),
                             )
                             .attest(&state.attestation_key)
-                            .encode_base64(),
+				.into_arr()
+				.to_vec(),
                         };
 
                         let res = tx.try_send(
@@ -1827,7 +1830,7 @@ impl header::Header for BearerToken {
     }
 }
 
-fn hash_into_bucket(
+pub fn hash_into_bucket(
     device_id: &str,
     bucket_count: usize,
     upper_bits: bool,
@@ -2026,6 +2029,24 @@ async fn delete_messages(
         .unwrap();
 
     web::Json(messages)
+}
+
+#[delete("/inbox-bin")]
+async fn delete_messages_bin(
+    state: web::Data<ShardState>,
+    auth: web::Header<BearerToken>,
+) -> impl Responder {
+    let device_id = auth.into_inner().into_token();
+    let inbox_actors_cnt = state.inbox_actors.len();
+    let actor_idx = hash_into_bucket(&device_id, inbox_actors_cnt, false);
+
+    let messages: inbox::DeviceMessages = state.inbox_actors[actor_idx]
+        .1
+        .send(inbox::ClearDeviceMessages(device_id))
+        .await
+        .unwrap();
+
+    HttpResponse::Ok().body(bincode::serialize(&messages).unwrap())
 }
 
 #[delete("/inbox/clear-all")]
@@ -2609,8 +2630,8 @@ pub async fn init(
             .service(handle_message_json)
             .service(handle_message_bin)
             .service(retrieve_messages)
-            // .service(delete_messages)
             .service(delete_messages)
+            .service(delete_messages_bin)
             .service(clear_all_messages)
             .service(stream_messages)
             .service(inbox_shard)

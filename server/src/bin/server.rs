@@ -1,6 +1,7 @@
 use actix_web::{App, HttpServer};
 use clap::{Parser, Subcommand};
 
+use noise_server_lib::attestation_proxy;
 use noise_server_lib::sequencer;
 use noise_server_lib::shard;
 
@@ -43,6 +44,14 @@ enum Commands {
         isb_chunk_size: Option<usize>,
     },
 
+    AttestationProxy {
+        #[arg(long)]
+        port: u16,
+
+        #[arg(long)]
+        sequencer_url: String,
+    },
+
     SingleShard {
         #[arg(long)]
         sequencer_port: u16,
@@ -58,6 +67,9 @@ enum Commands {
 
         #[arg(long)]
         outbox_count: u8,
+
+        #[arg(long)]
+        attestation_proxy_port: Option<u16>,
     },
 }
 
@@ -120,12 +132,25 @@ async fn main() -> std::io::Result<()> {
                 .await
         }
 
+        Commands::AttestationProxy {
+            port,
+            sequencer_url,
+        } => {
+            let att_closure = attestation_proxy::init(&sequencer_url).await;
+
+            HttpServer::new(move || App::new().configure(att_closure.clone()))
+                .bind(("0.0.0.0", port))?
+                .run()
+                .await
+        }
+
         Commands::SingleShard {
             sequencer_port,
             shard_port,
             public_shard_url,
             inbox_count,
             outbox_count,
+            attestation_proxy_port,
         } => tokio::try_join!(
             async move {
                 let sequencer_closure = sequencer::init(1).await;
@@ -156,6 +181,24 @@ async fn main() -> std::io::Result<()> {
                 .bind(("0.0.0.0", shard_port))?
                 .run()
                 .await
+            },
+            async move {
+                if let Some(att_port) = attestation_proxy_port {
+                    let att_closure = attestation_proxy::init(&format!(
+                        "http://127.0.0.1:{}",
+                        sequencer_port
+                    ))
+                    .await;
+
+                    HttpServer::new(move || {
+                        App::new().configure(att_closure.clone())
+                    })
+                    .bind(("0.0.0.0", att_port))?
+                    .run()
+                    .await
+                } else {
+                    Ok(())
+                }
             },
         )
         .map(|_| ()),

@@ -38,6 +38,9 @@ enum Commands {
 
         #[arg(long, action)]
         inbox_drop_messages: bool,
+
+        #[arg(long)]
+        isb_chunk_size: Option<usize>,
     },
 
     SingleShard {
@@ -88,6 +91,7 @@ async fn main() -> std::io::Result<()> {
             isb_socket_addr,
             isb_socket_port,
             inbox_drop_messages,
+            isb_chunk_size,
         } => {
             if (isb_socket_addr.is_some() as u8)
                 ^ (isb_socket_port.is_some() as u8)
@@ -106,6 +110,7 @@ async fn main() -> std::io::Result<()> {
                 isb_socket_spec,
                 false,
                 inbox_drop_messages,
+                isb_chunk_size,
             )
             .await;
 
@@ -141,6 +146,7 @@ async fn main() -> std::io::Result<()> {
                     None,
                     true,
                     false,
+                    None,
                 )
                 .await;
 

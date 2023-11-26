@@ -846,6 +846,8 @@ pub mod intershard {
             msg: super::outbox::RoutedEpochBatch,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
+            let state = self.state.as_ref().unwrap();
+
             let outbox_id = msg.outbox_id as usize;
             let epoch_id = msg.epoch_id as u64;
             assert!(self.input_queues.1[outbox_id].is_none());
@@ -876,7 +878,7 @@ pub mod intershard {
                         .collect();
 
                     distribute_intershard_msg(
-                        self.state.as_ref().unwrap(),
+                        state,
                         IntershardRoutedEpochMessage::Batch(
                             IntershardRoutedEpochBatch {
                                 src_shard_id: self.src_shard_id,
@@ -891,14 +893,13 @@ pub mod intershard {
                     let (src_shard_id, dst_shard_id) =
                         (self.src_shard_id, self.dst_shard_id);
                     let (dst_shard_url, dst_shard_isb_socket_opt) =
-                        self.state.as_ref().unwrap().shard_map
-                            [self.dst_shard_id as usize]
-                            .clone();
+                        state.shard_map[self.dst_shard_id as usize].clone();
 
                     if let Some(dst_shard_isb_socket) = dst_shard_isb_socket_opt
                     {
                         let dst_shard_isb_socket_cloned =
                             dst_shard_isb_socket.clone();
+                        let isb_chunk_size = state.isb_chunk_size;
                         Box::pin(async move {
                             use futures_util::sink::SinkExt;
                             use std::ops::DerefMut;
@@ -920,40 +921,62 @@ pub mod intershard {
                                 >,
                             > = std::pin::Pin::new(&mut async_bincode_writer);
 
-                            // Interate over chunks of messages:
-                            let shard_batch_iter =
-                                input_queues.1.into_iter().flat_map(|oq| {
-                                    oq.unwrap().messages.into_iter()
-                                });
+                            if let Some(chunk_size) = isb_chunk_size {
+                                // Interate over chunks of messages:
+                                let shard_batch_iter =
+                                    input_queues.1.into_iter().flat_map(|oq| {
+                                        oq.unwrap().messages.into_iter()
+                                    });
 
-                            use itertools::Itertools;
-                            for messages_chunk in
-                                &shard_batch_iter.chunks(16 * 1024)
-                            {
-                                sink.feed(
-                                    IntershardRoutedEpochMessage::PartialBatch(
-                                        RoutedEpochBatchMessages {
+                                use itertools::Itertools;
+                                for messages_chunk in
+                                    &shard_batch_iter.chunks(chunk_size)
+                                {
+                                    sink.feed(
+					IntershardRoutedEpochMessage::PartialBatch(
+                                            RoutedEpochBatchMessages {
+						src_shard_id,
+						dst_shard_id,
+						epoch_id,
+						messages: messages_chunk.collect(),
+                                            },
+					),
+                                    )
+					.await
+					.unwrap();
+                                }
+
+                                // This flushes internally:
+                                sink.send(
+                                    IntershardRoutedEpochMessage::EpochDone(
+                                        RoutedEpochBatchDone {
+                                            epoch_id,
                                             src_shard_id,
                                             dst_shard_id,
-                                            epoch_id,
-                                            messages: messages_chunk.collect(),
                                         },
                                     ),
                                 )
                                 .await
                                 .unwrap();
-                            }
+                            } else {
+                                let shard_batch = input_queues
+                                    .1
+                                    .into_iter()
+                                    .map(|oq| oq.unwrap().messages)
+                                    .collect();
 
-                            // This flushes internally:
-                            sink.send(IntershardRoutedEpochMessage::EpochDone(
-                                RoutedEpochBatchDone {
-                                    epoch_id,
-                                    src_shard_id,
-                                    dst_shard_id,
-                                },
-                            ))
-                            .await
-                            .unwrap();
+                                // This flushes internally:
+                                sink.send(IntershardRoutedEpochMessage::Batch(
+                                    IntershardRoutedEpochBatch {
+                                        epoch_id,
+                                        src_shard_id,
+                                        dst_shard_id,
+                                        messages: shard_batch,
+                                    },
+                                ))
+                                .await
+                                .unwrap();
+                            }
                         })
                     } else {
                         let (src_shard_id, dst_shard_id) =
@@ -2246,6 +2269,7 @@ pub struct ShardState {
     attestation_key: ed25519_dalek::Keypair,
     block_outbox_epoch: bool,
     inbox_drop_messages: bool,
+    isb_chunk_size: Option<usize>,
 }
 
 pub async fn init(
@@ -2256,6 +2280,7 @@ pub async fn init(
     isb_socket: Option<(u16, String)>,
     block_outbox_epoch: bool,
     inbox_drop_messages: bool,
+    isb_chunk_size: Option<usize>,
 ) -> impl Fn(&mut web::ServiceConfig) + Clone + Send + 'static {
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
@@ -2535,6 +2560,7 @@ pub async fn init(
         attestation_key: keypair,
         block_outbox_epoch,
         inbox_drop_messages,
+        isb_chunk_size,
     });
 
     {

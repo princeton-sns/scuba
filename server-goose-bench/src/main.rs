@@ -80,13 +80,13 @@ async fn main() -> Result<(), GooseError> {
     }
 
     g.register_scenario(
-        scenario!("PostToOneUserAndSelf")
+        scenario!("BenchmarkScenario")
             .register_transaction(
                 transaction!(set_username)
                     .set_name("generate username")
                     .set_on_start(),
             )
-            .register_transaction(transaction!(post_message).set_name("post request")),
+            .register_transaction(transaction!(post_message).set_name("post request"))
     )
     // This is important to avoid constant redirects and overloading any
     // single shard. The server will automatically direct individual users

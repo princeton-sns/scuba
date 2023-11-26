@@ -6,5 +6,5 @@ members = [
     "client/noise-kv",
     "apps/cmdline-lightswitch",
     "server",
-    "server-bench",
+    "server-goose-bench",
 ]

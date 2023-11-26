@@ -1382,11 +1382,13 @@ pub mod inbox {
         client_mailboxes: HashMap<
             String,
             (
-                u64,
+                u64, // last epoch exposed to client
                 LinkedList<(
-                    u64,
+                    u64, // epoch of messages
                     Vec<super::client_protocol::EncryptedInboxMessage>,
                 )>,
+                usize, // total messages received
+                usize, // messages in outbox right now
             ),
         >,
         state: Option<Arc<super::ShardState>>,
@@ -1453,6 +1455,19 @@ pub mod inbox {
             Vec<super::client_protocol::EncryptedInboxMessage>,
         )>,
     }
+
+    #[derive(Message, Clone, Debug)]
+    #[rtype(result = "InboxActorStats")]
+    pub struct GetInboxStats;
+
+    #[derive(Serialize, Debug, Clone)]
+    pub struct InboxStats {
+        total_messages: usize,
+        current_messages: usize,
+    }
+
+    #[derive(MessageResponse, Clone, Debug)]
+    pub struct InboxActorStats(pub HashMap<String, InboxStats>);
 
     #[derive(Message, Clone, Debug)]
     #[rtype(result = "DeviceMessages")]
@@ -1573,13 +1588,20 @@ pub mod inbox {
 
             if !state.inbox_drop_messages {
                 for (device, messages) in device_messages.into_iter() {
+                    let messages_len = messages.len();
                     // Insert the messages into the data structure and
                     // immediately get a reference to it:
                     let (prev_epoch, current_epoch_messages_ref) =
-                        if let Some((_, ref mut device_mailbox)) =
-                            self.client_mailboxes.get_mut(&device)
+                        if let Some((
+                            _,
+                            ref mut device_mailbox,
+                            ref mut total_msgs,
+                            ref mut current_msgs,
+                        )) = self.client_mailboxes.get_mut(&device)
                         {
                             device_mailbox.push_back((epoch_id, messages));
+                            *total_msgs += messages_len;
+                            *current_msgs += messages_len;
                             (
                                 device_mailbox
                                     .iter()
@@ -1590,8 +1612,10 @@ pub mod inbox {
                         } else {
                             let mut message_queue = LinkedList::new();
                             message_queue.push_back((epoch_id, messages));
-                            self.client_mailboxes
-                                .insert(device.clone(), (0, message_queue));
+                            self.client_mailboxes.insert(
+                                device.clone(),
+                                (0, message_queue, messages_len, messages_len),
+                            );
                             (
                                 None,
                                 &self
@@ -1706,10 +1730,10 @@ pub mod inbox {
             msg: GetDeviceMessages,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
-            let (ref mut client_next_epoch, ref mut client_msgs) = self
+            let (ref mut client_next_epoch, ref mut client_msgs, _, _) = self
                 .client_mailboxes
                 .entry(msg.0)
-                .or_insert_with(|| (0, LinkedList::new()));
+                .or_insert_with(|| (0, LinkedList::new(), 0, 0));
 
             let last_epoch = client_msgs.back().map(|(e, _)| e);
 
@@ -1725,6 +1749,31 @@ pub mod inbox {
                     .map(|(e, v)| (*e, v.clone()))
                     .collect(),
             }
+        }
+    }
+
+    impl Handler<GetInboxStats> for InboxActor {
+        type Result = InboxActorStats;
+
+        fn handle(
+            &mut self,
+            _msg: GetInboxStats,
+            _ctx: &mut Context<Self>,
+        ) -> Self::Result {
+            InboxActorStats(
+                self.client_mailboxes
+                    .iter()
+                    .map(|(device_id, (_, _, total, current))| {
+                        (
+                            device_id.clone(),
+                            InboxStats {
+                                total_messages: *total,
+                                current_messages: *current,
+                            },
+                        )
+                    })
+                    .collect::<HashMap<String, InboxStats>>(),
+            )
         }
     }
 
@@ -1771,13 +1820,21 @@ pub mod inbox {
             msg: ClearDeviceMessages,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
-            let (ref mut client_next_epoch, ref mut client_msgs) = self
+            let (
+                ref mut client_next_epoch,
+                ref mut client_msgs,
+                _,
+                ref mut current_messages,
+            ) = self
                 .client_mailboxes
                 .entry(msg.0)
-                .or_insert_with(|| (0, LinkedList::new()));
+                .or_insert_with(|| (0, LinkedList::new(), 0, 0));
 
             let next_epoch = *client_next_epoch;
             *client_next_epoch = self.next_epoch;
+
+            *current_messages -=
+                client_msgs.iter().map(|(_, v)| v.len()).sum::<usize>();
 
             let msgs = mem::replace(client_msgs, LinkedList::new());
 
@@ -2098,6 +2155,18 @@ async fn retrieve_messages(
 
     web::Json(messages)
 }
+
+#[get("/inbox-stats")]
+async fn inbox_stats(state: web::Data<ShardState>) -> impl Responder {
+    let mut map = HashMap::new();
+
+    for (i, a) in state.inbox_actors.iter().enumerate() {
+        map.insert(i, a.1.send(inbox::GetInboxStats).await.unwrap().0);
+    }
+
+    web::Json(map)
+}
+
 #[post("/epoch/{epoch_id}")]
 async fn start_epoch(
     state: web::Data<ShardState>,
@@ -2640,6 +2709,7 @@ pub async fn init(
             .service(inbox_idx_batch)
             .service(get_otkey)
             .service(add_otkeys)
+            .service(inbox_stats)
             // Sequencer API
             .service(start_epoch)
             .service(index)

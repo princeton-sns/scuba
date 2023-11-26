@@ -35,6 +35,9 @@ enum Commands {
 
         #[arg(long)]
         isb_socket_addr: Option<String>,
+
+	#[arg(long, action)]
+	inbox_drop_messages: bool,
     },
 
     SingleShard {
@@ -84,6 +87,7 @@ async fn main() -> std::io::Result<()> {
             outbox_count,
             isb_socket_addr,
             isb_socket_port,
+	    inbox_drop_messages,
         } => {
             if (isb_socket_addr.is_some() as u8)
                 ^ (isb_socket_port.is_some() as u8)
@@ -101,6 +105,7 @@ async fn main() -> std::io::Result<()> {
                 outbox_count,
                 isb_socket_spec,
 		false,
+		inbox_drop_messages,
             )
             .await;
 
@@ -135,6 +140,7 @@ async fn main() -> std::io::Result<()> {
 			outbox_count,
 			None,
 			true,
+			false,
 		    ).await;
 
 		    HttpServer::new(move || App::new().configure(shard_closure.clone()))

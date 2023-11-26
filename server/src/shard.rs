@@ -1400,94 +1400,98 @@ pub mod inbox {
             epoch_batch: DeviceEpochBatch,
             _ctx: &mut Context<Self>,
         ) -> Self::Result {
+            let state = self.state.as_ref().unwrap();
+
             let DeviceEpochBatch(epoch_id, device_messages, message_count) =
                 epoch_batch;
 
-            for (device, messages) in device_messages.into_iter() {
-                // Insert the messages into the data structure and immediately
-                // get a reference to it:
-                let (prev_epoch, current_epoch_messages_ref) =
-                    if let Some((_, ref mut device_mailbox)) =
-                        self.client_mailboxes.get_mut(&device)
-                    {
-                        device_mailbox.push_back((epoch_id, messages));
-                        (
-                            device_mailbox
-                                .iter()
-                                .nth_back(1)
-                                .map(|(epoch, _)| epoch),
-                            &device_mailbox.back().unwrap().1,
-                        )
-                    } else {
-                        let mut message_queue = LinkedList::new();
-                        message_queue.push_back((epoch_id, messages));
-                        self.client_mailboxes
-                            .insert(device.clone(), (0, message_queue));
-                        (
-                            None,
-                            &self
-                                .client_mailboxes
-                                .get(&device)
+            if !state.inbox_drop_messages {
+                for (device, messages) in device_messages.into_iter() {
+                    // Insert the messages into the data structure and
+                    // immediately get a reference to it:
+                    let (prev_epoch, current_epoch_messages_ref) =
+                        if let Some((_, ref mut device_mailbox)) =
+                            self.client_mailboxes.get_mut(&device)
+                        {
+                            device_mailbox.push_back((epoch_id, messages));
+                            (
+                                device_mailbox
+                                    .iter()
+                                    .nth_back(1)
+                                    .map(|(epoch, _)| epoch),
+                                &device_mailbox.back().unwrap().1,
+                            )
+                        } else {
+                            let mut message_queue = LinkedList::new();
+                            message_queue.push_back((epoch_id, messages));
+                            self.client_mailboxes
+                                .insert(device.clone(), (0, message_queue));
+                            (
+                                None,
+                                &self
+                                    .client_mailboxes
+                                    .get(&device)
+                                    .unwrap()
+                                    .1
+                                    .back()
+                                    .unwrap()
+                                    .1,
+                            )
+                        };
+
+                    if let Some(tx) = self.client_streams.get_mut(&device) {
+                        use std::borrow::Cow;
+
+                        let epoch_batch = super::client_protocol::EpochMessageBatch {
+                            epoch_id,
+                            messages: Cow::Borrowed(current_epoch_messages_ref),
+                            attestation: super::client_protocol::AttestationData::from_inbox_epochs(
+                                &device,
+                                prev_epoch.map(|eid| eid + 1).unwrap_or(0),
+                                epoch_id + 1,
+                                current_epoch_messages_ref.iter(),
+                                // Primitive test for missing messages in attestation:
+                                // [].iter(),
+                                // Primitive test for spurious message in attestation:
+                                // current_epoch_messages_ref.iter().chain(
+                                //     [super::client_protocol::EncryptedInboxMessage {
+                                //         sender: "foo".to_string(),
+                                //         recipients: vec!["bar".to_string()],
+                                //         enc_common: super::client_protocol::EncryptedCommonPayload(
+                                //             "hello!".to_string(),
+                                //         ),
+                                //         enc_recipient:
+                                //             super::client_protocol::EncryptedPerRecipientPayload {
+                                //                 c_type: 0,
+                                //                 ciphertext: "very secret...".to_string(),
+                                //             },
+                                //         seq_id: 12345,
+                                //     }]
+                                //     .iter(),
+                                // ),
+                            )
+                            .attest(&state.attestation_key)
+                            .encode_base64(),
+                        };
+
+                        let res = tx.try_send(
+                            sse::Data::new_json(epoch_batch)
                                 .unwrap()
-                                .1
-                                .back()
-                                .unwrap()
-                                .1,
-                        )
-                    };
+                                .event("epoch_message_batch"),
+                        );
 
-                if let Some(tx) = self.client_streams.get_mut(&device) {
-                    use std::borrow::Cow;
+                        if let Err(TrySendError::Full(_)) = res {
+                            panic!(
+                                "Could not send message to client {}, SSE channel full!",
+                                &device
+                            );
+                        }
 
-                    let epoch_batch = super::client_protocol::EpochMessageBatch {
-                        epoch_id,
-                        messages: Cow::Borrowed(current_epoch_messages_ref),
-                        attestation: super::client_protocol::AttestationData::from_inbox_epochs(
-                            &device,
-                            prev_epoch.map(|eid| eid + 1).unwrap_or(0),
-                            epoch_id + 1,
-                            current_epoch_messages_ref.iter(),
-                            // Primitive test for missing messages in attestation:
-                            // [].iter(),
-                            // Primitive test for spurious message in attestation:
-                            // current_epoch_messages_ref.iter().chain(
-                            //     [super::client_protocol::EncryptedInboxMessage {
-                            //         sender: "foo".to_string(),
-                            //         recipients: vec!["bar".to_string()],
-                            //         enc_common: super::client_protocol::EncryptedCommonPayload(
-                            //             "hello!".to_string(),
-                            //         ),
-                            //         enc_recipient:
-                            //             super::client_protocol::EncryptedPerRecipientPayload {
-                            //                 c_type: 0,
-                            //                 ciphertext: "very secret...".to_string(),
-                            //             },
-                            //         seq_id: 12345,
-                            //     }]
-                            //     .iter(),
-                            // ),
-                        )
-                        .attest(&self.state.as_ref().unwrap().attestation_key)
-                        .encode_base64(),
-                    };
-
-                    let res = tx.try_send(
-                        sse::Data::new_json(epoch_batch)
-                            .unwrap()
-                            .event("epoch_message_batch"),
-                    );
-
-                    if let Err(TrySendError::Full(_)) = res {
-                        panic!(
-                            "Could not send message to client {}, SSE channel full!",
-                            &device
+                        println!(
+                            "Sent epoch batch SSE for client {} and epoch {}",
+                            &device, epoch_id
                         );
                     }
-
-                    println!(
-                        "Sent epoch batch SSE for client {} and epoch {}",
-                        &device, epoch_id
-                    );
                 }
             }
 
@@ -2096,6 +2100,7 @@ pub struct ShardState {
     epoch_collector_actor: Addr<intershard::EpochCollectorActor>,
     attestation_key: ed25519_dalek::Keypair,
     block_outbox_epoch: bool,
+    inbox_drop_messages: bool,
 }
 
 pub async fn init(
@@ -2105,6 +2110,7 @@ pub async fn init(
     inbox_count: u8,
     isb_socket: Option<(u16, String)>,
     block_outbox_epoch: bool,
+    inbox_drop_messages: bool,
 ) -> impl Fn(&mut web::ServiceConfig) + Clone + Send + 'static {
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
@@ -2383,6 +2389,7 @@ pub async fn init(
         epoch_collector_actor: epoch_collector_actor.clone(),
         attestation_key: keypair,
 	block_outbox_epoch,
+	inbox_drop_messages,
     });
 
     {

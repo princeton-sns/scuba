@@ -14,12 +14,15 @@ pub struct Opts {
     client_limit: usize,
 
     #[arg(long)]
+    client_interval_us: Option<u64>,
+
+    #[arg(long)]
     stats_file: Option<String>,
 }
 
 #[derive(Serialize)]
 struct StatEntry {
-    time: u128,
+    duration: u128,
     device_id: String,
     start_epoch: u64,
     end_epoch: u64,
@@ -53,6 +56,9 @@ pub async fn run(opts: Opts) {
         let httpc_cloned = httpc.clone();
         let shard_url_cloned = opts.shard_url.clone();
         let arc_stat_send_cloned = arc_stat_send.clone();
+        let client_interval = opts
+            .client_interval_us
+            .map(|i| std::time::Duration::from_micros(i));
 
         let handle = tokio::spawn(async move {
             println!("Spawned task {}", i);
@@ -63,6 +69,7 @@ pub async fn run(opts: Opts) {
                     &devices_notify_cloned,
                     &shard_url_cloned,
                     &arc_stat_send_cloned,
+                    client_interval,
                 )
                 .await;
             }
@@ -115,8 +122,10 @@ async fn client_loop(
     notify: &tokio::sync::Notify,
     shard_url: &str,
     stat_tx: &tokio::sync::mpsc::UnboundedSender<StatEntry>,
+    client_interval: Option<std::time::Duration>,
 ) {
     let device_id = get_device(queue, notify).await;
+    let start = std::time::Instant::now();
 
     let messages_resp = httpc
         .delete(&format!("{}/inbox-bin", shard_url))
@@ -128,12 +137,11 @@ async fn client_loop(
     let parsed: noise_server_lib::shard::client_protocol::MessageBatch =
         bincode::deserialize(&messages_resp.bytes().await.unwrap()).unwrap();
 
+    let duration = std::time::Instant::now().duration_since(start);
+
     stat_tx
         .send(StatEntry {
-            time: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
+            duration: duration.as_millis(),
             device_id: device_id.clone(),
             start_epoch: parsed.start_epoch_id,
             end_epoch: parsed.end_epoch_id,
@@ -144,6 +152,10 @@ async fn client_loop(
                 .sum::<usize>(),
         })
         .unwrap();
+
+    if let Some(interval) = client_interval {
+        tokio::time::sleep(interval.saturating_sub(duration)).await;
+    }
 
     let mut lock_guard = queue.lock().await;
     lock_guard.push_back(device_id);

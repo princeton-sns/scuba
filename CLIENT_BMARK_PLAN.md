@@ -2,34 +2,41 @@
 
 ## Storage
 
-- [ ] Each client's own encryption keys
-  - RES
-- [ ] Each pairwise session
-  - RES
-- [ ] POVS history + attestations equation
-  - RES
+- [ ] Each client's own keys: ?
+  - [ ] Ed25519 fingerprint pair (exclude?)
+    - Public: ?
+    - Private: ?
+  - [ ] Curve25519 identity pair
+    - Public: 48 B?
+    - Private: ?
+  - [ ] Curve25519 one-time pairs
+    - Public: ?
+    - Private: ?
+- [ ] Each pairwise session: ?
+- [x] POVS history + attestations equation
 - [ ] POVS/att scenario 1
-  - estimate: RES
-  - confirmation: RES
+  - estimate: ?
+  - confirmation: ?
 - [ ] POVS/att scenario 2
-  - estimate: RES
-  - confirmation: RES
+  - estimate: ?
+  - confirmation: ?
 - [ ] POVS/att scenario 3 (extreme; e.g. open auction)
-  - estimate: RES
-  - confirmation: RES
+  - estimate: ?
+  - confirmation: ?
 
 ## Bandwidth
 
-- [ ] Constant encryption overhead
-- [ ] Common ciphertext sizes?
 - [ ] Per-recipient payload overhead
-  - [ ] Symmetric key: RES
-  - [ ] Validation payload: RES
-    - [ ] head: RES
-    - [ ] index: RES
-    - [ ] recipient list scenario 1 (1 rcpt): RES
-    - [ ] recipient list scenario 2 (8 rcpt): RES
-    - [ ] recipient list scenario 3 (64 rcpt): RES
+  - [x] Symmetric key:
+    - plaintext = 16 B
+  - [x] Validation payload: 40 B
+    - [x] head: 32 B
+    - [x] index: 8 B
+  - [ ] Recipient lists
+    - Each recipient pub idkey = ? (from above)
+    - Each recipient list = #rcpts x idkey size
+- [ ] Constant encryption overhead (over plaintext)
+- [ ] Common ciphertext sizes?
 
 ## Computation
 

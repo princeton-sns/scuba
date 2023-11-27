@@ -2,8 +2,7 @@
 members = [
     "client/core",
     "client/single-key-dal",
-    "client/serializable-noise-kv",
-    "client/merged-serializable-noise-kv",
+    "client/multi-key-dal",
     "apps/cmdline-lightswitch",
     "apps/cmdline-period-tracking",
     "apps/cmdline-chess",

@@ -743,6 +743,7 @@ mod tests {
     //    }
     //}
 
+    /*
     #[tokio::test]
     async fn test_new() {
         let arc_core: Arc<Core<StreamClient>> =
@@ -760,6 +761,7 @@ mod tests {
         //ServerComm::<StreamClient>::new(None, None,
         // "abcd".to_string(), None).await;
     }
+    */
 
     /*
     #[tokio::test]

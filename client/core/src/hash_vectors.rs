@@ -78,7 +78,7 @@ impl Default for DeviceState {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CommonPayload {
-    recipients: Vec<DeviceId>,
+    pub recipients: Vec<DeviceId>,
     message: Message,
 }
 
@@ -106,8 +106,8 @@ impl CommonPayload {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ValidationPayload {
     consistency_loopback: bool,
-    validation_seq: Option<usize>,
-    validation_digest: Option<Hash>,
+    pub validation_seq: Option<usize>,
+    pub validation_digest: Option<Hash>,
 }
 
 impl ValidationPayload {

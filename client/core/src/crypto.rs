@@ -23,12 +23,12 @@ pub struct Crypto {
     turn_encryption_off: bool,
     idkeys: IdentityKeys,
     // Wrap OlmAccount and MessageQueue in Mutex for Send/Sync
-    account: Mutex<OlmAccount>,
+    pub account: Mutex<OlmAccount>,
     message_queue: Mutex<VecDeque<String>>,
     // Wrap entire HashMap in a Mutex for Send/Sync; this is ok because
     // any time sessions is accessed we have a &mut self - no deadlock
     // risk b/c only one &mut self can be helf at a time, anyway
-    sessions: Mutex<HashMap<String, (bool, Vec<OlmSession>)>>,
+    pub sessions: Mutex<HashMap<String, (bool, Vec<OlmSession>)>>,
     sessions_cv: Condvar,
     key: [u8; 16],
 }

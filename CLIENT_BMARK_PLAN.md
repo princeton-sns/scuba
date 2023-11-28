@@ -2,17 +2,19 @@
 
 ## Storage
 
-- [ ] Each client's own keys: ?
-  - [ ] Ed25519 fingerprint pair (exclude?)
-    - Public: ?
+- [ ] Each client's own keys
+  - [ ] identity key pair (both signing + encryption) -- pickled
+    - Public: 164 B (246 B base64)
     - Private: ?
-  - [ ] Curve25519 identity pair
-    - Public: 48 B?
+  - [ ] Curve25519 one-time key pairs -- pickled
+    - Public: 164 B (246 B base64)
     - Private: ?
-  - [ ] Curve25519 one-time pairs
-    - Public: ?
-    - Private: ?
-- [ ] Each pairwise session: ?
+- [ ] Each pairwise session: ? depends on the number of messages sent/received
+  - 352 B in base64 (234.66667 B) -- not right
+  - 438 B in base64 (292 B)
+  - 523 B in base64 (348.66667 B) -- not right
+  - 630 B ...
+  - 715 B ...
 - [x] POVS history + attestations equation
 - [ ] POVS/att scenario 1
   - estimate: ?
@@ -26,14 +28,14 @@
 
 ## Bandwidth
 
-- [ ] Per-recipient payload overhead
+- [x] Per-recipient payload overhead
   - [x] Symmetric key:
     - plaintext = 16 B
   - [x] Validation payload: 40 B
     - [x] head: 32 B
     - [x] index: 8 B
-  - [ ] Recipient lists
-    - Each recipient pub idkey = ? (from above)
+  - [x] Recipient lists
+    - Each recipient pub idkey = 43 B (diff format from above)
     - Each recipient list = #rcpts x idkey size
 - [ ] Constant encryption overhead (over plaintext)
 - [ ] Common ciphertext sizes?

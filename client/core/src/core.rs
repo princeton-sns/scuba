@@ -1,7 +1,7 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -148,9 +148,15 @@ impl<C: CoreClient> Core<C> {
 
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         let (common_payload, val_payloads) = hash_vectors_guard
-            .prepare_message(dst_idkeys.clone(), bincode::serialize(payload).unwrap());
+            .prepare_message(
+                dst_idkeys.clone(),
+                bincode::serialize(payload).unwrap(),
+            );
 
-        println!("common_payload.recipients.len(): {:?}", &common_payload.recipients.len());
+        println!(
+            "common_payload.recipients.len(): {:?}",
+            &common_payload.recipients.len()
+        );
 
         // FIXME What if common_payloads are identical?
         // If they're identical here, they can trigger a reordering detection,
@@ -187,11 +193,15 @@ impl<C: CoreClient> Core<C> {
         }
 
         // Can't use .iter().map().collect() due to async/await
-        let mut encrypted_per_recipient_payloads = HashMap::new();
+        let mut encrypted_per_recipient_payloads = BTreeMap::new();
         for (idkey, val_payload) in val_payloads {
             println!("idkey: {:?}", &idkey.len());
-            //println!("val_payload index: {:?}", &val_payload.validation_seq.map_or(0, |x| x.len()));
-            println!("val_payload head: {:?}", &val_payload.validation_digest.map_or(0, |x| x.len()));
+            //println!("val_payload index: {:?}",
+            // &val_payload.validation_seq.map_or(0, |x| x.len()));
+            println!(
+                "val_payload head: {:?}",
+                &val_payload.validation_digest.map_or(0, |x| x.len())
+            );
             let (c_type, ciphertext) = self
                 .crypto
                 .session_encrypt(
@@ -201,7 +211,8 @@ impl<C: CoreClient> Core<C> {
                         val_payload,
                         key,
                         iv,
-                    )).unwrap(),
+                    ))
+                    .unwrap(),
                 )
                 .await;
 
@@ -243,7 +254,7 @@ impl<C: CoreClient> Core<C> {
             .await
             .as_ref()
             .unwrap()
-            .send_message(&encrypted_message)
+            .send_message(encrypted_message)
             .await
     }
 
@@ -281,13 +292,15 @@ impl<C: CoreClient> Core<C> {
                     msg.enc_recipient.ciphertext,
                 );
 
-                let per_recipient_payload: PerRecipientPayload = bincode::deserialize(&decrypted_per_recipient).unwrap();
+                let per_recipient_payload: PerRecipientPayload =
+                    bincode::deserialize(&decrypted_per_recipient).unwrap();
                 let decrypted_common = self.crypto.symmetric_decrypt(
-                    msg.enc_common.to_bytes(),
+                    msg.enc_common.0,
                     per_recipient_payload.key(),
                     per_recipient_payload.iv(),
                 );
-                let common_payload: CommonPayload = bincode::deserialize(&decrypted_common).unwrap();
+                let common_payload: CommonPayload =
+                    bincode::deserialize(&decrypted_common).unwrap();
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released
@@ -370,8 +383,7 @@ impl<C: CoreClient> Core<C> {
 
                 match parsed_res {
                     // No message to forward
-                    Ok(None) => {
-                    }
+                    Ok(None) => {}
                     // Forward message
                     Ok(Some((seq, message))) => {
                         self.client
@@ -382,7 +394,8 @@ impl<C: CoreClient> Core<C> {
                             .client_callback(
                                 seq as SequenceNumber,
                                 msg.sender.clone(),
-                                std::string::String::from_utf8(message).unwrap(),
+                                bincode::deserialize::<String>(&message)
+                                    .unwrap(),
                             )
                             .await;
 
@@ -486,10 +499,15 @@ mod tests {
         let (client, mut receiver) = StreamClient::new();
         let arc_client = Arc::new(client);
         let arc_core: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some("commons.txt"), Some(arc_client)).await;
+            Core::new(None, None, false, Some("commons.txt"), Some(arc_client))
+                .await;
 
         let idkeys = arc_core.crypto.account.lock().identity_keys();
-        let pickled = arc_core.crypto.account.lock().pickle(olm_rs::PicklingMode::Unencrypted);
+        let pickled = arc_core
+            .crypto
+            .account
+            .lock()
+            .pickle(olm_rs::PicklingMode::Unencrypted);
         println!("pickled: {:?}", &pickled);
         println!("pickled len: {:?}", pickled.len());
         let parsed = arc_core.crypto.account.lock().parsed_identity_keys();

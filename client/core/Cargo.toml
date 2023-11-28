@@ -27,6 +27,8 @@ base64 = "0.21.0"
 ed25519-dalek = "1.0.1"
 bincode = "1.3.3"
 
+noise-server = { path = "../../server" }
+
 [dev-dependencies]
 criterion = "0.5.1"
 

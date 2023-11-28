@@ -4,3 +4,11 @@ members = [
     "client/noise-kv",
     "apps/cmdline-lightswitch",
 ]
+
+[profile.release]
+opt-level = 3
+
+[profile.release-lto]
+inherits = "release"
+lto = true
+strip = true

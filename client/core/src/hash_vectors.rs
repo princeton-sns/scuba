@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 
 pub type DeviceId = String;
 pub type Hash = [u8; 32];
-pub type Message = String;
 
 #[derive(Debug)]
 pub enum Error {
@@ -19,7 +18,7 @@ fn hash_message(
     prev_digest: Option<&Hash>,
     // TODO impl Sorted/Ord?
     recipients: &mut Vec<DeviceId>,
-    message: Message,
+    message: Vec<u8>,
 ) -> Hash {
     use sha2::Digest;
 
@@ -79,27 +78,19 @@ impl Default for DeviceState {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CommonPayload {
     pub recipients: Vec<DeviceId>,
-    message: Message,
+    message: Vec<u8>,
 }
 
 impl CommonPayload {
-    pub fn new(recipients: Vec<DeviceId>, message: Message) -> Self {
+    pub fn new(recipients: Vec<DeviceId>, message: Vec<u8>) -> Self {
         CommonPayload {
             recipients,
             message,
         }
     }
 
-    pub fn message(&self) -> &Message {
+    pub fn message(&self) -> &Vec<u8> {
         &self.message
-    }
-
-    pub fn from_string(common_payload: String) -> Self {
-        serde_json::from_str(common_payload.as_str()).unwrap()
-    }
-
-    pub fn to_string(common_payload: &CommonPayload) -> String {
-        serde_json::to_string(common_payload).unwrap()
     }
 }
 
@@ -121,7 +112,7 @@ impl ValidationPayload {
 
     pub fn dummy(
         mut recipients: Vec<DeviceId>,
-        message: Message,
+        message: Vec<u8>,
     ) -> ValidationPayload {
         let hash = hash_message(None, &mut recipients, message);
         ValidationPayload {
@@ -178,7 +169,7 @@ impl HashVectors {
     pub fn prepare_message(
         &mut self,
         mut recipients: Vec<DeviceId>,
-        message: Message,
+        message: Vec<u8>,
     ) -> (CommonPayload, HashMap<DeviceId, ValidationPayload>) {
         let mut consistency_loopback = true;
         for recipient in recipients.iter() {
@@ -232,7 +223,7 @@ impl HashVectors {
     fn register_message(
         &mut self,
         mut recipients: Vec<DeviceId>,
-        message: Message,
+        message: Vec<u8>,
     ) {
         let message_hash_entry = hash_message(
             Some(self.pending_messages.back().unwrap()),
@@ -248,7 +239,7 @@ impl HashVectors {
         sender: &DeviceId,
         common_payload: CommonPayload,
         recipient_payload: &ValidationPayload,
-    ) -> Result<Option<(usize, Message)>, Error> {
+    ) -> Result<Option<(usize, Vec<u8>)>, Error> {
         // Recipients list is sorted sending-side
         if !common_payload.recipients.iter().is_sorted() {
             return Err(Error::InvalidRecipientsOrder);
@@ -292,7 +283,7 @@ impl HashVectors {
         &mut self,
         sender: &DeviceId,
         mut recipients: Vec<DeviceId>,
-        message: Message,
+        message: Vec<u8>,
     ) -> Result<usize, Error> {
         if recipients.len() < 1 {
             return Err(Error::TooFewRecipients);

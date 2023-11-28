@@ -43,23 +43,6 @@ impl PerRecipientPayload {
     fn iv(&self) -> [u8; 16] {
         self.iv
     }
-
-    pub fn new_and_to_string(
-        val_payload: ValidationPayload,
-        key: [u8; 16],
-        iv: [u8; 16],
-    ) -> String {
-        serde_json::to_string(&PerRecipientPayload::new(val_payload, key, iv))
-            .unwrap()
-    }
-
-    fn to_string(per_recipient_payload: &PerRecipientPayload) -> String {
-        serde_json::to_string(per_recipient_payload).unwrap()
-    }
-
-    fn from_string(per_recipient_payload: String) -> PerRecipientPayload {
-        serde_json::from_str(per_recipient_payload.as_str()).unwrap()
-    }
 }
 
 #[async_trait]
@@ -165,7 +148,7 @@ impl<C: CoreClient> Core<C> {
 
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         let (common_payload, val_payloads) = hash_vectors_guard
-            .prepare_message(dst_idkeys.clone(), payload.to_string());
+            .prepare_message(dst_idkeys.clone(), bincode::serialize(payload).unwrap());
 
         println!("common_payload.recipients.len(): {:?}", &common_payload.recipients.len());
 
@@ -192,7 +175,7 @@ impl<C: CoreClient> Core<C> {
         // symmetrically encrypt common_payload once
         let (common_ct, key, iv) = self
             .crypto
-            .symmetric_encrypt(CommonPayload::to_string(&common_payload));
+            .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
 
         if let Some(filename) = &self.common_ct_size_filename {
             let mut f = File::options()
@@ -211,14 +194,14 @@ impl<C: CoreClient> Core<C> {
             println!("val_payload head: {:?}", &val_payload.validation_digest.map_or(0, |x| x.len()));
             let (c_type, ciphertext) = self
                 .crypto
-                .encrypt(
+                .session_encrypt(
                     &self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
-                    &PerRecipientPayload::new_and_to_string(
+                    bincode::serialize(&PerRecipientPayload::new(
                         val_payload,
                         key,
                         iv,
-                    ),
+                    )).unwrap(),
                 )
                 .await;
 
@@ -240,7 +223,7 @@ impl<C: CoreClient> Core<C> {
         }
 
         let encrypted_message = EncryptedOutboxMessage {
-            enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
+            enc_common: EncryptedCommonPayload(common_ct),
             enc_recipients: encrypted_per_recipient_payloads,
         };
 
@@ -292,21 +275,19 @@ impl<C: CoreClient> Core<C> {
                 }
             }
             Ok(Event::Msg(msg)) => {
-                let decrypted_per_recipient = self.crypto.decrypt(
+                let decrypted_per_recipient = self.crypto.session_decrypt(
                     &msg.sender,
                     msg.enc_recipient.c_type,
-                    &msg.enc_recipient.ciphertext,
+                    msg.enc_recipient.ciphertext,
                 );
 
-                let per_recipient_payload =
-                    PerRecipientPayload::from_string(decrypted_per_recipient);
+                let per_recipient_payload: PerRecipientPayload = bincode::deserialize(&decrypted_per_recipient).unwrap();
                 let decrypted_common = self.crypto.symmetric_decrypt(
                     msg.enc_common.to_bytes(),
                     per_recipient_payload.key(),
                     per_recipient_payload.iv(),
                 );
-                let common_payload =
-                    CommonPayload::from_string(decrypted_common);
+                let common_payload: CommonPayload = bincode::deserialize(&decrypted_common).unwrap();
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released
@@ -401,7 +382,7 @@ impl<C: CoreClient> Core<C> {
                             .client_callback(
                                 seq as SequenceNumber,
                                 msg.sender.clone(),
-                                message,
+                                std::string::String::from_utf8(message).unwrap(),
                             )
                             .await;
 

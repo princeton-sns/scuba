@@ -1,4 +1,6 @@
 [workspace]
+resolver = "2"
+
 members = [
     "client/core",
     "client/single-key-dal",
@@ -10,5 +12,7 @@ members = [
     "apps/cmdline-password-manager",
     "apps/cmdline-calendar",
     "apps/cmdline-auctioning",
+    "server",
+    "server-bench",
+    "server-goose-bench",
 ]
-resolver = "2"

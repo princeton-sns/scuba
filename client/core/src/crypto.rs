@@ -237,7 +237,8 @@ impl Crypto {
         if self.turn_encryption_off {
             return (1, plaintext);
         }
-        self.session_encrypt_helper(server_comm, dst_idkey, plaintext).await
+        self.session_encrypt_helper(server_comm, dst_idkey, plaintext)
+            .await
     }
 
     async fn session_encrypt_helper<C: CoreClient>(
@@ -252,7 +253,9 @@ impl Crypto {
         }
         let (c_type, ciphertext) = self
             .get_outbound_session(server_comm, dst_idkey, |session| {
-                session.encrypt(std::str::from_utf8(&plaintext).unwrap()).to_tuple()
+                session
+                    .encrypt(std::str::from_utf8(&plaintext).unwrap())
+                    .to_tuple()
             })
             .await;
         (c_type.into(), ciphertext.into())

@@ -1,11 +1,11 @@
-use criterion::{criterion_group, criterion_main, Criterion};
 use core::Core;
+use criterion::{criterion_group, criterion_main, Criterion};
 
 fn setup(turn_off_encryption: bool) {
     static KB: u64 = 1024;
     plaintext_sizes = vec![KB]; //, 2*KB, 4*KB, 8*KB, 16*KB];
 
-    client_a = 
+    // client_a =
 }
 
 pub fn send_unencrypted(c: &mut Criterion) {

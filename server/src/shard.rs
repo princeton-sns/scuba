@@ -1634,7 +1634,7 @@ pub mod inbox {
 
                         let epoch_batch = super::client_protocol::MessageBatch {
                             start_epoch_id: epoch_id,
-			    end_epoch_id: epoch_id,
+			    end_epoch_id: epoch_id + 1,
                             messages: Cow::Owned(vec![(epoch_id, Cow::Borrowed(current_epoch_messages_ref))]),
                             attestation: super::client_protocol::AttestationData::from_inbox_epochs(
                                 &device,

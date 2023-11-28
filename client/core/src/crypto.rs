@@ -23,12 +23,12 @@ pub struct Crypto {
     turn_encryption_off: bool,
     idkeys: IdentityKeys,
     // Wrap OlmAccount and MessageQueue in Mutex for Send/Sync
-    account: Mutex<OlmAccount>,
-    message_queue: Mutex<VecDeque<String>>,
+    pub account: Mutex<OlmAccount>,
+    message_queue: Mutex<VecDeque<Vec<u8>>>,
     // Wrap entire HashMap in a Mutex for Send/Sync; this is ok because
     // any time sessions is accessed we have a &mut self - no deadlock
     // risk b/c only one &mut self can be helf at a time, anyway
-    sessions: Mutex<HashMap<String, (bool, Vec<OlmSession>)>>,
+    pub sessions: Mutex<HashMap<String, (bool, Vec<OlmSession>)>>,
     sessions_cv: Condvar,
     key: [u8; 16],
 }
@@ -54,9 +54,8 @@ impl Crypto {
 
     pub fn symmetric_encrypt(
         &self,
-        pt_string: String,
+        pt: Vec<u8>,
     ) -> (Vec<u8>, [u8; 16], [u8; 16]) {
-        let pt = pt_string.into_bytes();
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
 
@@ -75,19 +74,15 @@ impl Crypto {
         ct: Vec<u8>,
         key: [u8; 16],
         iv: [u8; 16],
-    ) -> String {
+    ) -> Vec<u8> {
         if self.turn_encryption_off {
-            return std::str::from_utf8(&ct).unwrap().to_string();
+            return ct;
         }
 
         let pt = Aes128CbcDec::new(&key.into(), &iv.into())
             .decrypt_padded_vec_mut::<Pkcs7>(&ct)
             .unwrap();
-
-        match String::from_utf8(pt) {
-            Ok(pt_str) => pt_str.to_string(),
-            Err(err) => panic!("err: {:?}", err),
-        }
+        pt
     }
 
     pub fn generate_otkeys(&self, num: Option<usize>) -> OneTimeKeys {
@@ -217,7 +212,7 @@ impl Crypto {
         &self,
         sender: &String,
         ciphertext: &OlmMessage,
-    ) -> String {
+    ) -> Vec<u8> {
         // as long as get_inbound_session is called before this
         // function the result will never be None/empty
         let sessions = self.sessions.lock();
@@ -226,78 +221,78 @@ impl Crypto {
         // skip the len - 1'th session since that was already tried
         for session in sessions_list.iter().rev().skip(1) {
             match session.decrypt(ciphertext.clone()) {
-                Ok(plaintext) => return plaintext,
+                Ok(plaintext) => return plaintext.into(),
                 _ => continue,
             }
         }
         panic!("No matching sessions were found");
     }
 
-    pub async fn encrypt<C: CoreClient>(
+    pub async fn session_encrypt<C: CoreClient>(
         &self,
         server_comm: &ServerComm<C>,
         dst_idkey: &String,
-        plaintext: &String,
-    ) -> (usize, String) {
+        plaintext: Vec<u8>,
+    ) -> (usize, Vec<u8>) {
         if self.turn_encryption_off {
-            return (1, plaintext.to_string());
+            return (1, plaintext);
         }
-        self.encrypt_helper(server_comm, dst_idkey, plaintext).await
+        self.session_encrypt_helper(server_comm, dst_idkey, plaintext).await
     }
 
-    async fn encrypt_helper<C: CoreClient>(
+    async fn session_encrypt_helper<C: CoreClient>(
         &self,
         server_comm: &ServerComm<C>,
         dst_idkey: &String,
-        plaintext: &String,
-    ) -> (usize, String) {
+        plaintext: Vec<u8>,
+    ) -> (usize, Vec<u8>) {
         if *dst_idkey == self.get_idkey() {
-            self.message_queue.lock().push_front(plaintext.to_string());
-            return (1, "".to_string());
+            self.message_queue.lock().push_front(plaintext);
+            return (1, Vec::<u8>::new());
         }
         let (c_type, ciphertext) = self
             .get_outbound_session(server_comm, dst_idkey, |session| {
-                session.encrypt(plaintext).to_tuple()
+                session.encrypt(std::str::from_utf8(&plaintext).unwrap()).to_tuple()
             })
             .await;
-        (c_type.into(), ciphertext)
+        (c_type.into(), ciphertext.into())
     }
 
-    pub fn decrypt(
+    pub fn session_decrypt(
         &self,
         sender: &String,
         c_type: usize,
-        ciphertext: &String,
-    ) -> String {
+        ciphertext: Vec<u8>,
+    ) -> Vec<u8> {
         if self.turn_encryption_off {
-            return ciphertext.to_string();
+            return ciphertext;
         }
-        self.decrypt_helper(
+        self.session_decrypt_helper(
             sender,
             &OlmMessage::from_type_and_ciphertext(
                 c_type,
-                ciphertext.to_string(),
+                String::from_utf8(ciphertext).unwrap(),
             )
             .unwrap(),
         )
     }
 
-    fn decrypt_helper(
+    fn session_decrypt_helper(
         &self,
         sender: &String,
         ciphertext: &OlmMessage,
-    ) -> String {
+    ) -> Vec<u8> {
         if *sender == self.get_idkey() {
             // FIXME handle dos attack where client poses as "self" -
             // this unwrap will panic
-            return self.message_queue.lock().pop_back().unwrap().to_string();
+            return self.message_queue.lock().pop_back().unwrap();
         }
         let res = self.get_inbound_session(sender, ciphertext, |session| {
             session.decrypt(ciphertext.clone())
         });
 
         match res {
-            Ok(plaintext) => return plaintext,
+            Ok(plaintext) => return plaintext.into(),
             Err(err) => {
                 match ciphertext {
                     // iterate through all sessions in case this message was

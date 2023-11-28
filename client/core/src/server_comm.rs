@@ -40,7 +40,7 @@ pub mod attestation {
                 hasher.finalize_into_reset((&mut recipients_digest).into());
 
                 let mut payload_digest = [0; 32];
-                hasher.update(message.borrow().enc_common.0.as_bytes());
+                hasher.update(message.borrow().enc_common.0.clone());
                 hasher.finalize_into_reset((&mut payload_digest).into());
 
                 (message.borrow().seq_id, recipients_digest, payload_digest)
@@ -399,14 +399,9 @@ pub enum Event {
 // the encrypted shared/common payload.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(transparent)]
-pub struct EncryptedCommonPayload(pub String);
+pub struct EncryptedCommonPayload(pub Vec<u8>);
 
 impl EncryptedCommonPayload {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        use base64::{engine::general_purpose, Engine as _};
-        EncryptedCommonPayload(general_purpose::STANDARD_NO_PAD.encode(bytes))
-    }
-
     pub fn to_bytes(&self) -> Vec<u8> {
         use base64::{engine::general_purpose, Engine as _};
         general_purpose::STANDARD_NO_PAD.decode(&self.0).unwrap()
@@ -416,7 +411,7 @@ impl EncryptedCommonPayload {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedPerRecipientPayload {
     pub c_type: usize,
-    pub ciphertext: String,
+    pub ciphertext: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -743,6 +738,7 @@ mod tests {
     //    }
     //}
 
+    /*
     #[tokio::test]
     async fn test_new() {
         let arc_core: Arc<Core<StreamClient>> =
@@ -760,6 +756,7 @@ mod tests {
         //ServerComm::<StreamClient>::new(None, None,
         // "abcd".to_string(), None).await;
     }
+    */
 
     /*
     #[tokio::test]

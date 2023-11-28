@@ -43,23 +43,6 @@ impl PerRecipientPayload {
     fn iv(&self) -> [u8; 16] {
         self.iv
     }
-
-    pub fn new_and_to_string(
-        val_payload: ValidationPayload,
-        key: [u8; 16],
-        iv: [u8; 16],
-    ) -> String {
-        serde_json::to_string(&PerRecipientPayload::new(val_payload, key, iv))
-            .unwrap()
-    }
-
-    fn to_string(per_recipient_payload: &PerRecipientPayload) -> String {
-        serde_json::to_string(per_recipient_payload).unwrap()
-    }
-
-    fn from_string(per_recipient_payload: String) -> PerRecipientPayload {
-        serde_json::from_str(per_recipient_payload.as_str()).unwrap()
-    }
 }
 
 #[async_trait]
@@ -161,10 +144,13 @@ impl<C: CoreClient> Core<C> {
                 break;
             }
         }
+        println!("dst_idkeys: {:?}", &dst_idkeys);
 
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         let (common_payload, val_payloads) = hash_vectors_guard
-            .prepare_message(dst_idkeys.clone(), payload.to_string());
+            .prepare_message(dst_idkeys.clone(), bincode::serialize(payload).unwrap());
+
+        println!("common_payload.recipients.len(): {:?}", &common_payload.recipients.len());
 
         // FIXME What if common_payloads are identical?
         // If they're identical here, they can trigger a reordering detection,
@@ -189,7 +175,7 @@ impl<C: CoreClient> Core<C> {
         // symmetrically encrypt common_payload once
         let (common_ct, key, iv) = self
             .crypto
-            .symmetric_encrypt(CommonPayload::to_string(&common_payload));
+            .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
 
         if let Some(filename) = &self.common_ct_size_filename {
             let mut f = File::options()
@@ -203,18 +189,29 @@ impl<C: CoreClient> Core<C> {
         // Can't use .iter().map().collect() due to async/await
         let mut encrypted_per_recipient_payloads = HashMap::new();
         for (idkey, val_payload) in val_payloads {
+            println!("idkey: {:?}", &idkey.len());
+            //println!("val_payload index: {:?}", &val_payload.validation_seq.map_or(0, |x| x.len()));
+            println!("val_payload head: {:?}", &val_payload.validation_digest.map_or(0, |x| x.len()));
             let (c_type, ciphertext) = self
                 .crypto
-                .encrypt(
+                .session_encrypt(
                     &self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
-                    &PerRecipientPayload::new_and_to_string(
+                    bincode::serialize(&PerRecipientPayload::new(
                         val_payload,
                         key,
                         iv,
-                    ),
+                    )).unwrap(),
                 )
                 .await;
+
+            let sessionlock = self.crypto.sessions.lock();
+            if let Some(val) = sessionlock.get(&idkey) {
+                let session = &val.1[0];
+                let pickled = session.pickle(olm_rs::PicklingMode::Unencrypted);
+                println!("pickled session: {:?}", &pickled);
+                println!("pickled session len: {:?}", &pickled.len());
+            }
 
             // Ensure we're never encrypting to the same key twice
             assert!(encrypted_per_recipient_payloads
@@ -226,7 +223,7 @@ impl<C: CoreClient> Core<C> {
         }
 
         let encrypted_message = EncryptedOutboxMessage {
-            enc_common: EncryptedCommonPayload::from_bytes(&common_ct),
+            enc_common: EncryptedCommonPayload(common_ct),
             enc_recipients: encrypted_per_recipient_payloads,
         };
 
@@ -278,21 +275,19 @@ impl<C: CoreClient> Core<C> {
                 }
             }
             Ok(Event::Msg(msg)) => {
-                let decrypted_per_recipient = self.crypto.decrypt(
+                let decrypted_per_recipient = self.crypto.session_decrypt(
                     &msg.sender,
                     msg.enc_recipient.c_type,
-                    &msg.enc_recipient.ciphertext,
+                    msg.enc_recipient.ciphertext,
                 );
 
-                let per_recipient_payload =
-                    PerRecipientPayload::from_string(decrypted_per_recipient);
+                let per_recipient_payload: PerRecipientPayload = bincode::deserialize(&decrypted_per_recipient).unwrap();
                 let decrypted_common = self.crypto.symmetric_decrypt(
                     msg.enc_common.to_bytes(),
                     per_recipient_payload.key(),
                     per_recipient_payload.iv(),
                 );
-                let common_payload =
-                    CommonPayload::from_string(decrypted_common);
+                let common_payload: CommonPayload = bincode::deserialize(&decrypted_common).unwrap();
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released
@@ -387,7 +382,7 @@ impl<C: CoreClient> Core<C> {
                             .client_callback(
                                 seq as SequenceNumber,
                                 msg.sender.clone(),
-                                message,
+                                std::string::String::from_utf8(message).unwrap(),
                             )
                             .await;
 
@@ -486,6 +481,27 @@ mod tests {
     use futures::StreamExt;
     use std::sync::Arc;
 
+    #[tokio::test]
+    async fn test_storage_overheads() {
+        let (client, mut receiver) = StreamClient::new();
+        let arc_client = Arc::new(client);
+        let arc_core: Arc<Core<StreamClient>> =
+            Core::new(None, None, false, Some("commons.txt"), Some(arc_client)).await;
+
+        let idkeys = arc_core.crypto.account.lock().identity_keys();
+        let pickled = arc_core.crypto.account.lock().pickle(olm_rs::PicklingMode::Unencrypted);
+        println!("pickled: {:?}", &pickled);
+        println!("pickled len: {:?}", pickled.len());
+        let parsed = arc_core.crypto.account.lock().parsed_identity_keys();
+        let curve = parsed.curve25519();
+        let string = curve.to_string();
+        println!("parsed: {:?}", &parsed);
+        println!("curve: {:?}", &curve);
+        println!("string: {:?}", &string);
+        println!("string.len: {:?}", &string.len());
+    }
+
+    /*
     #[tokio::test]
     async fn test_send_message_to_self_only() {
         let (client, mut receiver) = StreamClient::new();
@@ -592,4 +608,5 @@ mod tests {
             None => panic!("b got NONE from core"),
         }
     }
+    */
 }

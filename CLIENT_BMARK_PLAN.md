@@ -18,14 +18,14 @@
   - TODO -- does binary encoding fix this?
 - [x] POVS history + attestations equation
 - [ ] POVS/att scenario 1
-  - estimate: ?
-  - confirmation: ?
+  - [x] estimate: ?
+  - [ ] confirmation: ?
 - [ ] POVS/att scenario 2
-  - estimate: ?
-  - confirmation: ?
+  - [x] estimate: ?
+  - [ ] confirmation: ?
 - [ ] POVS/att scenario 3 (extreme; e.g. open auction)
-  - estimate: ?
-  - confirmation: ?
+  - [x] estimate: ?
+  - [ ] confirmation: ?
 
 ## Bandwidth
 
@@ -39,6 +39,7 @@
     - Each recipient pub idkey = 43 B (diff format from above)
     - Each recipient list = #rcpts x idkey size
 - [ ] Constant encryption overhead (over plaintext)
+- [ ] Range of common ciphertext sizes
 
 ## Computation
 

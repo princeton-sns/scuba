@@ -63,12 +63,6 @@ enum Commands {
         public_shard_url: String,
 
         #[arg(long)]
-        inbox_count: u8,
-
-        #[arg(long)]
-        outbox_count: u8,
-
-        #[arg(long)]
         attestation_proxy_port: Option<u16>,
     },
 }
@@ -148,8 +142,6 @@ async fn main() -> std::io::Result<()> {
             sequencer_port,
             shard_port,
             public_shard_url,
-            inbox_count,
-            outbox_count,
             attestation_proxy_port,
         } => tokio::try_join!(
             async move {
@@ -166,8 +158,8 @@ async fn main() -> std::io::Result<()> {
                 let shard_closure = shard::init(
                     public_shard_url,
                     format!("http://127.0.0.1:{}", sequencer_port),
-                    inbox_count,
-                    outbox_count,
+                    1,
+                    1,
                     None,
                     true,
                     false,

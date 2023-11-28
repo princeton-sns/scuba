@@ -535,7 +535,7 @@ pub mod outbox {
 
             // At least a few file system blocks, RAM is cheap
             let mut writer = std::io::BufWriter::with_capacity(
-                128 * 4069,
+                128 * 4096,
                 &mut self.persist_file,
             );
 

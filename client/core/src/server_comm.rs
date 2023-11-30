@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
+use async_trait::async_trait;
 
 const BOOTSTRAP_SERVER_URL: &'static str = "http://localhost:8081";
 const SERVER_ATTESTATION_PUBKEY: &'static str =
@@ -39,7 +40,7 @@ impl ToDelete {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OtkeyResponse {
-    otkey: String,
+    pub otkey: String,
 }
 
 impl From<OtkeyResponse> for String {
@@ -48,7 +49,30 @@ impl From<OtkeyResponse> for String {
     }
 }
 
-pub struct ServerComm<C: CoreClient> {
+#[async_trait]
+pub trait ServerComm {
+    async fn send_message(
+        &self,
+        batch: EncryptedOutboxMessage,
+    ) -> Result<Response>;
+
+    async fn get_otkey_from_server(
+        &self,
+        dst_idkey: &String,
+    ) -> Result<OtkeyResponse>;
+
+    async fn delete_messages_from_server(
+        &self,
+        to_delete: &ToDelete,
+    ) -> Result<Response>;
+
+    async fn add_otkeys_to_server<'a>(
+        &self,
+        to_add: &HashMap<String, String>,
+    ) -> Result<Response>;
+}
+
+pub struct ServerCommImpl<C: CoreClient> {
     base_url: Url,
     idkey: String,
     client: reqwest::Client,
@@ -59,7 +83,7 @@ pub struct ServerComm<C: CoreClient> {
 // TODO make (some of) server comm a trait + would help make
 // mockable
 
-impl<C: CoreClient> ServerComm<C> {
+impl<C: CoreClient> ServerCommImpl<C> {
     pub async fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
@@ -211,8 +235,11 @@ impl<C: CoreClient> ServerComm<C> {
             _pd: PhantomData,
         }
     }
+}
 
-    pub async fn send_message(
+#[async_trait]
+impl<C: CoreClient> ServerComm for ServerCommImpl<C> {
+    async fn send_message(
         &self,
         batch: EncryptedOutboxMessage,
     ) -> Result<Response> {
@@ -228,7 +255,7 @@ impl<C: CoreClient> ServerComm<C> {
             .await
     }
 
-    pub async fn get_otkey_from_server(
+    async fn get_otkey_from_server(
         &self,
         dst_idkey: &String,
     ) -> Result<OtkeyResponse> {
@@ -253,7 +280,7 @@ impl<C: CoreClient> ServerComm<C> {
         }
     }
 
-    pub async fn delete_messages_from_server(
+    async fn delete_messages_from_server(
         &self,
         to_delete: &ToDelete,
     ) -> Result<Response> {
@@ -266,7 +293,7 @@ impl<C: CoreClient> ServerComm<C> {
             .await
     }
 
-    pub async fn add_otkeys_to_server<'a>(
+    async fn add_otkeys_to_server<'a>(
         &self,
         to_add: &HashMap<String, String>,
     ) -> Result<Response> {

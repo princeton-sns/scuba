@@ -96,7 +96,7 @@ impl CommonPayload {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValidationPayload {
-    consistency_loopback: bool,
+    pub consistency_loopback: bool,
     pub validation_seq: Option<usize>,
     pub validation_digest: Option<Hash>,
 }

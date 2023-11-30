@@ -11,12 +11,12 @@ use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
     EncryptedCommonPayload, EncryptedOutboxMessage,
-    EncryptedPerRecipientPayload, Event, ServerComm, ToDelete,
+    EncryptedPerRecipientPayload, Event, ServerComm, ServerCommImpl, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerRecipientPayload {
-    val_payload: ValidationPayload,
+    pub val_payload: ValidationPayload,
     pub key: [u8; 16],
     pub iv: [u8; 16],
 }
@@ -57,7 +57,7 @@ pub trait CoreClient: Sync + Send + 'static {
 
 pub struct Core<C: CoreClient> {
     crypto: Crypto,
-    server_comm: RwLock<Option<ServerComm<C>>>,
+    server_comm: RwLock<Option<ServerCommImpl<C>>>,
     hash_vectors: Mutex<HashVectors>,
     client: RwLock<Option<Arc<C>>>,
     init: parking_lot::Mutex<bool>,
@@ -106,7 +106,7 @@ impl<C: CoreClient> Core<C> {
 
         {
             let mut server_comm_guard = arc_core.server_comm.write().await;
-            let server_comm = ServerComm::new(
+            let server_comm = ServerCommImpl::new(
                 ip_arg,
                 port_arg,
                 idkey.clone(),
@@ -227,7 +227,7 @@ impl<C: CoreClient> Core<C> {
             let (c_type, ciphertext) = self
                 .crypto
                 .session_encrypt(
-                    &self.server_comm.read().await.as_ref().unwrap(),
+                    self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
                     bincode::serialize(&PerRecipientPayload::new(
                         val_payload,

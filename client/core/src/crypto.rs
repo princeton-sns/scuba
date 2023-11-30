@@ -97,9 +97,9 @@ impl Crypto {
         self.idkeys.curve25519().to_string()
     }
 
-    async fn new_outbound_session<C: CoreClient>(
+    async fn new_outbound_session<S: ServerComm>(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &S,
         dst_idkey: &String,
     ) -> OlmSession {
         match server_comm.get_otkey_from_server(dst_idkey).await {
@@ -133,9 +133,9 @@ impl Crypto {
     // exist at one time? (for decrypting delayed messages)
     // -> currently infinite
 
-    async fn get_outbound_session<R, C: CoreClient>(
+    async fn get_outbound_session<R, S: ServerComm>(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &S,
         dst_idkey: &String,
         f: impl FnOnce(&OlmSession) -> R,
     ) -> R {
@@ -221,16 +221,20 @@ impl Crypto {
         // skip the len - 1'th session since that was already tried
         for session in sessions_list.iter().rev().skip(1) {
             match session.decrypt(ciphertext.clone()) {
-                Ok(plaintext) => return plaintext.into(),
+                Ok(plaintext) => {
+		    use base64::{engine::general_purpose, Engine as _};
+		    return general_purpose::STANDARD_NO_PAD
+                        .decode(plaintext).unwrap()
+		},
                 _ => continue,
             }
         }
         panic!("No matching sessions were found");
     }
 
-    pub async fn session_encrypt<C: CoreClient>(
+    pub async fn session_encrypt<S: ServerComm>(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &S,
         dst_idkey: &String,
         plaintext: Vec<u8>,
     ) -> (usize, Vec<u8>) {
@@ -241,9 +245,9 @@ impl Crypto {
             .await
     }
 
-    async fn session_encrypt_helper<C: CoreClient>(
+    async fn session_encrypt_helper<S: ServerComm>(
         &self,
-        server_comm: &ServerComm<C>,
+        server_comm: &S,
         dst_idkey: &String,
         plaintext: Vec<u8>,
     ) -> (usize, Vec<u8>) {
@@ -252,12 +256,13 @@ impl Crypto {
             return (1, Vec::<u8>::new());
         }
         use base64::{engine::general_purpose, Engine as _};
+	let encoded =  &general_purpose::STANDARD_NO_PAD
+            .encode(plaintext);
         let (c_type, ciphertext) = self
             .get_outbound_session(server_comm, dst_idkey, |session| {
                 session
                     .encrypt(
-                        &general_purpose::STANDARD_NO_PAD
-                        .encode(plaintext)
+                       encoded
                     )
                     //&bincode::deserialize::<String>(&plaintext).unwrap())
                     .to_tuple()
@@ -300,7 +305,11 @@ impl Crypto {
         });
 
         match res {
-            Ok(plaintext) => return plaintext.into(),
+            Ok(plaintext) => {
+		use base64::{engine::general_purpose, Engine as _};
+		return general_purpose::STANDARD_NO_PAD
+                        .decode(plaintext).unwrap()
+	    },
             Err(err) => {
                 match ciphertext {
                     // iterate through all sessions in case this message was

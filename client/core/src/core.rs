@@ -17,8 +17,8 @@ use crate::server_comm::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerRecipientPayload {
     val_payload: ValidationPayload,
-    key: [u8; 16],
-    iv: [u8; 16],
+    pub key: [u8; 16],
+    pub iv: [u8; 16],
 }
 
 pub type SequenceNumber = u128;
@@ -144,19 +144,26 @@ impl<C: CoreClient> Core<C> {
                 break;
             }
         }
+        println!("--in send_message");
+        println!("sender: {:?}", self.idkey());
         println!("dst_idkeys: {:?}", &dst_idkeys);
+        println!("serialized payload: {:?}", bincode::serialize(payload).unwrap());
 
+        println!("---hv.prepare_message");
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         let (common_payload, val_payloads) = hash_vectors_guard
             .prepare_message(
                 dst_idkeys.clone(),
                 bincode::serialize(payload).unwrap(),
             );
+        println!("common payload: {:?}", &common_payload);
+        println!("val_payloads: {:?}", &val_payloads);
 
-        println!(
-            "common_payload.recipients.len(): {:?}",
-            &common_payload.recipients.len()
-        );
+        // bandwidth measurements
+        //println!(
+        //    "common_payload.recipients.len(): {:?}",
+        //    &common_payload.recipients.len()
+        //);
 
         // FIXME What if common_payloads are identical?
         // If they're identical here, they can trigger a reordering detection,
@@ -179,9 +186,13 @@ impl<C: CoreClient> Core<C> {
         core::mem::drop(hash_vectors_guard);
 
         // symmetrically encrypt common_payload once
+        println!("---crypto.symmetric_encrypt");
         let (common_ct, key, iv) = self
             .crypto
             .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
+        println!("common_ct: {:?}", &common_ct);
+        println!("key: {:?}", &key);
+        println!("iv: {:?}", &iv);
 
         if let Some(filename) = &self.common_ct_size_filename {
             let mut f = File::options()
@@ -195,13 +206,24 @@ impl<C: CoreClient> Core<C> {
         // Can't use .iter().map().collect() due to async/await
         let mut encrypted_per_recipient_payloads = BTreeMap::new();
         for (idkey, val_payload) in val_payloads {
-            println!("idkey: {:?}", &idkey.len());
-            //println!("val_payload index: {:?}",
-            // &val_payload.validation_seq.map_or(0, |x| x.len()));
-            println!(
-                "val_payload head: {:?}",
-                &val_payload.validation_digest.map_or(0, |x| x.len())
+            // bandwidth measurements
+            //println!("idkey: {:?}", &idkey.len());
+            //println!(
+            //    "val_payload head: {:?}",
+            //    &val_payload.validation_digest.map_or(0, |x| x.len())
+            //);
+
+            println!("\nLOOP");
+            println!("idkey: {:?}", &idkey);
+            println!("per_rcpt_pt: {:?}",
+                &bincode::serialize(&PerRecipientPayload::new(
+                    val_payload.clone(),
+                    key,
+                    iv,
+                ))
+                .unwrap()
             );
+            println!("---crypto.session_encrypt");
             let (c_type, ciphertext) = self
                 .crypto
                 .session_encrypt(
@@ -215,14 +237,16 @@ impl<C: CoreClient> Core<C> {
                     .unwrap(),
                 )
                 .await;
+            println!("per_rcpt_ct: {:?}", &ciphertext);
 
-            let sessionlock = self.crypto.sessions.lock();
-            if let Some(val) = sessionlock.get(&idkey) {
-                let session = &val.1[0];
-                let pickled = session.pickle(olm_rs::PicklingMode::Unencrypted);
-                println!("pickled session: {:?}", &pickled);
-                println!("pickled session len: {:?}", &pickled.len());
-            }
+            // bandwidth measurements
+            //let sessionlock = self.crypto.sessions.lock();
+            //if let Some(val) = sessionlock.get(&idkey) {
+            //    let session = &val.1[0];
+            //    let pickled = session.pickle(olm_rs::PicklingMode::Unencrypted);
+            //    println!("pickled session: {:?}", &pickled);
+            //    println!("pickled session len: {:?}", &pickled.len());
+            //}
 
             // Ensure we're never encrypting to the same key twice
             assert!(encrypted_per_recipient_payloads
@@ -248,6 +272,8 @@ impl<C: CoreClient> Core<C> {
                 break;
             }
         }
+
+        println!("--going into server_comm");
 
         self.server_comm
             .read()
@@ -519,13 +545,12 @@ mod tests {
         println!("string.len: {:?}", &string.len());
     }
 
-    /*
     #[tokio::test]
     async fn test_send_message_to_self_only() {
         let (client, mut receiver) = StreamClient::new();
         let arc_client = Arc::new(client);
         let arc_core: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client)).await;
+            Core::new(None, None, false, None, Some(arc_client)).await;
 
         let payload = String::from("hello from me");
         let idkey = arc_core.crypto.get_idkey();
@@ -549,28 +574,32 @@ mod tests {
         let (client_a, mut receiver_a) = StreamClient::new();
         let arc_client_a = Arc::new(client_a);
         let arc_core_a: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_a)).await;
+            Core::new(None, None, false, None, Some(arc_client_a)).await;
         let idkey_a = arc_core_a.crypto.get_idkey();
 
         let (client_b, mut receiver_b) = StreamClient::new();
         let arc_client_b = Arc::new(client_b);
         let arc_core_b: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_b)).await;
+            Core::new(None, None, false, None, Some(arc_client_b)).await;
         let idkey_b = arc_core_b.crypto.get_idkey();
 
         let (client_c, mut receiver_c) = StreamClient::new();
         let arc_client_c = Arc::new(client_c);
         let arc_core_c: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some(arc_client_c)).await;
+            Core::new(None, None, false, None, Some(arc_client_c)).await;
         let idkey_c = arc_core_c.crypto.get_idkey();
 
         let payload = String::from("hello from me");
         let recipients =
             vec![idkey_a.clone(), idkey_b.clone(), idkey_c.clone()];
 
+        println!("READY TO SEND");
+
         if let Err(err) = arc_core_a.send_message(recipients, &payload).await {
             panic!("Error sending message: {:?}", err);
         }
+
+        println!("SENT");
 
         match receiver_a.next().await {
             Some((sender, msg)) => {
@@ -597,6 +626,7 @@ mod tests {
         }
     }
 
+    /*
     #[tokio::test]
     async fn test_send_message_to_others_only() {
         let (client_a, _receiver_a) = StreamClient::new();

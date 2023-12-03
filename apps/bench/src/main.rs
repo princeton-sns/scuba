@@ -80,7 +80,7 @@ struct PasswordManager {
 
 impl PasswordManager {
     pub async fn new(
-        filename_opt: Option<&'static str>,
+        bw_filename_opt: Option<&'static str>,
         num_send: Option<usize>,
         num_recv: Option<usize>,
         total_runs: Option<usize>,
@@ -96,7 +96,7 @@ impl PasswordManager {
             None,
             None,
             false,
-            None, //filename_opt,
+            bw_filename_opt,
             None,
             None,
             // closed loop
@@ -332,43 +332,45 @@ impl PasswordManager {
 
 #[tokio::main]
 async fn main() {
-    for num_clients in [2] { //, 4, 8, 16, 32] {
+    for num_clients in [4] { //[1, 2, 4, 8, 16, 32] {
         println!("Running {} clients", &num_clients);
-        let num_warmup = 4;
-        let num_runs = 4;
+        let num_warmup = 10;
+        let num_runs = 40;
         let total_runs = num_runs + num_warmup;
 
+        let dirname = "/update_pass_output";
+
         let send_filename = String::from(format!(
-            "{}c_{}r_ts_core_send.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_core_send.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let recv_filename = String::from(format!(
-            "{}c_{}r_ts_core_recv.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_core_recv.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let app_filename = String::from(format!(
-            "{}c_{}r_ts_app.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_app.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_send_filename = String::from(format!(
-            "{}c_{}r_ts_dal_send.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_send.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_update = String::from(format!(
-            "{}c_{}r_ts_dal_recv_update.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_recv_update.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_dummy = String::from(format!(
-            "{}c_{}r_ts_dal_recv_dummy.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_recv_dummy.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_other = String::from(format!(
-            "{}c_{}r_ts_dal_recv_other.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_recv_other.txt",
+            &dirname, &num_clients, &num_runs
         ));
 
-        let num_core_send = 1 * total_runs;
-        let num_core_recv = 1 * total_runs;
+        let num_core_send = 2 * total_runs;
+        let num_core_recv = 2 * total_runs;
         let num_dal_send = total_runs;
         let num_dal_recv = 2 * total_runs;
         println!("num_core_send: {}", &num_core_send);
@@ -376,19 +378,18 @@ async fn main() {
         println!("num_dal_send: {}", &num_dal_send);
         println!("num_dal_recv: {}", &num_dal_recv);
 
-        //let bw_out = "bw_pm.txt";
-        //String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs,
-        // &num_clients)); let mut f_bw = File::options()
-        //    .append(true)
-        //    .create(true)
-        //    .open(bw_out)
-        //    .unwrap();
-        //write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs,
-        // &num_clients); write!(f_bw, "INITS\n");
+        let bw_out = "bw_pm.txt";
+        String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs, &num_clients)); let mut f_bw = File::options()
+            .append(true)
+            .create(true)
+            .open(bw_out)
+            .unwrap();
+        write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs, &num_clients);
+        write!(f_bw, "INITS\n");
 
         let mut clients = HashMap::new();
         let sender = PasswordManager::new(
-            None,
+            Some(bw_out),
             Some(num_core_send),
             Some(num_core_recv),
             Some(total_runs),

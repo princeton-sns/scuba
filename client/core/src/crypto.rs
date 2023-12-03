@@ -222,10 +222,11 @@ impl Crypto {
         for session in sessions_list.iter().rev().skip(1) {
             match session.decrypt(ciphertext.clone()) {
                 Ok(plaintext) => {
-		    use base64::{engine::general_purpose, Engine as _};
-		    return general_purpose::STANDARD_NO_PAD
-                        .decode(plaintext).unwrap()
-		},
+                    use base64::{engine::general_purpose, Engine as _};
+                    return general_purpose::STANDARD_NO_PAD
+                        .decode(plaintext)
+                        .unwrap();
+                }
                 _ => continue,
             }
         }
@@ -256,14 +257,11 @@ impl Crypto {
             return (1, Vec::<u8>::new());
         }
         use base64::{engine::general_purpose, Engine as _};
-	let encoded =  &general_purpose::STANDARD_NO_PAD
-            .encode(plaintext);
+        let encoded = &general_purpose::STANDARD_NO_PAD.encode(plaintext);
         let (c_type, ciphertext) = self
             .get_outbound_session(server_comm, dst_idkey, |session| {
                 session
-                    .encrypt(
-                       encoded
-                    )
+                    .encrypt(encoded)
                     //&bincode::deserialize::<String>(&plaintext).unwrap())
                     .to_tuple()
             })
@@ -306,10 +304,11 @@ impl Crypto {
 
         match res {
             Ok(plaintext) => {
-		use base64::{engine::general_purpose, Engine as _};
-		return general_purpose::STANDARD_NO_PAD
-                        .decode(plaintext).unwrap()
-	    },
+                use base64::{engine::general_purpose, Engine as _};
+                return general_purpose::STANDARD_NO_PAD
+                    .decode(plaintext)
+                    .unwrap();
+            }
             Err(err) => {
                 match ciphertext {
                     // iterate through all sessions in case this message was
@@ -331,38 +330,38 @@ impl Crypto {
 
 #[cfg(test)]
 mod tests {
-        use super::{Crypto, NUM_OTKEYS};
-        use crate::core::stream_client::StreamClient;
-        use std::sync::Arc;
+    use super::{Crypto, NUM_OTKEYS};
+    use crate::core::stream_client::StreamClient;
+    use std::sync::Arc;
 
-        #[test]
-        fn test_new() {
-            let crypto = Crypto::new(false);
-            assert_eq!(crypto.turn_encryption_off, false);
-        }
+    #[test]
+    fn test_new() {
+        let crypto = Crypto::new(false);
+        assert_eq!(crypto.turn_encryption_off, false);
+    }
 
-        #[test]
-        fn test_idkey() {
-            let crypto = Crypto::new(false);
-            println!("idkey: {:?}", crypto.get_idkey());
-        }
+    #[test]
+    fn test_idkey() {
+        let crypto = Crypto::new(false);
+        println!("idkey: {:?}", crypto.get_idkey());
+    }
 
-        #[test]
-        fn test_gen_otkeys() {
-            let crypto = Crypto::new(false);
-            let otkeys = crypto.generate_otkeys(None);
-            assert_eq!(NUM_OTKEYS, otkeys.curve25519().len());
-            println!("otkeys: {:?}", otkeys.curve25519());
-        }
+    #[test]
+    fn test_gen_otkeys() {
+        let crypto = Crypto::new(false);
+        let otkeys = crypto.generate_otkeys(None);
+        assert_eq!(NUM_OTKEYS, otkeys.curve25519().len());
+        println!("otkeys: {:?}", otkeys.curve25519());
+    }
 
-        #[test]
-        fn test_gen_otkeys_custom_num() {
-            let num = 7;
-            let crypto = Crypto::new(false);
-            let otkeys = crypto.generate_otkeys(Some(num));
-            assert_eq!(num, otkeys.curve25519().len());
-            println!("otkeys: {:?}", otkeys.curve25519());
-        }
+    #[test]
+    fn test_gen_otkeys_custom_num() {
+        let num = 7;
+        let crypto = Crypto::new(false);
+        let otkeys = crypto.generate_otkeys(Some(num));
+        assert_eq!(num, otkeys.curve25519().len());
+        println!("otkeys: {:?}", otkeys.curve25519());
+    }
 
     /*
         #[tokio::test]

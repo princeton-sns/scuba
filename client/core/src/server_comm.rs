@@ -1,4 +1,5 @@
 use crate::core::{Core, CoreClient};
+use async_trait::async_trait;
 use eventsource_client::{Client, ClientBuilder, SSE};
 use futures::TryStreamExt;
 use reqwest::{Response, Result};
@@ -8,7 +9,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use url::Url;
 use urlencoding::encode;
-use async_trait::async_trait;
 
 const BOOTSTRAP_SERVER_URL: &'static str = "http://localhost:8081";
 const SERVER_ATTESTATION_PUBKEY: &'static str =
@@ -157,10 +157,11 @@ impl<C: CoreClient> ServerCommImpl<C> {
                             SSE::Event(event) => {
                                 match event.event_type.as_str() {
                                     "otkey" => {
-                                        println!(
-                                   "got OTKEY event from server - {:?}",
-                                   task_idkey
-                                );
+                                        //        println!(
+                                        //   "got OTKEY event from server -
+                                        // {:?}",
+                                        //   task_idkey
+                                        //);
                                         if let Some(ref core) = core_option {
                                             core.server_comm_callback(Ok(
                                                 Event::Otkey,
@@ -193,7 +194,9 @@ impl<C: CoreClient> ServerCommImpl<C> {
                                                 )
                                                 .unwrap();
                                             // TODO: handle lost epochs
-                                            println!("MessageBatch for epochs {} to {}", emb.start_epoch_id, emb.end_epoch_id);
+                                            //println!("MessageBatch for epochs
+                                            // {} to {}", emb.start_epoch_id,
+                                            // emb.end_epoch_id);
 
                                             let attestation = Attestation::from_bytes(&emb.attestation).expect("Failed to parse attestation payload");
                                             assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
@@ -274,7 +277,8 @@ impl<C: CoreClient> ServerComm for ServerCommImpl<C> {
                 return res.json().await;
             } else {
                 retry_count += 1;
-                println!("Failed to fetch otkey for client_id \"\", retrying in 1 sec...");
+                //println!("Failed to fetch otkey for client_id \"\", retrying
+                // in 1 sec...");
                 sleep(Duration::from_secs(1)).await;
             }
         }

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
@@ -52,6 +53,7 @@ pub trait CoreClient: Sync + Send + 'static {
         seq: SequenceNumber,
         sender: String,
         message: String,
+        bench: bool,
     );
 }
 
@@ -66,7 +68,15 @@ pub struct Core<C: CoreClient> {
     incoming_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
     oq_cv: Condvar,
     iq_cv: Condvar,
-    common_ct_size_filename: Option<&'static str>,
+    bandwidth_filename: Option<&'static str>,
+    benchmark_send: Arc<RwLock<Option<usize>>>,
+    benchmark_recv: Arc<RwLock<Option<usize>>>,
+    ts_send: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    ts_recv: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    ctr_check_send: Arc<Mutex<usize>>,
+    ctr_check_recv: Arc<Mutex<usize>>,
+    send_filename: String,
+    recv_filename: String,
 }
 
 impl<C: CoreClient> Core<C> {
@@ -74,8 +84,12 @@ impl<C: CoreClient> Core<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
-        common_ct_size_filename: Option<&'static str>,
+        benchmark_sends: Option<usize>,
+        benchmark_recvs: Option<usize>,
+        bandwidth_filename: Option<&'static str>,
         client: Option<Arc<C>>,
+        send_filename: String,
+        recv_filename: String,
     ) -> Arc<Core<C>> {
         let crypto = Crypto::new(turn_encryption_off);
         let idkey = crypto.get_idkey();
@@ -85,6 +99,12 @@ impl<C: CoreClient> Core<C> {
         // server_comm (no trait needed b/c only one implementation
         // will ever be used, at least at this point) - which is why
         // Core::new() should return Arc<Core<C>>
+
+        //if benchmark.is_none() {
+        //    ts = None;
+        //} else {
+        //    ts = Some(Vec::<Instant>::new());
+        //}
 
         let arc_core = Arc::new(Core {
             crypto,
@@ -101,7 +121,19 @@ impl<C: CoreClient> Core<C> {
             )),
             oq_cv: Condvar::new(),
             iq_cv: Condvar::new(),
-            common_ct_size_filename,
+            bandwidth_filename,
+            benchmark_send: Arc::new(RwLock::new(benchmark_sends)),
+            benchmark_recv: Arc::new(RwLock::new(benchmark_recvs)),
+            ts_send: Arc::new(Mutex::new(
+                Vec::<(usize, String, Instant)>::new(),
+            )),
+            ts_recv: Arc::new(Mutex::new(
+                Vec::<(usize, String, Instant)>::new(),
+            )),
+            ctr_check_send: Arc::new(Mutex::new(0)),
+            ctr_check_recv: Arc::new(Mutex::new(0)),
+            send_filename,
+            recv_filename,
         });
 
         {
@@ -135,7 +167,16 @@ impl<C: CoreClient> Core<C> {
         &self,
         dst_idkeys: Vec<String>,
         payload: &String,
+        bench: bool,
     ) -> reqwest::Result<reqwest::Response> {
+        if bench && self.benchmark_send.read().await.is_some() {
+            self.ts_send.lock().await.push((
+                self.benchmark_send.read().await.unwrap(),
+                String::from("enter POVS"),
+                Instant::now(),
+            ));
+        }
+
         loop {
             let init = self.init.lock();
             if !*init {
@@ -144,20 +185,13 @@ impl<C: CoreClient> Core<C> {
                 break;
             }
         }
-        println!("--in send_message");
-        println!("sender: {:?}", self.idkey());
-        println!("dst_idkeys: {:?}", &dst_idkeys);
-        println!("serialized payload: {:?}", bincode::serialize(payload).unwrap());
 
-        println!("---hv.prepare_message");
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         let (common_payload, val_payloads) = hash_vectors_guard
             .prepare_message(
                 dst_idkeys.clone(),
                 bincode::serialize(payload).unwrap(),
             );
-        println!("common payload: {:?}", &common_payload);
-        println!("val_payloads: {:?}", &val_payloads);
 
         // bandwidth measurements
         //println!(
@@ -185,22 +219,53 @@ impl<C: CoreClient> Core<C> {
 
         core::mem::drop(hash_vectors_guard);
 
+        if bench && self.benchmark_send.read().await.is_some() {
+            self.ts_send.lock().await.push((
+                self.benchmark_send.read().await.unwrap(),
+                String::from("enter ENC"),
+                Instant::now(),
+            ));
+        }
+
         // symmetrically encrypt common_payload once
-        println!("---crypto.symmetric_encrypt");
         let (common_ct, key, iv) = self
             .crypto
             .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
-        println!("common_ct: {:?}", &common_ct);
-        println!("key: {:?}", &key);
-        println!("iv: {:?}", &iv);
 
-        if let Some(filename) = &self.common_ct_size_filename {
+        if let Some(filename) = &self.bandwidth_filename {
             let mut f = File::options()
                 .append(true)
                 .create(true)
                 .open(filename)
                 .unwrap();
-            write!(f, "{}\n", common_ct.clone().len());
+            write!(f, "--------------------------\n");
+            write!(f, "op: {}\n", payload);
+            write!(f, "sender: {}\n", self.idkey());
+            write!(f, "#recipients: {}\n", &dst_idkeys.len());
+            let num_op_pt_bytes =
+                bincode::serialize(payload).unwrap().len() as f64;
+            let num_common_pt_bytes =
+                bincode::serialize(&common_payload).unwrap().len() as f64;
+            let num_common_ct_bytes = common_ct.len() as f64;
+            //let rcpt_list_len_diff = num_common_pt_bytes - num_op_pt_bytes;
+            let rcpt_list_perc: f64 =
+                (num_common_pt_bytes / num_op_pt_bytes) * 100.0;
+            //let symenc_len_diff = num_common_ct_bytes - num_common_pt_bytes;
+            let symenc_perc: f64 =
+                (num_common_ct_bytes / num_common_pt_bytes) * 100.0;
+            //let total_len_diff = num_common_ct_bytes - num_op_pt_bytes;
+            let both_perc: f64 =
+                (num_common_ct_bytes / num_op_pt_bytes) * 100.0;
+            write!(f, "---common overhead\n");
+            write!(f, "#op_pt_bytes: {}\n", &num_op_pt_bytes);
+            write!(f, "#common_pt_bytes: {}\n", &num_common_pt_bytes);
+            write!(f, "#common_ct_bytes: {}\n", &num_common_ct_bytes);
+            //write!(f, "rcpt_list_len_diff: {}\n", &rcpt_list_len_diff);
+            write!(f, "rcpt_list %: {}\n", &rcpt_list_perc);
+            //write!(f, "symenc_len_diff: {}\n", &symenc_len_diff);
+            write!(f, "symenc %: {}\n", &symenc_perc);
+            //write!(f, "total_len_diff: {}\n", &total_len_diff);
+            write!(f, "both %: {}\n", &both_perc);
         }
 
         // Can't use .iter().map().collect() due to async/await
@@ -213,40 +278,55 @@ impl<C: CoreClient> Core<C> {
             //    &val_payload.validation_digest.map_or(0, |x| x.len())
             //);
 
-            println!("\nLOOP");
-            println!("idkey: {:?}", &idkey);
-            println!("per_rcpt_pt: {:?}",
-                &bincode::serialize(&PerRecipientPayload::new(
-                    val_payload.clone(),
-                    key,
-                    iv,
-                ))
-                .unwrap()
-            );
-            println!("---crypto.session_encrypt");
+            let perrcpt_pt =
+                &PerRecipientPayload::new(val_payload.clone(), key, iv);
             let (c_type, ciphertext) = self
                 .crypto
                 .session_encrypt(
                     self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
-                    bincode::serialize(&PerRecipientPayload::new(
-                        val_payload,
-                        key,
-                        iv,
-                    ))
-                    .unwrap(),
+                    bincode::serialize(&perrcpt_pt).unwrap(),
                 )
                 .await;
-            println!("per_rcpt_ct: {:?}", &ciphertext);
-
-            // bandwidth measurements
-            //let sessionlock = self.crypto.sessions.lock();
-            //if let Some(val) = sessionlock.get(&idkey) {
-            //    let session = &val.1[0];
-            //    let pickled = session.pickle(olm_rs::PicklingMode::Unencrypted);
-            //    println!("pickled session: {:?}", &pickled);
-            //    println!("pickled session len: {:?}", &pickled.len());
-            //}
+            if let Some(filename) = &self.bandwidth_filename {
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(filename)
+                    .unwrap();
+                write!(f, "---per recipient overhead\n");
+                if idkey.clone() == self.idkey() {
+                    write!(f, "RCPT == SELF: {}\n", &idkey);
+                } else {
+                    write!(f, "RCPT == OTHER: {}\n", &idkey);
+                }
+                write!(f, "val_pt: {:?}\n", &val_payload);
+                write!(f, "perrcpt_pt: {:?}\n", &perrcpt_pt);
+                let num_val_pt_bytes =
+                    bincode::serialize(&val_payload).unwrap().len() as f64;
+                let num_perrcpt_pt_bytes =
+                    bincode::serialize(&perrcpt_pt).unwrap().len() as f64;
+                let num_perrcpt_ct_bytes = ciphertext.len() as f64;
+                //let num_perrcpt_len_diff = num_perrcpt_ct_bytes -
+                // num_perrcpt_pt_bytes;
+                let perrcpt_perc: f64 =
+                    (num_perrcpt_ct_bytes / num_perrcpt_pt_bytes) * 100.0;
+                write!(f, "#val_pt_bytes: {}\n", &num_val_pt_bytes);
+                write!(f, "#perrcpt_pt_bytes: {}\n", &num_perrcpt_pt_bytes);
+                write!(f, "#perrcpt_ct_bytes: {}\n", &num_perrcpt_ct_bytes);
+                //write!(f, "num_perrcpt_len_diff: {}\n",
+                // &num_perrcpt_len_diff);
+                write!(f, "perrcpt %: {}\n", &perrcpt_perc);
+                // storage measurements
+                let sessionlock = self.crypto.sessions.lock();
+                if let Some(val) = sessionlock.get(&idkey) {
+                    let session = &val.1[0];
+                    let pickled =
+                        session.pickle(olm_rs::PicklingMode::Unencrypted);
+                    write!(f, "--storage overhead\n");
+                    write!(f, "pickled session len: {:?}\n", &pickled.len());
+                }
+            }
 
             // Ensure we're never encrypting to the same key twice
             assert!(encrypted_per_recipient_payloads
@@ -258,6 +338,7 @@ impl<C: CoreClient> Core<C> {
         }
 
         let encrypted_message = EncryptedOutboxMessage {
+            bench,
             enc_common: EncryptedCommonPayload(common_ct),
             enc_recipients: encrypted_per_recipient_payloads,
         };
@@ -273,7 +354,30 @@ impl<C: CoreClient> Core<C> {
             }
         }
 
-        println!("--going into server_comm");
+        if bench && self.benchmark_send.read().await.is_some() {
+            self.ts_send.lock().await.push((
+                self.benchmark_send.read().await.unwrap(),
+                String::from("exit CORE"),
+                Instant::now(),
+            ));
+            let mut ctr_check_guard = self.ctr_check_send.lock().await;
+            *ctr_check_guard += 1;
+            let cur_count = self.benchmark_send.read().await.unwrap();
+            if cur_count == 1 {
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(&self.send_filename)
+                    .unwrap();
+                let vec = self.ts_send.lock().await;
+                for entry in vec.iter() {
+                    write!(f, "{:?}\n", entry);
+                }
+            } else if cur_count > 1 {
+                *self.benchmark_send.write().await = Some(cur_count - 1);
+            }
+            //println!("core ctr_check_send: {:?}", ctr_check_guard);
+        }
 
         self.server_comm
             .read()
@@ -312,6 +416,14 @@ impl<C: CoreClient> Core<C> {
                 }
             }
             Ok(Event::Msg(msg)) => {
+                if msg.bench && self.benchmark_recv.read().await.is_some() {
+                    self.ts_recv.lock().await.push((
+                        self.benchmark_recv.read().await.unwrap(),
+                        String::from("enter DECR"),
+                        Instant::now(),
+                    ));
+                }
+
                 let decrypted_per_recipient = self.crypto.session_decrypt(
                     &msg.sender,
                     msg.enc_recipient.c_type,
@@ -327,6 +439,14 @@ impl<C: CoreClient> Core<C> {
                 );
                 let common_payload: CommonPayload =
                     bincode::deserialize(&decrypted_common).unwrap();
+
+                if msg.bench && self.benchmark_recv.read().await.is_some() {
+                    self.ts_recv.lock().await.push((
+                        self.benchmark_recv.read().await.unwrap(),
+                        String::from("enter POVS"),
+                        Instant::now(),
+                    ));
+                }
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released
@@ -407,6 +527,32 @@ impl<C: CoreClient> Core<C> {
                     }
                 }
 
+                if msg.bench && self.benchmark_recv.read().await.is_some() {
+                    self.ts_recv.lock().await.push((
+                        self.benchmark_recv.read().await.unwrap(),
+                        String::from("exit CORE"),
+                        Instant::now(),
+                    ));
+                    let mut ctr_check_guard = self.ctr_check_recv.lock().await;
+                    *ctr_check_guard += 1;
+                    let cur_count = self.benchmark_recv.read().await.unwrap();
+                    if cur_count == 1 {
+                        let mut f = File::options()
+                            .append(true)
+                            .create(true)
+                            .open(&self.recv_filename)
+                            .unwrap();
+                        let vec = self.ts_recv.lock().await;
+                        for entry in vec.iter() {
+                            write!(f, "{:?}\n", entry);
+                        }
+                    } else if cur_count > 1 {
+                        *self.benchmark_recv.write().await =
+                            Some(cur_count - 1);
+                    }
+                    //println!("core ctr_check_recv: {:?}", ctr_check_guard);
+                }
+
                 match parsed_res {
                     // No message to forward
                     Ok(None) => {}
@@ -422,6 +568,7 @@ impl<C: CoreClient> Core<C> {
                                 msg.sender.clone(),
                                 bincode::deserialize::<String>(&message)
                                     .unwrap(),
+                                msg.bench,
                             )
                             .await;
 
@@ -486,6 +633,7 @@ pub mod stream_client {
             seq: crate::core::SequenceNumber,
             sender: String,
             message: String,
+            bench: bool,
         ) {
             use futures::SinkExt;
             self.sender
@@ -525,8 +673,7 @@ mod tests {
         let (client, mut receiver) = StreamClient::new();
         let arc_client = Arc::new(client);
         let arc_core: Arc<Core<StreamClient>> =
-            Core::new(None, None, false, Some("commons.txt"), Some(arc_client))
-                .await;
+            Core::new(None, None, false, None, Some(arc_client)).await;
 
         let idkeys = arc_core.crypto.account.lock().identity_keys();
         let pickled = arc_core

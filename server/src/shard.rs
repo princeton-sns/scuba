@@ -8,7 +8,7 @@ use actix_web::{
 };
 use serde::{Deserialize, Serialize};
 
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
@@ -2414,11 +2414,17 @@ pub async fn init(
     // other shards to attempt to connect already:
     let isb_socket_listener: Option<TcpListener> =
         if let Some((ref port, ref _addr)) = isb_socket {
-            Some(
-                TcpListener::bind(&format!("0.0.0.0:{}", port))
-                    .await
-                    .unwrap(),
-            )
+            let socket = TcpSocket::new_v4().unwrap();
+            socket.set_reuseaddr(true).unwrap();
+            socket.set_reuseport(true).unwrap();
+            socket
+                .bind(std::net::SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    *port,
+                ))
+                .unwrap();
+
+            Some(socket.listen(1024).unwrap())
         } else {
             None
         };

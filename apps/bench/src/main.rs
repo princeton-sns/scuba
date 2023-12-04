@@ -332,10 +332,10 @@ impl PasswordManager {
 
 #[tokio::main]
 async fn main() {
-    for num_clients in [4] { //[1, 2, 4, 8, 16, 32] {
+    for num_clients in [1, 2, 4, 8, 16, 32] {
         println!("Running {} clients", &num_clients);
-        let num_warmup = 10;
-        let num_runs = 40;
+        let num_warmup = 1000;
+        let num_runs = 10000;
         let total_runs = num_runs + num_warmup;
 
         let dirname = "/update_pass_output";
@@ -379,7 +379,8 @@ async fn main() {
         println!("num_dal_recv: {}", &num_dal_recv);
 
         let bw_out = "bw_pm.txt";
-        String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs, &num_clients)); let mut f_bw = File::options()
+       // String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs, &num_clients)); 
+        let mut f_bw = File::options()
             .append(true)
             .create(true)
             .open(bw_out)
@@ -389,7 +390,7 @@ async fn main() {
 
         let mut clients = HashMap::new();
         let sender = PasswordManager::new(
-            Some(bw_out),
+            None, //Some(bw_out),
             Some(num_core_send),
             Some(num_core_recv),
             Some(total_runs),

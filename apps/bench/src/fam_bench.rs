@@ -1,4 +1,6 @@
-use passwords::PasswordGenerator;
+//use passwords::PasswordGenerator;
+use chrono::offset::Utc;
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use single_key_dal::client::Error;
 use single_key_dal::client::NoiseKVClient;
@@ -10,10 +12,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
+use std::collections::BTreeMap;
 
 const MEMBER_PREFIX: &str = "member";
 const FAM_PREFIX: &str = "family";
 const POST_PREFIX: &str = "post";
+
+const MAX_CHAR: usize = 400;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Family {
@@ -76,7 +81,7 @@ struct FamilyApp {
 
 impl FamilyApp {
     pub async fn new(
-        filename_opt: Option<&'static str>,
+        bw_filename_opt: Option<&'static str>,
         num_send: Option<usize>,
         num_recv: Option<usize>,
         total_runs: Option<usize>,
@@ -92,7 +97,7 @@ impl FamilyApp {
             None,
             None,
             false,
-            None, //filename_opt,
+            bw_filename_opt,
             None,
             None,
             // closed loop
@@ -115,28 +120,29 @@ impl FamilyApp {
         .await;
         client.create_standalone_device().await;
 
-        // set post length invariant callback
-        let device_guard = client.device.read();
-        let mut data_store_guard =
-            device_guard.as_ref().unwrap().data_store.write();
-        data_store_guard.validator().set_validate_callback_for_type(
-            POST_PREFIX.to_string(),
-            |_, val| {
-                let post: Post = serde_json::from_str(val.data_val()).unwrap();
-                if post.contents.len() > 200 {
-                    return false;
-                }
-                true
-            },
-        );
-        core::mem::drop(data_store_guard);
-
         Self {
             client,
             ts: Arc::new(Mutex::new(Vec::<(usize, String, Instant)>::new())),
             run_ctr: Arc::new(RwLock::new(total_runs)),
             app_filename,
         }
+    }
+
+    pub async fn init_device(&self) {
+        // set post length invariant callback
+        let device_guard = self.client.device.read();
+        let mut data_store_guard =
+            device_guard.as_ref().unwrap().data_store.write();
+        data_store_guard.validator().set_validate_callback_for_type(
+            POST_PREFIX.to_string(),
+            |_, val| {
+                let post: Post = serde_json::from_str(val.data_val()).unwrap();
+                if post.contents.len() > MAX_CHAR {
+                    return false;
+                }
+                true
+            },
+        );
     }
 
     pub async fn add_contact(&self, idkey: String) -> Result<(), Error> {
@@ -178,7 +184,7 @@ impl FamilyApp {
     ) -> Result<(), Error> {
         let fam_obj = self.client.get_data(&fam_id).await.unwrap().unwrap();
         let mut fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
-        fam.add_member(contact_name);
+        fam.add_member(&contact_name);
         let fam_json = serde_json::to_string(&fam).unwrap();
         let mut res = self
             .client
@@ -195,7 +201,7 @@ impl FamilyApp {
             return Err(res.err().unwrap());
         }
 
-        let sharees = vec![contact_name];
+        let sharees = vec![&contact_name];
         res = self.client.add_writers(fam_id, sharees).await;
         if res.is_err() {
             return Err(res.err().unwrap());
@@ -203,87 +209,35 @@ impl FamilyApp {
         Ok(())
     }
 
-    pub async fn post_to_family(
+    pub async fn edit_post(
         &self,
-        fam_id: String,
-        contents: String,
+        post_id: String,
+        new_contents: String,
     ) -> Result<(), Error> {
         let idx = self.run_ctr.read().await.unwrap();
-        let fam_obj = self.client.get_data(&fam_id).await.unwrap().unwrap();
+
+        let mut post_obj: Post = serde_json::from_str(
+            self.client.get_data(&post_id).await.unwrap().unwrap().data_val(),
+        ).unwrap();
 
         self.ts.lock().await.push((
             idx,
-            String::from("enter post"),
+            String::from("enter edit"),
             Instant::now(),
         ));
 
-        // create post
-        let post_id = Self::new_prefixed_id(&POST_PREFIX.to_owned());
-        let post = Post::new(fam_id, contents);
-        let post_json = serde_json::to_string(&post).unwrap();
-
-        self.ts.lock().await.push((
-            idx,
-            String::from("enter DAL"),
-            Instant::now(),
-        ));
-        let mut res = self
-            .client
-            .set_data(
-                post_id,
-                POST_PREFIX.to_owned(),
-                post_json,
-                None,
-                None,
-                true,
-            )
-            .await;
-        self.ts.lock().await.push((
-            idx,
-            String::from("exit DAL"),
-            Instant::now(),
-        ));
-        if res.is_err() {
-            return res.err().unwrap();
-        }
-
-        // share post
-        let mut fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
-        let self_name = self.client.linked_name();
-        let sharees = fam
-            .members
-            .iter()
-            .filter(|&x| *x != self_name)
-            .collect::<Vec<&String>>();
+        post_obj.contents = new_contents;
+        let json_string = serde_json::to_string(&post_obj).unwrap();
 
         self.ts.lock().await.push((
             idx,
             String::from("enter DAL"),
             Instant::now(),
         ));
-        res = self.client.add_readers(post_id.clone(), sharees).await;
-        self.ts.lock().await.push((
-            idx,
-            String::from("exit DAL"),
-            Instant::now(),
-        ));
-        if res.is_err() {
-            return res.err().unwrap();
-        }
-
-        // add post to family obj
-        fam.add_post(post.creation_time(), post_id.clone());
-        let fam_json = serde_json::to_string(&fam).unwrap();
-
-        self.ts.lock().await.push((
-            idx,
-            String::from("enter DAL"),
-            Instant::now(),
-        ));
-        res = self.client.set_data(
-            fam_id.clone(),
-            FAM_PREFIX.to_owned(),
-            fam_json,
+        let res = self.client.set_data(
+            post_id.clone(),
+            POST_PREFIX.to_owned(),
+            json_string,
             None,
             None,
             true
@@ -294,10 +248,9 @@ impl FamilyApp {
             Instant::now(),
         ));
 
-        // finish
         self.ts.lock().await.push((
             idx,
-            String::from("exit post"),
+            String::from("exit edit"),
             Instant::now(),
         ));
         if idx == 1 {
@@ -314,48 +267,106 @@ impl FamilyApp {
             *self.run_ctr.write().await = Some(idx - 1);
         }
         if res.is_err() {
-            return Err(res.err().unwrap());
+            return res;
         }
         Ok(())
+    }
+
+    pub async fn post_to_family(
+        &self,
+        fam_id: String,
+        contents: String,
+    ) -> Result<String, Error> {
+        let fam_obj = self.client.get_data(&fam_id).await.unwrap().unwrap();
+
+        // create post
+        let post_id = Self::new_prefixed_id(&POST_PREFIX.to_owned());
+        let post = Post::new(&fam_id, &contents);
+        let post_json = serde_json::to_string(&post).unwrap();
+
+        let mut res = self
+            .client
+            .set_data(
+                post_id.clone(),
+                POST_PREFIX.to_owned(),
+                post_json,
+                None,
+                None,
+                false,
+            )
+            .await;
+        if res.is_err() {
+            return Err(res.err().unwrap());
+        }
+
+        // share post
+        let mut fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
+        let self_name = self.client.linked_name();
+        let sharees = fam
+            .members
+            .iter()
+            .filter(|&x| *x != self_name)
+            .collect::<Vec<&String>>();
+
+        res = self.client.add_readers(post_id.clone(), sharees).await;
+        if res.is_err() {
+            return Err(res.err().unwrap());
+        }
+
+        // add post to family obj
+        fam.add_post(post.creation_time(), post_id.clone());
+        let fam_json = serde_json::to_string(&fam).unwrap();
+
+        res = self.client.set_data(
+            fam_id.clone(),
+            FAM_PREFIX.to_owned(),
+            fam_json,
+            None,
+            None,
+            false
+        ).await;
+
+        Ok(post_id)
     }
 }
 
 #[tokio::main]
 async fn main() {
-    for num_clients in [3] {
-        //2, 4, 8, 16, 32] {
+    for num_clients in [1, 2, 4, 8, 16, 32] {
         println!("Running {} clients", &num_clients);
-        let num_warmup = 0;
-        let num_runs = 1;
+        let num_warmup = 100;
+        let num_runs = 1000;
         let total_runs = num_runs + num_warmup;
 
+        let dirname = "/debug_edit_post_output";
+
         let send_filename = String::from(format!(
-            "{}c_{}r_ts_core_send.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_core_send.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let recv_filename = String::from(format!(
-            "{}c_{}r_ts_core_recv.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_core_recv.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let app_filename = String::from(format!(
-            "{}c_{}r_ts_app.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_app.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_send_filename = String::from(format!(
-            "{}c_{}r_ts_dal_send.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_send.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_update = String::from(format!(
-            "{}c_{}r_ts_dal_recv_update.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_recv_update.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_dummy = String::from(format!(
-            "{}c_{}r_ts_dal_recv_dummy.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_recv_dummy.txt",
+            &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_other = String::from(format!(
-            "{}c_{}r_ts_dal_recv_other.txt",
-            &num_clients, &num_runs
+            ".{}/{}c_{}r_ts_dal_recv_other.txt",
+            &dirname, &num_clients, &num_runs
         ));
 
         let num_core_send = 2 * total_runs;
@@ -367,7 +378,7 @@ async fn main() {
         println!("num_dal_send: {}", &num_dal_send);
         println!("num_dal_recv: {}", &num_dal_recv);
 
-        //let bw_out = "bw_pm.txt";
+        let bw_out = "bw_pm.txt";
         //String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs,
         // &num_clients)); let mut f_bw = File::options()
         //    .append(true)
@@ -379,7 +390,7 @@ async fn main() {
 
         let mut clients = HashMap::new();
         let sender = FamilyApp::new(
-            None,
+            None, //Some(bw_out),
             Some(num_core_send),
             Some(num_core_recv),
             Some(total_runs),
@@ -432,16 +443,19 @@ async fn main() {
         }
 
         for (name, _) in clients.values() {
-            sender.add_to_family(fam_id.clone(), vec![name]).await;
+            sender.add_to_family(fam_id.clone(), name.clone()).await;
         }
-        // wait for write to propagate
-        //std::thread::sleep(std::time::Duration::from_millis(100));
 
-        // TODO create random post string of X characters
+        let first_post = "X".repeat(MAX_CHAR);
+        let edited_post = "O".repeat(MAX_CHAR);
+
+        let post_id = sender.post_to_family(fam_id.clone(), first_post).await.unwrap();
+        // wait for write to propagate
+        std::thread::sleep(std::time::Duration::from_millis(50));
 
         for run in 0..total_runs {
             sender
-                .post_to_familiy(fam_id.clone(), String::from("j8/#k$ddno2"))
+                .edit_post(post_id.clone(), edited_post.clone())
                 .await;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

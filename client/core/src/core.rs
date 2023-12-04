@@ -222,7 +222,7 @@ impl<C: CoreClient> Core<C> {
         if bench && self.benchmark_send.read().await.is_some() {
             self.ts_send.lock().await.push((
                 self.benchmark_send.read().await.unwrap(),
-                String::from("enter ENC"),
+                String::from("enter SYMENC"),
                 Instant::now(),
             ));
         }
@@ -266,6 +266,14 @@ impl<C: CoreClient> Core<C> {
             write!(f, "symenc %: {}\n", &symenc_perc);
             //write!(f, "total_len_diff: {}\n", &total_len_diff);
             write!(f, "both %: {}\n", &both_perc);
+        }
+
+        if bench && self.benchmark_send.read().await.is_some() {
+            self.ts_send.lock().await.push((
+                self.benchmark_send.read().await.unwrap(),
+                String::from("enter SESSENC"),
+                Instant::now(),
+            ));
         }
 
         // Can't use .iter().map().collect() due to async/await
@@ -419,7 +427,7 @@ impl<C: CoreClient> Core<C> {
                 if msg.bench && self.benchmark_recv.read().await.is_some() {
                     self.ts_recv.lock().await.push((
                         self.benchmark_recv.read().await.unwrap(),
-                        String::from("enter DECR"),
+                        String::from("enter SESSDECR"),
                         Instant::now(),
                     ));
                 }
@@ -429,6 +437,14 @@ impl<C: CoreClient> Core<C> {
                     msg.enc_recipient.c_type,
                     msg.enc_recipient.ciphertext,
                 );
+
+                if msg.bench && self.benchmark_recv.read().await.is_some() {
+                    self.ts_recv.lock().await.push((
+                        self.benchmark_recv.read().await.unwrap(),
+                        String::from("enter SYMDECR"),
+                        Instant::now(),
+                    ));
+                }
 
                 let per_recipient_payload: PerRecipientPayload =
                     bincode::deserialize(&decrypted_per_recipient).unwrap();

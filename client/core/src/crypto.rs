@@ -1,8 +1,5 @@
 use crate::core::CoreClient;
 use crate::server_comm::ServerComm;
-use aes::cipher::{
-    block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit,
-};
 use async_condvar_fair::Condvar;
 use olm_rs::account::{IdentityKeys, OlmAccount, OneTimeKeys};
 use olm_rs::session::{OlmMessage, OlmSession, PreKeyMessage};
@@ -14,9 +11,6 @@ use std::mem;
 // TODO sender-key optimization
 
 const NUM_OTKEYS: usize = 20;
-
-type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
-type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 // TODO persist natively
 pub struct Crypto {
@@ -30,7 +24,6 @@ pub struct Crypto {
     // risk b/c only one &mut self can be helf at a time, anyway
     pub sessions: Mutex<HashMap<String, (bool, Vec<OlmSession>)>>,
     sessions_cv: Condvar,
-    key: [u8; 16],
 }
 
 // TODO impl Error enum
@@ -39,8 +32,6 @@ impl Crypto {
     pub fn new(turn_encryption_off: bool) -> Self {
         let account = Mutex::new(OlmAccount::new());
         let idkeys = account.lock().parsed_identity_keys();
-        let mut key = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut key);
         Self {
             turn_encryption_off,
             idkeys,
@@ -48,41 +39,67 @@ impl Crypto {
             message_queue: Mutex::new(VecDeque::new()),
             sessions: Mutex::new(HashMap::new()),
             sessions_cv: Condvar::new(),
-            key,
         }
     }
 
     pub fn symmetric_encrypt(
         &self,
-        pt: Vec<u8>,
-    ) -> (Vec<u8>, [u8; 16], [u8; 16]) {
-        let mut iv = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut iv);
+        mut pt: Vec<u8>,
+    ) -> (Vec<u8>, [u8; 16], [u8; 32], [u8; 12]) {
+	use aes_gcm::{
+	    aead::{Aead, AeadInPlace, KeyInit, OsRng},
+	    Aes256Gcm, Nonce // Or `Aes128Gcm`
+	};
 
-        if self.turn_encryption_off {
-            return (pt, self.key, iv);
+	// Convert the plain text to bytes and short-circuit if encryption is
+	// disabled.
+	if self.turn_encryption_off {
+            return (pt, [0; 16], [0; 32], [0; 12]);
         }
 
-        let ct = Aes128CbcEnc::new(&self.key.into(), &iv.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(&pt);
+	let mut rng = rand::thread_rng();
 
-        (ct, self.key, iv)
+	let key = Aes256Gcm::generate_key(&mut rng);
+
+	let mut nonce = [0u8; 12];
+	rng.fill_bytes(&mut nonce);
+
+	// We may want to include additional context such as the sending user
+	// in the associated data:
+        let tag = Aes256Gcm::new(&key)
+	    .encrypt_in_place_detached(&nonce.into(), &[], &mut pt)
+	    .unwrap();
+
+	let mut key_arr = [0u8; 32];
+	key_arr.copy_from_slice(key.as_slice());
+
+	let mut tag_arr = [0u8; 16];
+	tag_arr.copy_from_slice(tag.as_slice());
+
+        (pt, tag_arr, key_arr, nonce)
     }
 
     pub fn symmetric_decrypt(
         &self,
-        ct: Vec<u8>,
-        key: [u8; 16],
-        iv: [u8; 16],
+        mut ct: Vec<u8>,
+        key: [u8; 32],
+	tag: [u8; 16],
+        nonce: [u8; 12],
     ) -> Vec<u8> {
+	use aes_gcm::{
+	    aead::{Aead, AeadInPlace, KeyInit, OsRng},
+	    Aes256Gcm, Nonce // Or `Aes128Gcm`
+	};
+
         if self.turn_encryption_off {
-            return ct;
+	    return ct;
         }
 
-        let pt = Aes128CbcDec::new(&key.into(), &iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
-            .unwrap();
-        pt
+	Aes256Gcm::new(&key.into())
+	    .decrypt_in_place_detached(&nonce.into(), &[], &mut ct, &tag.into())
+	    .unwrap();
+
+	ct
     }
 
     pub fn generate_otkeys(&self, num: Option<usize>) -> OneTimeKeys {

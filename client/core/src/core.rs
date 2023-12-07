@@ -18,33 +18,12 @@ use crate::server_comm::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerRecipientPayload {
     pub val_payload: ValidationPayload,
-    pub key: [u8; 16],
-    pub iv: [u8; 16],
+    pub key: [u8; 32],
+    pub tag: [u8; 16],
+    pub nonce: [u8; 12],
 }
 
 pub type SequenceNumber = u128;
-
-impl PerRecipientPayload {
-    pub fn new(
-        val_payload: ValidationPayload,
-        key: [u8; 16],
-        iv: [u8; 16],
-    ) -> PerRecipientPayload {
-        Self {
-            val_payload,
-            key,
-            iv,
-        }
-    }
-
-    fn key(&self) -> [u8; 16] {
-        self.key
-    }
-
-    fn iv(&self) -> [u8; 16] {
-        self.iv
-    }
-}
 
 #[async_trait]
 pub trait CoreClient: Sync + Send + 'static {
@@ -228,7 +207,7 @@ impl<C: CoreClient> Core<C> {
         }
 
         // symmetrically encrypt common_payload once
-        let (common_ct, key, iv) = self
+        let (common_ct, tag, key, nonce) = self
             .crypto
             .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
 
@@ -286,14 +265,19 @@ impl<C: CoreClient> Core<C> {
             //    &val_payload.validation_digest.map_or(0, |x| x.len())
             //);
 
-            let perrcpt_pt =
-                &PerRecipientPayload::new(val_payload.clone(), key, iv);
+	    let perrcpt_pt = PerRecipientPayload {
+                val_payload: val_payload.clone(),
+                key,
+                tag,
+		nonce,
+            };
             let (c_type, ciphertext) = self
                 .crypto
                 .session_encrypt(
                     self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
-                    bincode::serialize(&perrcpt_pt).unwrap(),
+                    bincode::serialize(&perrcpt_pt)
+                    .unwrap(),
                 )
                 .await;
             if let Some(filename) = &self.bandwidth_filename {
@@ -450,8 +434,9 @@ impl<C: CoreClient> Core<C> {
                     bincode::deserialize(&decrypted_per_recipient).unwrap();
                 let decrypted_common = self.crypto.symmetric_decrypt(
                     msg.enc_common.0,
-                    per_recipient_payload.key(),
-                    per_recipient_payload.iv(),
+                    per_recipient_payload.key,
+                    per_recipient_payload.tag,
+                    per_recipient_payload.nonce,
                 );
                 let common_payload: CommonPayload =
                     bincode::deserialize(&decrypted_common).unwrap();

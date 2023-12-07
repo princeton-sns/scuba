@@ -334,11 +334,11 @@ impl FamilyApp {
 async fn main() {
     for num_clients in [1, 2, 4, 8, 16, 32] {
         println!("Running {} clients", &num_clients);
-        let num_warmup = 100;
-        let num_runs = 1000;
+        let num_warmup = 1000;
+        let num_runs = 10000;
         let total_runs = num_runs + num_warmup;
 
-        let dirname = "/debug_edit_post_output";
+        let dirname = "/edit_post_output";
 
         let send_filename = String::from(format!(
             ".{}/{}c_{}r_ts_core_send.txt",

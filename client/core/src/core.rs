@@ -211,6 +211,7 @@ impl<C: CoreClient> Core<C> {
             .crypto
             .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
 
+        /*
         if let Some(filename) = &self.bandwidth_filename {
             let mut f = File::options()
                 .append(true)
@@ -246,6 +247,7 @@ impl<C: CoreClient> Core<C> {
             //write!(f, "total_len_diff: {}\n", &total_len_diff);
             write!(f, "both %: {}\n", &both_perc);
         }
+        */
 
         if bench && self.benchmark_send.read().await.is_some() {
             self.ts_send.lock().await.push((
@@ -280,6 +282,23 @@ impl<C: CoreClient> Core<C> {
                     .unwrap(),
                 )
                 .await;
+
+            //println!("op: {}\n", payload);
+            //if idkey.clone() == self.idkey() {
+            //    println!("RCPT == SELF: {}\n", &idkey);
+            //} else {
+            //    println!("RCPT == OTHER: {}\n", &idkey);
+            //}
+            //let num_val_pt_bytes =
+            //    bincode::serialize(&val_payload).unwrap().len() as f64;
+            //let num_perrcpt_pt_bytes =
+            //    bincode::serialize(&perrcpt_pt).unwrap().len() as f64;
+            //let num_perrcpt_ct_bytes = ciphertext.len() as f64;
+            //println!("#val_pt_bytes: {}\n", &num_val_pt_bytes);
+            //println!("#perrcpt_pt_bytes: {}\n", &num_perrcpt_pt_bytes);
+            //println!("#perrcpt_ct_bytes: {}\n", &num_perrcpt_ct_bytes);
+
+            /*
             if let Some(filename) = &self.bandwidth_filename {
                 let mut f = File::options()
                     .append(true)
@@ -319,6 +338,7 @@ impl<C: CoreClient> Core<C> {
                     write!(f, "pickled session len: {:?}\n", &pickled.len());
                 }
             }
+            */
 
             // Ensure we're never encrypting to the same key twice
             assert!(encrypted_per_recipient_payloads

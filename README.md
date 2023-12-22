@@ -2,7 +2,7 @@
 
 SCUBA provides a general programming and communication model for applications that fit a client-based architecture. Fitting applications are those in which that amount of data can fit on a single device, computation over data is relatively minimal, and data is shared across a relatively small number of devices. Examples of this are: health-tracking applications (e.g. period trackers), small-scale social media, games (e.g. chess), and IoT applications (e.g. smart light switches). 
 
-This repository consists of the SCUBA [core client library](https://github.com/princeton-sns/noise-rust/tree/main/client/core), SCUBA data abstraction layers (providing [single-key](https://github.com/princeton-sns/scuba/tree/main/client/single-key-dal)) and [transactional](https://github.com/princeton-sns/noise-rust/tree/main/client/serializable-noise-kv) consistency guarantees on top of a key-value store), and command-line SCUBA [applications](https://github.com/princeton-sns/noise-rust/tree/main/apps). 
+This repository consists of the SCUBA [core client library](https://github.com/princeton-sns/noise-rust/tree/main/client/core), SCUBA data abstraction layers (providing [single-key](https://github.com/princeton-sns/scuba/tree/main/client/single-key-dal) and [transactional](https://github.com/princeton-sns/noise-rust/tree/main/client/serializable-noise-kv) consistency guarantees on top of a key-value store), and command-line SCUBA [applications](https://github.com/princeton-sns/noise-rust/tree/main/apps). 
 
 The SCUBA [server](https://github.com/princeton-sns/scuba/tree/main/server) routes and orders all encrypted operations in the system, enabling offline communication and client validation of a host of consistency models.
 

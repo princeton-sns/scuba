@@ -24,7 +24,7 @@ Once those commands are successful, the server is up and running.
 
 ## Run each client app
 
-Each application client can be spun up by running `cargo run` in the relevant subdirectory. See the README in each application's subdirectory for specific instructions on how to interact with each application.
+Each application client can be spun up by running `cargo run` in the relevant subdirectory. See the README in each application's subdirectory for specific instructions on how to interact with each application. In general, once a client is spun up, typing `help` will print out the available application commands.
 
 # Apps Status
 

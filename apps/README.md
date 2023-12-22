@@ -1,3 +1,31 @@
+# How to Run One or More Apps
+
+## Start the SCUBA server
+
+In two separate windows, navigate to the top-level server directory:
+
+```sh
+cd ../server
+```
+
+In one window, start the sequencer: 
+
+```sh
+rm -rf epoch_log.txt && rm -rf persist-outbox/ && cargo run --release sequencer --port 8082 --shard-count 1
+```
+
+In the other window, start the shards:
+
+```sh
+cargo run --release shard --port 8081 --public-url "http://localhost:8081" --sequencer-url "http://localhost:8082" --inbox-count 1 --outbox-count 1
+```
+
+Once those commands are successful, the server is up and running.
+
+## Run each client app
+
+Each application client can be spun up by running `cargo run` in the relevant subdirectory. See the README in each application's subdirectory for specific instructions on how to interact with each application.
+
 # Apps Status
 
 ## Auctioning

@@ -1,6 +1,4 @@
-//use passwords::PasswordGenerator;
-use chrono::offset::Utc;
-use chrono::DateTime;
+use passwords::PasswordGenerator;
 use serde::{Deserialize, Serialize};
 use single_key_dal::client::Error;
 use single_key_dal::client::NoiseKVClient;
@@ -12,74 +10,75 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-use std::collections::BTreeMap;
 
-const MEMBER_PREFIX: &str = "member";
-const FAM_PREFIX: &str = "family";
-const POST_PREFIX: &str = "post";
-
-const MAX_CHAR: usize = 400;
+const CONFIG_PREFIX: &str = "config";
+const PASS_PREFIX: &str = "pass";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Family {
-    members: Vec<String>,
-    // for easy time-based ordering
-    posts: BTreeMap<DateTime<Utc>, String>,
+struct Password {
+    pub config_id: String,
+    username: String,
+    password: String,
+    otp_secret: String,
+    otp_counter: u64,
 }
 
-impl Family {
-    fn new(members: Vec<String>) -> Self {
-        Family {
-            members,
-            posts: BTreeMap::new(),
+impl Password {
+    fn new(
+        config_id: String,
+        username: String,
+        password: String,
+        otp_secret: String,
+    ) -> Self {
+        Password {
+            config_id,
+            username,
+            password,
+            otp_secret,
+            otp_counter: 0,
         }
-    }
-
-    fn add_member(&mut self, id: &String) {
-        self.members.push(id.to_string());
-    }
-
-    fn add_post(&mut self, post_time: DateTime<Utc>, post_id: String) {
-        self.posts.insert(post_time, post_id);
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Post {
-    family_id: String,
-    contents: String,
-    creation_time: DateTime<Utc>,
-    comments: BTreeMap<DateTime<Utc>, String>,
+struct Config {
+    config_id: String,
+    length: usize,
+    numbers: bool,
+    lowercase_letters: bool,
+    uppercase_letters: bool,
+    symbols: bool,
 }
 
-impl Post {
-    fn new(family_id: &String, contents: &String) -> Self {
-        Post {
-            family_id: family_id.to_string(),
-            contents: contents.to_string(),
-            creation_time: Utc::now(),
-            comments: BTreeMap::new(),
+impl Config {
+    fn new(
+        config_id: String,
+        length: usize,
+        numbers: bool,
+        lowercase_letters: bool,
+        uppercase_letters: bool,
+        symbols: bool,
+    ) -> Self {
+        Config {
+            config_id,
+            length,
+            numbers,
+            lowercase_letters,
+            uppercase_letters,
+            symbols,
         }
-    }
-
-    fn creation_time(&self) -> DateTime<Utc> {
-        self.creation_time
-    }
-
-    fn add_comment(&mut self, comment_time: DateTime<Utc>, comment_id: String) {
-        self.comments.insert(comment_time, comment_id);
     }
 }
 
 #[derive(Clone)]
-struct FamilyApp {
+struct PasswordManager {
     client: NoiseKVClient,
     ts: Arc<Mutex<Vec<(usize, String, Instant)>>>,
     run_ctr: Arc<RwLock<Option<usize>>>,
     app_filename: String,
 }
 
-impl FamilyApp {
+impl PasswordManager {
     pub async fn new(
         bw_filename_opt: Option<&'static str>,
         num_send: Option<usize>,
@@ -92,7 +91,7 @@ impl FamilyApp {
         dal_send_filename: String,
         dal_recv_filename_u: String,
         dal_recv_filename_d: String,
-    ) -> FamilyApp {
+    ) -> PasswordManager {
         let client = NoiseKVClient::new(
             None,
             None,
@@ -118,6 +117,7 @@ impl FamilyApp {
             dal_recv_filename_d,
         )
         .await;
+        //println!("ENTER DAL: {:?}", Instant::now());
         client.create_standalone_device().await;
 
         Self {
@@ -126,23 +126,6 @@ impl FamilyApp {
             run_ctr: Arc::new(RwLock::new(total_runs)),
             app_filename,
         }
-    }
-
-    pub async fn init_device(&self) {
-        // set post length invariant callback
-        let device_guard = self.client.device.read();
-        let mut data_store_guard =
-            device_guard.as_ref().unwrap().data_store.write();
-        data_store_guard.validator().set_validate_callback_for_type(
-            POST_PREFIX.to_string(),
-            |_, val| {
-                let post: Post = serde_json::from_str(val.data_val()).unwrap();
-                if post.contents.len() > MAX_CHAR {
-                    return false;
-                }
-                true
-            },
-        );
     }
 
     pub async fn add_contact(&self, idkey: String) -> Result<(), Error> {
@@ -156,16 +139,33 @@ impl FamilyApp {
         id
     }
 
-    pub async fn init_family(&self) -> Result<String, Error> {
-        let id = Self::new_prefixed_id(&FAM_PREFIX.to_string());
-        let fam = Family::new(vec![self.client.linked_name()]);
-        let json_fam = serde_json::to_string(&fam).unwrap();
+    pub async fn config_app_password(
+        &self,
+        app_name: String,
+        length: usize,
+        numbers: bool,
+        lowercase: bool,
+        uppercase: bool,
+        symbols: bool,
+    ) -> Result<String, Error> {
+        let config = Config::new(
+            app_name.clone(),
+            length,
+            numbers,
+            lowercase,
+            uppercase,
+            symbols,
+        );
+        let mut id: String = CONFIG_PREFIX.to_owned();
+        id.push_str("/");
+        id.push_str(&app_name);
+        let json_string = serde_json::to_string(&config).unwrap();
         let res = self
             .client
             .set_data(
                 id.clone(),
-                FAM_PREFIX.to_owned(),
-                json_fam,
+                CONFIG_PREFIX.to_string(),
+                json_string,
                 None,
                 None,
                 false,
@@ -173,25 +173,48 @@ impl FamilyApp {
             .await;
         if res.is_err() {
             return Err(res.err().unwrap());
+        } else {
+            return Ok(id);
         }
-        Ok(id)
     }
 
-    pub async fn add_to_family(
+    async fn gen_password_from_config(&self, config_id: &String) -> String {
+        let config_opt = self.client.get_data(&config_id).await;
+        let config = config_opt.unwrap().unwrap().clone();
+        let config_obj: Config =
+            serde_json::from_str(config.data_val()).unwrap();
+        // this is horrible for perf?
+        let pgi = PasswordGenerator::new()
+            .length(config_obj.length)
+            .numbers(config_obj.numbers)
+            .lowercase_letters(config_obj.lowercase_letters)
+            .uppercase_letters(config_obj.uppercase_letters)
+            .symbols(config_obj.symbols);
+        pgi.try_iter().unwrap().next().unwrap()
+    }
+
+    pub async fn add_password(
         &self,
-        fam_id: String,
-        contact_name: String,
-    ) -> Result<(), Error> {
-        let fam_obj = self.client.get_data(&fam_id).await.unwrap().unwrap();
-        let mut fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
-        fam.add_member(&contact_name);
-        let fam_json = serde_json::to_string(&fam).unwrap();
-        let mut res = self
+        config_id: &String,
+        username: String,
+        otp_secret: String,
+        password: String,
+    ) -> Result<String, Error> {
+        //let password = self.gen_password_from_config(config_id).await;
+        let pass_info = Password::new(
+            config_id.to_string(),
+            username,
+            password,
+            otp_secret,
+        );
+        let id = Self::new_prefixed_id(&PASS_PREFIX.to_string());
+        let json_string = serde_json::to_string(&pass_info).unwrap();
+        let res = self
             .client
             .set_data(
-                fam_id.clone(),
-                FAM_PREFIX.to_owned(),
-                fam_json,
+                id.clone(),
+                PASS_PREFIX.to_string(),
+                json_string,
                 None,
                 None,
                 false,
@@ -199,49 +222,50 @@ impl FamilyApp {
             .await;
         if res.is_err() {
             return Err(res.err().unwrap());
+        } else {
+            return Ok(id);
         }
-
-        let sharees = vec![&contact_name];
-        res = self.client.add_writers(fam_id, sharees).await;
-        if res.is_err() {
-            return Err(res.err().unwrap());
-        }
-        Ok(())
     }
 
-    pub async fn edit_post(
+    pub async fn update_password(
         &self,
-        post_id: String,
-        new_contents: String,
+        id: String,
+        password: String,
     ) -> Result<(), Error> {
         let idx = self.run_ctr.read().await.unwrap();
 
-        let mut post_obj: Post = serde_json::from_str(
-            self.client.get_data(&post_id).await.unwrap().unwrap().data_val(),
-        ).unwrap();
+        let mut password_obj: Password = serde_json::from_str(
+            self.client.get_data(&id).await.unwrap().unwrap().data_val(),
+        )
+        .unwrap();
 
         self.ts.lock().await.push((
             idx,
-            String::from("enter edit"),
+            String::from("enter update"),
             Instant::now(),
         ));
 
-        post_obj.contents = new_contents;
-        let json_string = serde_json::to_string(&post_obj).unwrap();
+        //let new_pass =
+        // self.gen_password_from_config(&password_obj.config_id).await;
+        password_obj.password = password;
+        let json_string = serde_json::to_string(&password_obj).unwrap();
 
         self.ts.lock().await.push((
             idx,
             String::from("enter DAL"),
             Instant::now(),
         ));
-        let res = self.client.set_data(
-            post_id.clone(),
-            POST_PREFIX.to_owned(),
-            json_string,
-            None,
-            None,
-            true
-        ).await;
+        let res = self
+            .client
+            .set_data(
+                id.clone(),
+                PASS_PREFIX.to_string(),
+                json_string,
+                None,
+                None,
+                true,
+            )
+            .await;
         self.ts.lock().await.push((
             idx,
             String::from("exit DAL"),
@@ -250,7 +274,7 @@ impl FamilyApp {
 
         self.ts.lock().await.push((
             idx,
-            String::from("exit edit"),
+            String::from("exit update"),
             Instant::now(),
         ));
         if idx == 1 {
@@ -267,67 +291,43 @@ impl FamilyApp {
             *self.run_ctr.write().await = Some(idx - 1);
         }
         if res.is_err() {
-            return res;
+            return Err(res.err().unwrap());
+        } else {
+            return Ok(());
         }
-        Ok(())
     }
 
-    pub async fn post_to_family(
+    pub async fn add_readers(
         &self,
-        fam_id: String,
-        contents: String,
-    ) -> Result<String, Error> {
-        let fam_obj = self.client.get_data(&fam_id).await.unwrap().unwrap();
-
-        // create post
-        let post_id = Self::new_prefixed_id(&POST_PREFIX.to_owned());
-        let post = Post::new(&fam_id, &contents);
-        let post_json = serde_json::to_string(&post).unwrap();
-
-        let mut res = self
-            .client
-            .set_data(
-                post_id.clone(),
-                POST_PREFIX.to_owned(),
-                post_json,
-                None,
-                None,
-                false,
-            )
-            .await;
+        pass_id: String,
+        readers: Vec<&String>,
+    ) -> Result<(), Error> {
+        let res = self.client.add_readers(pass_id, readers).await;
         if res.is_err() {
             return Err(res.err().unwrap());
+        } else {
+            return Ok(());
         }
-
-        // share post
-        let mut fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
-        let self_name = self.client.linked_name();
-        let sharees = fam
-            .members
-            .iter()
-            .filter(|&x| *x != self_name)
-            .collect::<Vec<&String>>();
-
-        res = self.client.add_readers(post_id.clone(), sharees).await;
-        if res.is_err() {
-            return Err(res.err().unwrap());
-        }
-
-        // add post to family obj
-        fam.add_post(post.creation_time(), post_id.clone());
-        let fam_json = serde_json::to_string(&fam).unwrap();
-
-        res = self.client.set_data(
-            fam_id.clone(),
-            FAM_PREFIX.to_owned(),
-            fam_json,
-            None,
-            None,
-            false
-        ).await;
-
-        Ok(post_id)
     }
+
+    //fn hash(first: String, second: String) -> String {
+    //    use base64ct::Encoding;
+    //    use sha2::Digest;
+
+    //    let mut hasher = sha2::Sha256::new();
+    //    hasher.update(b"first");
+    //    hasher.update(first);
+    //    hasher.update(b"second");
+    //    hasher.update(second);
+
+    //    let hash = hasher.finalize();
+    //    base64ct::Base64::encode_string(&hash)
+    //}
+
+    //pub async fn get_otp(&self, pass_id: String) -> Result<String, Error> {
+    //    let res = context.client.get_data(&id).await;
+    //    if res.is_err() { return Err(res.err().unwrap()); }
+    //}
 }
 
 pub async fn run() {
@@ -337,7 +337,7 @@ pub async fn run() {
         let num_runs = 2; //10000;
         let total_runs = num_runs + num_warmup;
 
-        let dirname = "/edit_post_output";
+        let dirname = "/update_pass_output";
 
         let send_filename = String::from(format!(
             ".{}/{}c_{}r_ts_core_send.txt",
@@ -378,17 +378,17 @@ pub async fn run() {
         println!("num_dal_recv: {}", &num_dal_recv);
 
         let bw_out = "bw_pm.txt";
-        //String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs,
-        // &num_clients)); let mut f_bw = File::options()
-        //    .append(true)
-        //    .create(true)
-        //    .open(bw_out)
-        //    .unwrap();
-        //write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs,
-        // &num_clients); write!(f_bw, "INITS\n");
+       // String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs, &num_clients)); 
+        let mut f_bw = File::options()
+            .append(true)
+            .create(true)
+            .open(bw_out)
+            .unwrap();
+        write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs, &num_clients);
+        write!(f_bw, "INITS\n");
 
         let mut clients = HashMap::new();
-        let sender = FamilyApp::new(
+        let sender = PasswordManager::new(
             None, //Some(bw_out),
             Some(num_core_send),
             Some(num_core_recv),
@@ -410,7 +410,7 @@ pub async fn run() {
         );
 
         for i in 1..num_clients {
-            let client = FamilyApp::new(
+            let client = PasswordManager::new(
                 None,
                 None,
                 None,
@@ -432,7 +432,19 @@ pub async fn run() {
 
         let idkeys: Vec<String> = clients.keys().cloned().collect();
 
-        let fam_id = sender.init_family().await.unwrap();
+        let sender_config = sender
+            .config_app_password(
+                String::from("netflix"),
+                14,
+                true,
+                true,
+                true,
+                true,
+            )
+            .await
+            .unwrap();
+        // wait for write to propagate
+        //std::thread::sleep(std::time::Duration::from_millis(100));
 
         for idkey in idkeys {
             if idkey == sender.client.idkey() {
@@ -441,20 +453,29 @@ pub async fn run() {
             sender.add_contact(idkey).await;
         }
 
-        for (name, _) in clients.values() {
-            sender.add_to_family(fam_id.clone(), name.clone()).await;
-        }
-
-        let first_post = "X".repeat(MAX_CHAR);
-        let edited_post = "O".repeat(MAX_CHAR);
-
-        let post_id = sender.post_to_family(fam_id.clone(), first_post).await.unwrap();
-        // wait for write to propagate
+        let sender_pass = sender
+            .add_password(
+                &sender_config,
+                String::from("nataliepopescu"),
+                String::from("12345678901234567890"),
+                String::from("j#LIO$#*UEYfs"),
+            )
+            .await
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
+
+        for (name, _) in clients.values() {
+            sender.add_readers(sender_pass.clone(), vec![name]).await;
+        }
+        // wait for write to propagate
+        //std::thread::sleep(std::time::Duration::from_millis(100));
 
         for run in 0..total_runs {
             sender
-                .edit_post(post_id.clone(), edited_post.clone())
+                .update_password(
+                    sender_pass.clone(),
+                    String::from("j8/#k$ddno2"),
+                )
                 .await;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

@@ -4,6 +4,7 @@ use single_key_dal::client::Error;
 use single_key_dal::client::NoiseKVClient;
 use single_key_dal::data::NoiseData;
 use std::collections::HashMap;
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -337,34 +338,52 @@ pub async fn run() {
         let num_runs = 2; //10000;
         let total_runs = num_runs + num_warmup;
 
-        let dirname = "/update_pass_output";
+        let base_dirname = "update_pass_output";
+        let mut idx = 0;
+
+        let mut dirname: String;
+        loop {
+            dirname = String::from(format!(
+                "./{}_{}",
+                &base_dirname, &idx
+            ));
+
+            let res = fs::create_dir(dirname.clone());
+            if res.is_ok() {
+                break;
+            }
+
+            // if res.is_err(), dir already exists (empty or not), so let's
+            // create a fresh one for this run
+            idx += 1;
+        }
 
         let send_filename = String::from(format!(
-            ".{}/{}c_{}r_ts_core_send.txt",
+            "{}/{}c_{}r_ts_core_send.txt",
             &dirname, &num_clients, &num_runs
         ));
         let recv_filename = String::from(format!(
-            ".{}/{}c_{}r_ts_core_recv.txt",
+            "{}/{}c_{}r_ts_core_recv.txt",
             &dirname, &num_clients, &num_runs
         ));
         let app_filename = String::from(format!(
-            ".{}/{}c_{}r_ts_app.txt",
+            "{}/{}c_{}r_ts_app.txt",
             &dirname, &num_clients, &num_runs
         ));
         let dal_send_filename = String::from(format!(
-            ".{}/{}c_{}r_ts_dal_send.txt",
+            "{}/{}c_{}r_ts_dal_send.txt",
             &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_update = String::from(format!(
-            ".{}/{}c_{}r_ts_dal_recv_update.txt",
+            "{}/{}c_{}r_ts_dal_recv_update.txt",
             &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_dummy = String::from(format!(
-            ".{}/{}c_{}r_ts_dal_recv_dummy.txt",
+            "{}/{}c_{}r_ts_dal_recv_dummy.txt",
             &dirname, &num_clients, &num_runs
         ));
         let dal_recv_filename_other = String::from(format!(
-            ".{}/{}c_{}r_ts_dal_recv_other.txt",
+            "{}/{}c_{}r_ts_dal_recv_other.txt",
             &dirname, &num_clients, &num_runs
         ));
 
@@ -377,15 +396,15 @@ pub async fn run() {
         println!("num_dal_send: {}", &num_dal_send);
         println!("num_dal_recv: {}", &num_dal_recv);
 
-        let bw_out = "bw_pm.txt";
-       // String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs, &num_clients)); 
-        let mut f_bw = File::options()
-            .append(true)
-            .create(true)
-            .open(bw_out)
-            .unwrap();
-        write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs, &num_clients);
-        write!(f_bw, "INITS\n");
+        //let bw_out = "bw_pm.txt";
+        //String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs, &num_clients)); 
+        //let mut f_bw = File::options()
+        //    .append(true)
+        //    .create(true)
+        //    .open(bw_out)
+        //    .unwrap();
+        //write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs, &num_clients);
+        //write!(f_bw, "INITS\n");
 
         let mut clients = HashMap::new();
         let sender = PasswordManager::new(

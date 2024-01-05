@@ -82,23 +82,22 @@ struct FamilyApp {
 
 impl FamilyApp {
     pub async fn new(
-        bw_filename_opt: Option<&'static str>,
-        num_send: Option<usize>,
-        num_recv: Option<usize>,
-        total_runs: Option<usize>,
+        num_core_send: Option<usize>,
+        num_core_recv: Option<usize>,
         num_dal_send: Option<usize>,
-        send_filename: String,
-        recv_filename: String,
+        total_runs: Option<usize>,
+        bw_filename: Option<String>,
+        core_send_filename: Option<String>,
+        core_recv_filename: Option<String>,
+        dal_send_filename: Option<String>,
+        dal_recv_filename_u: Option<String>,
+        dal_recv_filename_d: Option<String>,
         app_filename: String,
-        dal_send_filename: String,
-        dal_recv_filename_u: String,
-        dal_recv_filename_d: String,
     ) -> FamilyApp {
         let client = NoiseKVClient::new(
             None,
             None,
             false,
-            bw_filename_opt,
             None,
             None,
             // closed loop
@@ -109,11 +108,13 @@ impl FamilyApp {
             true,
             true,
             false,
-            num_send,
-            num_recv,
-            send_filename,
-            recv_filename,
+            // benchmark args
+            num_core_send,
+            num_core_recv,
             num_dal_send,
+            bw_filename,
+            core_send_filename,
+            core_recv_filename,
             dal_send_filename,
             dal_recv_filename_u,
             dal_recv_filename_d,
@@ -338,7 +339,7 @@ pub async fn run() {
         let num_runs = 2; //10000;
         let total_runs = num_runs + num_warmup;
 
-        let base_dirname = "/edit_post_output";
+        let base_dirname = "edit_post_output";
         let mut idx = 0;
 
         let mut dirname: String;
@@ -358,34 +359,34 @@ pub async fn run() {
             idx += 1;
         }
 
-        let send_filename = String::from(format!(
+        let core_send_filename = format!(
             "{}/{}c_{}r_ts_core_send.txt",
             &dirname, &num_clients, &num_runs
-        ));
-        let recv_filename = String::from(format!(
+        );
+        let core_recv_filename = format!(
             "{}/{}c_{}r_ts_core_recv.txt",
             &dirname, &num_clients, &num_runs
-        ));
-        let app_filename = String::from(format!(
+        );
+        let app_filename = format!(
             "{}/{}c_{}r_ts_app.txt",
             &dirname, &num_clients, &num_runs
-        ));
-        let dal_send_filename = String::from(format!(
+        );
+        let dal_send_filename = format!(
             "{}/{}c_{}r_ts_dal_send.txt",
             &dirname, &num_clients, &num_runs
-        ));
-        let dal_recv_filename_update = String::from(format!(
+        );
+        let dal_recv_filename_update = format!(
             "{}/{}c_{}r_ts_dal_recv_update.txt",
             &dirname, &num_clients, &num_runs
-        ));
-        let dal_recv_filename_dummy = String::from(format!(
+        );
+        let dal_recv_filename_dummy = format!(
             "{}/{}c_{}r_ts_dal_recv_dummy.txt",
             &dirname, &num_clients, &num_runs
-        ));
-        let dal_recv_filename_other = String::from(format!(
+        );
+        let dal_recv_filename_other = format!(
             "{}/{}c_{}r_ts_dal_recv_other.txt",
             &dirname, &num_clients, &num_runs
-        ));
+        );
 
         let num_core_send = 2 * total_runs;
         let num_core_recv = 2 * total_runs;
@@ -396,29 +397,30 @@ pub async fn run() {
         println!("num_dal_send: {}", &num_dal_send);
         println!("num_dal_recv: {}", &num_dal_recv);
 
-        let bw_out = "bw_pm.txt";
-        //String::from(format!("bw_pm_{}run_{}clients.txt", &num_runs,
-        // &num_clients)); let mut f_bw = File::options()
-        //    .append(true)
-        //    .create(true)
-        //    .open(bw_out)
-        //    .unwrap();
-        //write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs,
-        // &num_clients); write!(f_bw, "INITS\n");
+        let bw_out = format!(
+            "{}/{}c_{}r_bw_famapp.txt",
+            &dirname, &num_clients, &num_runs
+        );
+        let mut f_bw = File::options()
+            .append(true)
+            .create(true)
+            .open(bw_out.clone())
+            .unwrap();
+        write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs, &num_clients);
 
         let mut clients = HashMap::new();
         let sender = FamilyApp::new(
-            None, //Some(bw_out),
             Some(num_core_send),
             Some(num_core_recv),
             Some(total_runs),
             Some(total_runs),
-            send_filename.clone(),
-            recv_filename.clone(),
+            Some(bw_out),
+            Some(core_send_filename.clone()),
+            Some(core_recv_filename.clone()),
+            Some(dal_send_filename.clone()),
+            Some(dal_recv_filename_update.clone()),
+            Some(dal_recv_filename_dummy.clone()),
             app_filename.clone(),
-            dal_send_filename.clone(),
-            dal_recv_filename_update.clone(),
-            dal_recv_filename_dummy.clone(),
         )
         .await;
 
@@ -435,12 +437,12 @@ pub async fn run() {
                 None,
                 None,
                 None,
-                send_filename.clone(),
-                recv_filename.clone(),
+                Some(core_send_filename.clone()),
+                Some(core_recv_filename.clone()),
+                Some(dal_send_filename.clone()),
+                Some(dal_recv_filename_other.clone()),
+                Some(dal_recv_filename_other.clone()),
                 app_filename.clone(),
-                dal_send_filename.clone(),
-                dal_recv_filename_other.clone(),
-                dal_recv_filename_other.clone(),
             )
             .await;
             clients.insert(

@@ -1,4 +1,3 @@
-use crate::core::CoreClient;
 use crate::server_comm::ServerComm;
 use async_condvar_fair::Condvar;
 use olm_rs::account::{IdentityKeys, OlmAccount, OneTimeKeys};

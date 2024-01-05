@@ -47,15 +47,16 @@ pub struct Core<C: CoreClient> {
     incoming_queue: Arc<Mutex<VecDeque<CommonPayload>>>,
     oq_cv: Condvar,
     iq_cv: Condvar,
-    bandwidth_filename: Option<&'static str>,
+    // benchmarking fields
+    bandwidth_filename: Option<String>,
     benchmark_send: Arc<RwLock<Option<usize>>>,
     benchmark_recv: Arc<RwLock<Option<usize>>>,
-    ts_send: Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    ts_recv: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    send_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    recv_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
     ctr_check_send: Arc<Mutex<usize>>,
     ctr_check_recv: Arc<Mutex<usize>>,
-    send_filename: String,
-    recv_filename: String,
+    send_filename: Option<String>,
+    recv_filename: Option<String>,
 }
 
 impl<C: CoreClient> Core<C> {
@@ -63,12 +64,13 @@ impl<C: CoreClient> Core<C> {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
+        client: Option<Arc<C>>,
+        // benchmarking args
+        bandwidth_filename: Option<String>,
         benchmark_sends: Option<usize>,
         benchmark_recvs: Option<usize>,
-        bandwidth_filename: Option<&'static str>,
-        client: Option<Arc<C>>,
-        send_filename: String,
-        recv_filename: String,
+        send_filename: Option<String>,
+        recv_filename: Option<String>,
     ) -> Arc<Core<C>> {
         let crypto = Crypto::new(turn_encryption_off);
         let idkey = crypto.get_idkey();
@@ -78,12 +80,6 @@ impl<C: CoreClient> Core<C> {
         // server_comm (no trait needed b/c only one implementation
         // will ever be used, at least at this point) - which is why
         // Core::new() should return Arc<Core<C>>
-
-        //if benchmark.is_none() {
-        //    ts = None;
-        //} else {
-        //    ts = Some(Vec::<Instant>::new());
-        //}
 
         let arc_core = Arc::new(Core {
             crypto,
@@ -103,10 +99,10 @@ impl<C: CoreClient> Core<C> {
             bandwidth_filename,
             benchmark_send: Arc::new(RwLock::new(benchmark_sends)),
             benchmark_recv: Arc::new(RwLock::new(benchmark_recvs)),
-            ts_send: Arc::new(Mutex::new(
+            send_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
-            ts_recv: Arc::new(Mutex::new(
+            recv_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
             ctr_check_send: Arc::new(Mutex::new(0)),
@@ -149,7 +145,7 @@ impl<C: CoreClient> Core<C> {
         bench: bool,
     ) -> reqwest::Result<reqwest::Response> {
         if bench && self.benchmark_send.read().await.is_some() {
-            self.ts_send.lock().await.push((
+            self.send_timestamp_vec.lock().await.push((
                 self.benchmark_send.read().await.unwrap(),
                 String::from("enter POVS"),
                 Instant::now(),
@@ -172,12 +168,6 @@ impl<C: CoreClient> Core<C> {
                 bincode::serialize(payload).unwrap(),
             );
 
-        // bandwidth measurements
-        //println!(
-        //    "common_payload.recipients.len(): {:?}",
-        //    &common_payload.recipients.len()
-        //);
-
         // FIXME What if common_payloads are identical?
         // If they're identical here, they can trigger a reordering detection,
         // but if they're identical upon reception, they won't negatively affect
@@ -199,7 +189,7 @@ impl<C: CoreClient> Core<C> {
         core::mem::drop(hash_vectors_guard);
 
         if bench && self.benchmark_send.read().await.is_some() {
-            self.ts_send.lock().await.push((
+            self.send_timestamp_vec.lock().await.push((
                 self.benchmark_send.read().await.unwrap(),
                 String::from("enter SYMENC"),
                 Instant::now(),
@@ -211,7 +201,6 @@ impl<C: CoreClient> Core<C> {
             .crypto
             .symmetric_encrypt(bincode::serialize(&common_payload).unwrap());
 
-        /*
         if let Some(filename) = &self.bandwidth_filename {
             let mut f = File::options()
                 .append(true)
@@ -247,10 +236,9 @@ impl<C: CoreClient> Core<C> {
             //write!(f, "total_len_diff: {}\n", &total_len_diff);
             write!(f, "both %: {}\n", &both_perc);
         }
-        */
 
         if bench && self.benchmark_send.read().await.is_some() {
-            self.ts_send.lock().await.push((
+            self.send_timestamp_vec.lock().await.push((
                 self.benchmark_send.read().await.unwrap(),
                 String::from("enter SESSENC"),
                 Instant::now(),
@@ -260,19 +248,13 @@ impl<C: CoreClient> Core<C> {
         // Can't use .iter().map().collect() due to async/await
         let mut encrypted_per_recipient_payloads = BTreeMap::new();
         for (idkey, val_payload) in val_payloads {
-            // bandwidth measurements
-            //println!("idkey: {:?}", &idkey.len());
-            //println!(
-            //    "val_payload head: {:?}",
-            //    &val_payload.validation_digest.map_or(0, |x| x.len())
-            //);
-
-	    let perrcpt_pt = PerRecipientPayload {
+	        let perrcpt_pt = PerRecipientPayload {
                 val_payload: val_payload.clone(),
                 key,
                 tag,
-		nonce,
+		        nonce,
             };
+
             let (c_type, ciphertext) = self
                 .crypto
                 .session_encrypt(
@@ -283,22 +265,6 @@ impl<C: CoreClient> Core<C> {
                 )
                 .await;
 
-            //println!("op: {}\n", payload);
-            //if idkey.clone() == self.idkey() {
-            //    println!("RCPT == SELF: {}\n", &idkey);
-            //} else {
-            //    println!("RCPT == OTHER: {}\n", &idkey);
-            //}
-            //let num_val_pt_bytes =
-            //    bincode::serialize(&val_payload).unwrap().len() as f64;
-            //let num_perrcpt_pt_bytes =
-            //    bincode::serialize(&perrcpt_pt).unwrap().len() as f64;
-            //let num_perrcpt_ct_bytes = ciphertext.len() as f64;
-            //println!("#val_pt_bytes: {}\n", &num_val_pt_bytes);
-            //println!("#perrcpt_pt_bytes: {}\n", &num_perrcpt_pt_bytes);
-            //println!("#perrcpt_ct_bytes: {}\n", &num_perrcpt_ct_bytes);
-
-            /*
             if let Some(filename) = &self.bandwidth_filename {
                 let mut f = File::options()
                     .append(true)
@@ -338,7 +304,6 @@ impl<C: CoreClient> Core<C> {
                     write!(f, "pickled session len: {:?}\n", &pickled.len());
                 }
             }
-            */
 
             // Ensure we're never encrypting to the same key twice
             assert!(encrypted_per_recipient_payloads
@@ -366,8 +331,9 @@ impl<C: CoreClient> Core<C> {
             }
         }
 
+        //if let Some(filename) = &self.send_filename {
         if bench && self.benchmark_send.read().await.is_some() {
-            self.ts_send.lock().await.push((
+            self.send_timestamp_vec.lock().await.push((
                 self.benchmark_send.read().await.unwrap(),
                 String::from("exit CORE"),
                 Instant::now(),
@@ -379,9 +345,9 @@ impl<C: CoreClient> Core<C> {
                 let mut f = File::options()
                     .append(true)
                     .create(true)
-                    .open(&self.send_filename)
+                    .open(&self.send_filename.as_ref().unwrap())
                     .unwrap();
-                let vec = self.ts_send.lock().await;
+                let vec = self.send_timestamp_vec.lock().await;
                 for entry in vec.iter() {
                     write!(f, "{:?}\n", entry);
                 }
@@ -429,7 +395,7 @@ impl<C: CoreClient> Core<C> {
             }
             Ok(Event::Msg(msg)) => {
                 if msg.bench && self.benchmark_recv.read().await.is_some() {
-                    self.ts_recv.lock().await.push((
+                    self.recv_timestamp_vec.lock().await.push((
                         self.benchmark_recv.read().await.unwrap(),
                         String::from("enter SESSDECR"),
                         Instant::now(),
@@ -443,7 +409,7 @@ impl<C: CoreClient> Core<C> {
                 );
 
                 if msg.bench && self.benchmark_recv.read().await.is_some() {
-                    self.ts_recv.lock().await.push((
+                    self.recv_timestamp_vec.lock().await.push((
                         self.benchmark_recv.read().await.unwrap(),
                         String::from("enter SYMDECR"),
                         Instant::now(),
@@ -462,7 +428,7 @@ impl<C: CoreClient> Core<C> {
                     bincode::deserialize(&decrypted_common).unwrap();
 
                 if msg.bench && self.benchmark_recv.read().await.is_some() {
-                    self.ts_recv.lock().await.push((
+                    self.recv_timestamp_vec.lock().await.push((
                         self.benchmark_recv.read().await.unwrap(),
                         String::from("enter POVS"),
                         Instant::now(),
@@ -549,7 +515,7 @@ impl<C: CoreClient> Core<C> {
                 }
 
                 if msg.bench && self.benchmark_recv.read().await.is_some() {
-                    self.ts_recv.lock().await.push((
+                    self.recv_timestamp_vec.lock().await.push((
                         self.benchmark_recv.read().await.unwrap(),
                         String::from("exit CORE"),
                         Instant::now(),
@@ -561,9 +527,9 @@ impl<C: CoreClient> Core<C> {
                         let mut f = File::options()
                             .append(true)
                             .create(true)
-                            .open(&self.recv_filename)
+                            .open(&self.recv_filename.as_ref().unwrap())
                             .unwrap();
-                        let vec = self.ts_recv.lock().await;
+                        let vec = self.recv_timestamp_vec.lock().await;
                         for entry in vec.iter() {
                             write!(f, "{:?}\n", entry);
                         }

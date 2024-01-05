@@ -128,18 +128,19 @@ pub struct NoiseKVClient {
     multikey: bool,
     op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
     op_id_ctr_cv: Arc<Condvar>,
+    // benchmarking fields
     benchmark_send: Arc<RwLock<Option<usize>>>,
     benchmark_recv_update: Arc<RwLock<Option<usize>>>,
     benchmark_recv_dummy: Arc<RwLock<Option<usize>>>,
-    ts_send: Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    ts_recv_update: Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    ts_recv_dummy: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    send_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    recv_update_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    recv_dummy_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
     ctr_check_send: Arc<Mutex<usize>>,
-    ctr_check_recv_dummy: Arc<Mutex<usize>>,
     ctr_check_recv_update: Arc<Mutex<usize>>,
-    send_filename: String,
-    recv_filename_update: String,
-    recv_filename_dummy: String,
+    ctr_check_recv_dummy: Arc<Mutex<usize>>,
+    send_filename: Option<String>,
+    recv_update_filename: Option<String>,
+    recv_dummy_filename: Option<String>,
 }
 
 #[async_trait]
@@ -157,14 +158,14 @@ impl CoreClient for NoiseKVClient {
         }
 
         if bench && !dummy && self.benchmark_recv_update.read().is_some() {
-            self.ts_recv_update.lock().push((
+            self.recv_update_timestamp_vec.lock().push((
                 self.benchmark_recv_update.read().unwrap(),
                 String::from("enter recvDAL"),
                 Instant::now(),
             ));
         }
         if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
-            self.ts_recv_dummy.lock().push((
+            self.recv_dummy_timestamp_vec.lock().push((
                 self.benchmark_recv_dummy.read().unwrap(),
                 String::from("enter recvDAL"),
                 Instant::now(),
@@ -206,7 +207,7 @@ impl CoreClient for NoiseKVClient {
         };
 
         if bench && !dummy && self.benchmark_recv_update.read().is_some() {
-            self.ts_recv_update.lock().push((
+            self.recv_update_timestamp_vec.lock().push((
                 self.benchmark_recv_update.read().unwrap(),
                 String::from("exit recvDAL"),
                 Instant::now(),
@@ -218,9 +219,9 @@ impl CoreClient for NoiseKVClient {
                 let mut f = File::options()
                     .append(true)
                     .create(true)
-                    .open(&self.recv_filename_update)
+                    .open(&self.recv_update_filename.as_ref().unwrap())
                     .unwrap();
-                let vec = self.ts_recv_update.lock();
+                let vec = self.recv_update_timestamp_vec.lock();
                 for entry in vec.iter() {
                     write!(f, "{:?}\n", entry);
                 }
@@ -231,7 +232,7 @@ impl CoreClient for NoiseKVClient {
         }
 
         if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
-            self.ts_recv_dummy.lock().push((
+            self.recv_dummy_timestamp_vec.lock().push((
                 self.benchmark_recv_dummy.read().unwrap(),
                 String::from("exit recvDAL"),
                 Instant::now(),
@@ -243,9 +244,9 @@ impl CoreClient for NoiseKVClient {
                 let mut f = File::options()
                     .append(true)
                     .create(true)
-                    .open(&self.recv_filename_dummy)
+                    .open(&self.recv_dummy_filename.as_ref().unwrap())
                     .unwrap();
-                let vec = self.ts_recv_dummy.lock();
+                let vec = self.recv_dummy_timestamp_vec.lock();
                 for entry in vec.iter() {
                     write!(f, "{:?}\n", entry);
                 }
@@ -270,20 +271,21 @@ impl NoiseKVClient {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
-        common_ct_size_filename: Option<&'static str>,
         test_wait_num_callbacks: Option<u64>,
         sec_wait_to_apply: Option<u64>,
         block_writes: bool,
         sync_reads: bool,
         mult_outstanding: bool,
+        // benchmarking args
         core_benchmark_sends: Option<usize>,
         core_benchmark_recvs: Option<usize>,
-        core_send_filename: String,
-        core_recv_filename: String,
         benchmark_runs: Option<usize>,
-        send_filename: String,
-        recv_filename_update: String,
-        recv_filename_dummy: String,
+        bandwidth_filename: Option<String>,
+        core_send_filename: Option<String>,
+        core_recv_filename: Option<String>,
+        send_filename: Option<String>,
+        recv_update_filename: Option<String>,
+        recv_dummy_filename: Option<String>,
     ) -> NoiseKVClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let mut client = NoiseKVClient {
@@ -301,18 +303,18 @@ impl NoiseKVClient {
             benchmark_send: Arc::new(RwLock::new(benchmark_runs)),
             benchmark_recv_update: Arc::new(RwLock::new(benchmark_runs)),
             benchmark_recv_dummy: Arc::new(RwLock::new(benchmark_runs)),
-            ts_send: Arc::new(Mutex::new(
+            send_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
-            ts_recv_update: Arc::new(Mutex::new(
+            recv_update_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
-            ts_recv_dummy: Arc::new(Mutex::new(
+            recv_dummy_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
             send_filename,
-            recv_filename_update,
-            recv_filename_dummy,
+            recv_update_filename,
+            recv_dummy_filename,
             ctr_check_send: Arc::new(Mutex::new(0)),
             ctr_check_recv_update: Arc::new(Mutex::new(0)),
             ctr_check_recv_dummy: Arc::new(Mutex::new(0)),
@@ -322,10 +324,10 @@ impl NoiseKVClient {
             ip_arg,
             port_arg,
             turn_encryption_off,
+            Some(Arc::new(client.clone())),
+            bandwidth_filename,
             core_benchmark_sends,
             core_benchmark_recvs,
-            common_ct_size_filename,
-            Some(Arc::new(client.clone())),
             core_send_filename,
             core_recv_filename,
         )
@@ -1696,7 +1698,7 @@ impl NoiseKVClient {
         bench: bool,
     ) -> Result<(), Error> {
         if bench && self.benchmark_send.read().is_some() {
-            self.ts_send.lock().push((
+            self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
                 String::from("enter sendDAL"),
                 Instant::now(),
@@ -1898,7 +1900,7 @@ impl NoiseKVClient {
         }
 
         if bench && self.benchmark_send.read().is_some() {
-            self.ts_send.lock().push((
+            self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
                 String::from("enter CORE"),
                 Instant::now(),
@@ -1917,7 +1919,7 @@ impl NoiseKVClient {
             )
             .await;
         if bench && self.benchmark_send.read().is_some() {
-            self.ts_send.lock().push((
+            self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
                 String::from("exit CORE"),
                 Instant::now(),
@@ -1928,7 +1930,7 @@ impl NoiseKVClient {
         }
 
         if bench && self.benchmark_send.read().is_some() {
-            self.ts_send.lock().push((
+            self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
                 String::from("enter CORE"),
                 Instant::now(),
@@ -1944,7 +1946,7 @@ impl NoiseKVClient {
             )
             .await;
         if bench && self.benchmark_send.read().is_some() {
-            self.ts_send.lock().push((
+            self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
                 String::from("exit LASTCORE"),
                 Instant::now(),
@@ -1955,7 +1957,7 @@ impl NoiseKVClient {
             return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
         if bench && self.benchmark_send.read().is_some() {
-            self.ts_send.lock().push((
+            self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
                 String::from("exit sendDAL"),
                 Instant::now(),
@@ -1968,9 +1970,9 @@ impl NoiseKVClient {
                 let mut f = File::options()
                     .append(true)
                     .create(true)
-                    .open(&self.send_filename)
+                    .open(&self.send_filename.as_ref().unwrap())
                     .unwrap();
-                let vec = self.ts_send.lock();
+                let vec = self.send_timestamp_vec.lock();
                 for entry in vec.iter() {
                     write!(f, "{:?}\n", entry);
                 }

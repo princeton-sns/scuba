@@ -1,4 +1,5 @@
 use crate::core::{Core, CoreClient};
+use async_trait::async_trait;
 use eventsource_client::{Client, ClientBuilder, SSE};
 use futures::TryStreamExt;
 use reqwest::{Response, Result};
@@ -39,7 +40,7 @@ impl ToDelete {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OtkeyResponse {
-    otkey: String,
+    pub otkey: String,
 }
 
 impl From<OtkeyResponse> for String {
@@ -48,7 +49,30 @@ impl From<OtkeyResponse> for String {
     }
 }
 
-pub struct ServerComm<C: CoreClient> {
+#[async_trait]
+pub trait ServerComm {
+    async fn send_message(
+        &self,
+        batch: EncryptedOutboxMessage,
+    ) -> Result<Response>;
+
+    async fn get_otkey_from_server(
+        &self,
+        dst_idkey: &String,
+    ) -> Result<OtkeyResponse>;
+
+    async fn delete_messages_from_server(
+        &self,
+        to_delete: &ToDelete,
+    ) -> Result<Response>;
+
+    async fn add_otkeys_to_server<'a>(
+        &self,
+        to_add: &HashMap<String, String>,
+    ) -> Result<Response>;
+}
+
+pub struct ServerCommImpl<C: CoreClient> {
     base_url: Url,
     idkey: String,
     client: reqwest::Client,
@@ -59,7 +83,7 @@ pub struct ServerComm<C: CoreClient> {
 // TODO make (some of) server comm a trait + would help make
 // mockable
 
-impl<C: CoreClient> ServerComm<C> {
+impl<C: CoreClient> ServerCommImpl<C> {
     pub async fn new<'a>(
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
@@ -133,10 +157,11 @@ impl<C: CoreClient> ServerComm<C> {
                             SSE::Event(event) => {
                                 match event.event_type.as_str() {
                                     "otkey" => {
-                                        println!(
-                                   "got OTKEY event from server - {:?}",
-                                   task_idkey
-                                );
+                                        //        println!(
+                                        //   "got OTKEY event from server -
+                                        // {:?}",
+                                        //   task_idkey
+                                        //);
                                         if let Some(ref core) = core_option {
                                             core.server_comm_callback(Ok(
                                                 Event::Otkey,
@@ -169,7 +194,9 @@ impl<C: CoreClient> ServerComm<C> {
                                                 )
                                                 .unwrap();
                                             // TODO: handle lost epochs
-                                            println!("MessageBatch for epochs {} to {}", emb.start_epoch_id, emb.end_epoch_id);
+                                            //println!("MessageBatch for epochs
+                                            // {} to {}", emb.start_epoch_id,
+                                            // emb.end_epoch_id);
 
                                             let attestation = Attestation::from_bytes(&emb.attestation).expect("Failed to parse attestation payload");
                                             assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
@@ -211,8 +238,11 @@ impl<C: CoreClient> ServerComm<C> {
             _pd: PhantomData,
         }
     }
+}
 
-    pub async fn send_message(
+#[async_trait]
+impl<C: CoreClient> ServerComm for ServerCommImpl<C> {
+    async fn send_message(
         &self,
         batch: EncryptedOutboxMessage,
     ) -> Result<Response> {
@@ -228,7 +258,7 @@ impl<C: CoreClient> ServerComm<C> {
             .await
     }
 
-    pub async fn get_otkey_from_server(
+    async fn get_otkey_from_server(
         &self,
         dst_idkey: &String,
     ) -> Result<OtkeyResponse> {
@@ -247,13 +277,14 @@ impl<C: CoreClient> ServerComm<C> {
                 return res.json().await;
             } else {
                 retry_count += 1;
-                println!("Failed to fetch otkey for client_id \"\", retrying in 1 sec...");
+                //println!("Failed to fetch otkey for client_id \"\", retrying
+                // in 1 sec...");
                 sleep(Duration::from_secs(1)).await;
             }
         }
     }
 
-    pub async fn delete_messages_from_server(
+    async fn delete_messages_from_server(
         &self,
         to_delete: &ToDelete,
     ) -> Result<Response> {
@@ -266,7 +297,7 @@ impl<C: CoreClient> ServerComm<C> {
             .await
     }
 
-    pub async fn add_otkeys_to_server<'a>(
+    async fn add_otkeys_to_server<'a>(
         &self,
         to_add: &HashMap<String, String>,
     ) -> Result<Response> {

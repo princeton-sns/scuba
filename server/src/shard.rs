@@ -39,6 +39,7 @@ pub mod client_protocol {
 
     #[derive(Debug, Serialize, Deserialize, Clone)]
     pub struct EncryptedOutboxMessage {
+        pub bench: bool,
         pub enc_common: EncryptedCommonPayload,
         pub enc_recipients: BTreeMap<String, EncryptedPerRecipientPayload>,
     }
@@ -52,6 +53,7 @@ pub mod client_protocol {
         pub enc_common: EncryptedCommonPayload,
         pub enc_recipient: EncryptedPerRecipientPayload,
         pub seq_id: u128,
+        pub bench: bool,
     }
 
     // -------------------------------------------------------------------------
@@ -590,6 +592,7 @@ pub mod outbox {
                                 enc_common: message.enc_common.clone(),
                                 enc_recipient: enc_recipient_payload,
                                 seq_id: seq,
+                                bench: message.bench,
                             };
 
                         intershard[bucket].push((recipient, ibmsg));

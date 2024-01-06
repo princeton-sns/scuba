@@ -174,13 +174,22 @@ impl FamilyApp {
             None,
             None,
             false,
-            Some("familyapp.txt"),
             None,
             None,
             // causal consistency
             false,
             false,
             true,
+            // benchmarking args
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await;
         Self { client }
@@ -275,6 +284,7 @@ impl FamilyApp {
                 loc_json.clone(),
                 None,
                 None,
+                false,
             )
             .await
         {
@@ -287,6 +297,7 @@ impl FamilyApp {
                         member_json,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {
@@ -343,6 +354,7 @@ impl FamilyApp {
                                             loc_json,
                                             None,
                                             None,
+                                            false,
                                         )
                                         .await
                                     {
@@ -513,7 +525,7 @@ impl FamilyApp {
 
         match context
             .client
-            .set_data(id.clone(), FAM_PREFIX.to_string(), json_fam, None, None)
+            .set_data(id.clone(), FAM_PREFIX.to_string(), json_fam, None, None, false)
             .await
         {
             Ok(_) => {
@@ -556,6 +568,7 @@ impl FamilyApp {
                         fam_json,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {
@@ -632,6 +645,7 @@ impl FamilyApp {
                         post_json,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {
@@ -676,6 +690,7 @@ impl FamilyApp {
                                         fam_json,
                                         None,
                                         None,
+                                        false,
                                     )
                                     .await
                                 {
@@ -742,6 +757,7 @@ impl FamilyApp {
                         comment_json,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {
@@ -795,6 +811,7 @@ impl FamilyApp {
                                         post_json,
                                         None,
                                         None,
+                                        false,
                                     )
                                     .await
                                 {
@@ -861,6 +878,7 @@ impl FamilyApp {
                 loc_json.clone(),
                 None,
                 None,
+                false,
             )
             .await
         {
@@ -953,6 +971,7 @@ impl FamilyApp {
                         fam_json,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {

@@ -186,13 +186,22 @@ impl AuctioningApp {
             None,
             None,
             false,
-            Some("auctioning.txt"),
             None,
             None,
             // sequential consistency
             true,
             false,
             false,
+            // benchmarking args
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await;
         Self { client }
@@ -480,6 +489,7 @@ impl AuctioningApp {
                     open_clients_json,
                     None,
                     None,
+                    false,
                 )
                 .await
             {
@@ -507,6 +517,7 @@ impl AuctioningApp {
                     open_clients_json,
                     None,
                     None,
+                    false,
                 )
                 .await
             {
@@ -617,7 +628,7 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(auction_id, AUCTION_PREFIX.to_owned(), auction_json, None, None)
+            .set_data(auction_id, AUCTION_PREFIX.to_owned(), auction_json, None, None, false)
             .await
         {
             Ok(_) => Ok(Some(String::from("Successfully created auction"))),
@@ -649,7 +660,7 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(bid_id, BID_PREFIX.to_owned(), bid_json, None, None)
+            .set_data(bid_id, BID_PREFIX.to_owned(), bid_json, None, None, false)
             .await
         {
             Ok(_) => Ok(Some(String::from("Successfully created bid"))),
@@ -704,6 +715,7 @@ impl AuctioningApp {
                     auction_json,
                     None,
                     None,
+                    false,
                 )
                 .await
             {
@@ -754,6 +766,7 @@ impl AuctioningApp {
                     auction_json,
                     None,
                     None,
+                    false,
                 )
                 .await
             {

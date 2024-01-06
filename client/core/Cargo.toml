@@ -29,4 +29,3 @@ bincode = "1.3.3"
 
 noise-server = { path = "../../server" }
 aes-gcm = "0.10.3"
-

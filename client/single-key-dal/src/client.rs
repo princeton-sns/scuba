@@ -4,7 +4,10 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Values;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Write;
 use std::sync::Arc;
+use std::time::Instant;
 use std::{thread, time};
 use thiserror::Error;
 
@@ -15,7 +18,8 @@ use crate::devices::Device;
 use crate::metadata::{Group, PermType, PermissionSet};
 
 /*
- * Existing set_*() functions whose writes should abide by consistency rules:
+ * Existing set_*() functions whose writes should abide by consistency
+ * rules:
  * - [x] create_standalone_device()
  * - [x] create_linked_device()
  * - [ ] delete_device_*() (when used)
@@ -124,6 +128,19 @@ pub struct NoiseKVClient {
     multikey: bool,
     op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
     op_id_ctr_cv: Arc<Condvar>,
+    // benchmarking fields
+    benchmark_send: Arc<RwLock<Option<usize>>>,
+    benchmark_recv_update: Arc<RwLock<Option<usize>>>,
+    benchmark_recv_dummy: Arc<RwLock<Option<usize>>>,
+    send_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    recv_update_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    recv_dummy_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
+    ctr_check_send: Arc<Mutex<usize>>,
+    ctr_check_recv_update: Arc<Mutex<usize>>,
+    ctr_check_recv_dummy: Arc<Mutex<usize>>,
+    send_filename: Option<String>,
+    recv_update_filename: Option<String>,
+    recv_dummy_filename: Option<String>,
 }
 
 #[async_trait]
@@ -133,7 +150,28 @@ impl CoreClient for NoiseKVClient {
         _seq: noise_core::core::SequenceNumber,
         sender: String,
         message: String,
+        bench: bool,
     ) {
+        let mut dummy = true;
+        if message.contains("UpdateData") {
+            dummy = false;
+        }
+
+        if bench && !dummy && self.benchmark_recv_update.read().is_some() {
+            self.recv_update_timestamp_vec.lock().push((
+                self.benchmark_recv_update.read().unwrap(),
+                String::from("enter recvDAL"),
+                Instant::now(),
+            ));
+        }
+        if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
+            self.recv_dummy_timestamp_vec.lock().push((
+                self.benchmark_recv_dummy.read().unwrap(),
+                String::from("enter recvDAL"),
+                Instant::now(),
+            ));
+        }
+
         if self.sec_wait_to_apply.is_some() {
             thread::sleep(time::Duration::from_secs(
                 self.sec_wait_to_apply.unwrap(),
@@ -142,7 +180,7 @@ impl CoreClient for NoiseKVClient {
 
         match Operation::from_string(message.clone()) {
             Ok(operation) => {
-                println!("operation: {:?}", operation.clone());
+                //if bench { println!("operation: {:?}", operation.clone()); }
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
@@ -168,6 +206,56 @@ impl CoreClient for NoiseKVClient {
             ),
         };
 
+        if bench && !dummy && self.benchmark_recv_update.read().is_some() {
+            self.recv_update_timestamp_vec.lock().push((
+                self.benchmark_recv_update.read().unwrap(),
+                String::from("exit recvDAL"),
+                Instant::now(),
+            ));
+            let mut ctr_check_guard = self.ctr_check_recv_update.lock();
+            *ctr_check_guard += 1;
+            let cur_count = self.benchmark_recv_update.read().unwrap();
+            if cur_count == 1 {
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(&self.recv_update_filename.as_ref().unwrap())
+                    .unwrap();
+                let vec = self.recv_update_timestamp_vec.lock();
+                for entry in vec.iter() {
+                    write!(f, "{:?}\n", entry);
+                }
+            } else if cur_count > 1 {
+                *self.benchmark_recv_update.write() = Some(cur_count - 1);
+            }
+            //println!("dal ctr_check_recv_update: {:?}", ctr_check_guard);
+        }
+
+        if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
+            self.recv_dummy_timestamp_vec.lock().push((
+                self.benchmark_recv_dummy.read().unwrap(),
+                String::from("exit recvDAL"),
+                Instant::now(),
+            ));
+            let mut ctr_check_guard = self.ctr_check_recv_dummy.lock();
+            *ctr_check_guard += 1;
+            let cur_count = self.benchmark_recv_dummy.read().unwrap();
+            if cur_count == 1 {
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(&self.recv_dummy_filename.as_ref().unwrap())
+                    .unwrap();
+                let vec = self.recv_dummy_timestamp_vec.lock();
+                for entry in vec.iter() {
+                    write!(f, "{:?}\n", entry);
+                }
+            } else if cur_count > 1 {
+                *self.benchmark_recv_dummy.write() = Some(cur_count - 1);
+            }
+            //println!("dal ctr_check_recv_dummy: {:?}", ctr_check_guard);
+        }
+
         let mut ctr = self.ctr.lock();
         if *ctr != 0 {
             //println!("cb_ctr: {:?}", *ctr);
@@ -183,12 +271,21 @@ impl NoiseKVClient {
         ip_arg: Option<&'a str>,
         port_arg: Option<&'a str>,
         turn_encryption_off: bool,
-        common_ct_size_filename: Option<&'static str>,
         test_wait_num_callbacks: Option<u64>,
         sec_wait_to_apply: Option<u64>,
         block_writes: bool,
         sync_reads: bool,
         mult_outstanding: bool,
+        // benchmarking args
+        core_benchmark_sends: Option<usize>,
+        core_benchmark_recvs: Option<usize>,
+        benchmark_runs: Option<usize>,
+        bandwidth_filename: Option<String>,
+        core_send_filename: Option<String>,
+        core_recv_filename: Option<String>,
+        send_filename: Option<String>,
+        recv_update_filename: Option<String>,
+        recv_dummy_filename: Option<String>,
     ) -> NoiseKVClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let mut client = NoiseKVClient {
@@ -203,14 +300,36 @@ impl NoiseKVClient {
             multikey: false,
             op_id_ctr: Arc::new(Mutex::new((0, HashSet::new()))),
             op_id_ctr_cv: Arc::new(Condvar::new()),
+            benchmark_send: Arc::new(RwLock::new(benchmark_runs)),
+            benchmark_recv_update: Arc::new(RwLock::new(benchmark_runs)),
+            benchmark_recv_dummy: Arc::new(RwLock::new(benchmark_runs)),
+            send_timestamp_vec: Arc::new(Mutex::new(
+                Vec::<(usize, String, Instant)>::new(),
+            )),
+            recv_update_timestamp_vec: Arc::new(Mutex::new(
+                Vec::<(usize, String, Instant)>::new(),
+            )),
+            recv_dummy_timestamp_vec: Arc::new(Mutex::new(
+                Vec::<(usize, String, Instant)>::new(),
+            )),
+            send_filename,
+            recv_update_filename,
+            recv_dummy_filename,
+            ctr_check_send: Arc::new(Mutex::new(0)),
+            ctr_check_recv_update: Arc::new(Mutex::new(0)),
+            ctr_check_recv_dummy: Arc::new(Mutex::new(0)),
         };
 
         let core = Core::new(
             ip_arg,
             port_arg,
             turn_encryption_off,
-            common_ct_size_filename,
             Some(Arc::new(client.clone())),
+            bandwidth_filename,
+            core_benchmark_sends,
+            core_benchmark_recvs,
+            core_send_filename,
+            core_recv_filename,
         )
         .await;
 
@@ -302,7 +421,7 @@ impl NoiseKVClient {
                     .get_perm(perm_id)
                     .is_some()
                 {
-                    return Err(Error::PermAlreadyExists(perm_id.to_string()));
+                    return Ok(()); //return Err(Error::PermAlreadyExists(perm_id.to_string()));
                 }
                 Ok(())
             }
@@ -619,11 +738,12 @@ impl NoiseKVClient {
         &self,
         dst_idkeys: Vec<String>,
         payload: &String,
+        bench: bool,
     ) -> reqwest::Result<reqwest::Response> {
         self.core
             .as_ref()
             .unwrap()
-            .send_message(dst_idkeys, payload)
+            .send_message(dst_idkeys, payload, bench)
             .await
     }
 
@@ -635,8 +755,8 @@ impl NoiseKVClient {
         self.core.as_ref().unwrap().idkey()
     }
 
-    // Also doesn't make sense to sync this read, since there's no way to change
-    // this after a device is initialized (at the moment)
+    // Also doesn't make sense to sync this read, since there's no way to
+    // change this after a device is initialized (at the moment)
     pub fn linked_name(&self) -> String {
         self.device
             .read()
@@ -679,6 +799,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -737,6 +858,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -793,6 +915,7 @@ impl NoiseKVClient {
                     linked_members_to_add,
                 ))
                 .unwrap(),
+                false,
             )
             .await
         {
@@ -846,6 +969,7 @@ impl NoiseKVClient {
                         .clone(),
                 ))
                 .unwrap(),
+                false,
             )
             .await
         {
@@ -885,6 +1009,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -945,6 +1070,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1008,6 +1134,7 @@ impl NoiseKVClient {
                     linked_device_groups,
                 ))
                 .unwrap(),
+                false,
             )
             .await
         {
@@ -1055,6 +1182,7 @@ impl NoiseKVClient {
                     linked_device_groups,
                 ))
                 .unwrap(),
+                false,
             )
             .await
         {
@@ -1080,6 +1208,7 @@ impl NoiseKVClient {
                     self.core.as_ref().unwrap().idkey(),
                 ))
                 .unwrap(),
+                false,
             )
             .await
         {
@@ -1115,6 +1244,7 @@ impl NoiseKVClient {
                     to_delete.clone(),
                 ))
                 .unwrap(),
+                false,
             )
             .await
         {
@@ -1131,6 +1261,7 @@ impl NoiseKVClient {
                         vec![to_delete.clone()],
                         &Operation::to_string(&Operation::DeleteSelfDevice)
                             .unwrap(),
+                        false,
                     )
                     .await
                 {
@@ -1156,6 +1287,7 @@ impl NoiseKVClient {
                     .map(|x| x.clone())
                     .collect::<Vec<String>>(),
                 &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
+                false,
             )
             .await
         {
@@ -1217,6 +1349,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1273,6 +1406,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1336,6 +1470,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1392,6 +1527,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1455,6 +1591,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1511,6 +1648,7 @@ impl NoiseKVClient {
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                false,
             )
             .await;
 
@@ -1557,7 +1695,15 @@ impl NoiseKVClient {
         // data writers?
         data_reader_idkeys: Option<Vec<String>>,
         add_perm_op_id: Option<u64>,
+        bench: bool,
     ) -> Result<(), Error> {
+        if bench && self.benchmark_send.read().is_some() {
+            self.send_timestamp_vec.lock().push((
+                self.benchmark_send.read().unwrap(),
+                String::from("enter sendDAL"),
+                Instant::now(),
+            ));
+        }
         let op_id;
         if add_perm_op_id.is_none() {
             // check if can have multiple outstanding ops, or if not, check that
@@ -1674,6 +1820,7 @@ impl NoiseKVClient {
                             perm_val.clone(),
                         ))
                         .unwrap(),
+                        false,
                     )
                     .await;
 
@@ -1692,6 +1839,7 @@ impl NoiseKVClient {
                             group_val.clone(),
                         ))
                         .unwrap(),
+                        false,
                     )
                     .await;
 
@@ -1710,6 +1858,7 @@ impl NoiseKVClient {
                             group_val.group_id().to_string(),
                         ))
                         .unwrap(),
+                        false,
                     )
                     .await;
 
@@ -1750,6 +1899,13 @@ impl NoiseKVClient {
             None => {}
         }
 
+        if bench && self.benchmark_send.read().is_some() {
+            self.send_timestamp_vec.lock().push((
+                self.benchmark_send.read().unwrap(),
+                String::from("enter CORE"),
+                Instant::now(),
+            ));
+        }
         let res = self
             .send_message(
                 // includes idkeys of _all_ permissions
@@ -1759,23 +1915,71 @@ impl NoiseKVClient {
                     data_id, basic_data,
                 ))
                 .unwrap(),
+                bench,
             )
             .await;
+        if bench && self.benchmark_send.read().is_some() {
+            self.send_timestamp_vec.lock().push((
+                self.benchmark_send.read().unwrap(),
+                String::from("exit CORE"),
+                Instant::now(),
+            ));
+        }
         if res.is_err() {
             return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
+        if bench && self.benchmark_send.read().is_some() {
+            self.send_timestamp_vec.lock().push((
+                self.benchmark_send.read().unwrap(),
+                String::from("enter CORE"),
+                Instant::now(),
+            ));
+        }
         // FIXME better way to do this
         let res = self
             .send_message(
                 vec![self.idkey()],
                 &Operation::to_string(&Operation::Dummy(op_id.clone()))
                     .unwrap(),
+                bench,
             )
             .await;
+        if bench && self.benchmark_send.read().is_some() {
+            self.send_timestamp_vec.lock().push((
+                self.benchmark_send.read().unwrap(),
+                String::from("exit LASTCORE"),
+                Instant::now(),
+            ));
+        }
 
         if res.is_err() {
             return Err(Error::SendFailed(res.err().unwrap().to_string()));
+        }
+        if bench && self.benchmark_send.read().is_some() {
+            self.send_timestamp_vec.lock().push((
+                self.benchmark_send.read().unwrap(),
+                String::from("exit sendDAL"),
+                Instant::now(),
+            ));
+            let mut ctr_check_guard = self.ctr_check_send.lock();
+            *ctr_check_guard += 1;
+            let cur_count = self.benchmark_send.read().unwrap();
+            if cur_count == 1 {
+                // write sends
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(&self.send_filename.as_ref().unwrap())
+                    .unwrap();
+                let vec = self.send_timestamp_vec.lock();
+                for entry in vec.iter() {
+                    write!(f, "{:?}\n", entry);
+                }
+            } else if cur_count > 1 {
+                *self.benchmark_send.write() = Some(cur_count - 1);
+            }
+            //println!("dal ctr_check_send: {:?}", ctr_check_guard);
         }
 
         ////////
@@ -2131,6 +2335,7 @@ impl NoiseKVClient {
                             perm_val.clone(),
                         ))
                         .unwrap(),
+                        false,
                     )
                     .await;
 
@@ -2149,6 +2354,7 @@ impl NoiseKVClient {
                             assoc_groups,
                         ))
                         .unwrap(),
+                        false,
                     )
                     .await;
 
@@ -2168,6 +2374,7 @@ impl NoiseKVClient {
                             new_members,
                         ))
                         .unwrap(),
+                        false,
                     )
                     .await;
 
@@ -2196,6 +2403,7 @@ impl NoiseKVClient {
                     data_val_interior,
                     Some(data_reader_idkeys),
                     Some(op_id),
+                    false,
                 )
                 .await
             }

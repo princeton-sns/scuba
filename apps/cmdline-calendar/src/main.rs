@@ -213,13 +213,22 @@ impl CalendarApp {
             None,
             None,
             false,
-            Some("calendar.txt"),
             None,
             None,
             // TODO fix for multi-key
             true,
             false,
             true,
+            // benchmarking args
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await;
         Self { client }
@@ -268,6 +277,7 @@ impl CalendarApp {
                 json_string,
                 None,
                 None,
+                false,
             )
             .await
         {
@@ -647,6 +657,7 @@ impl CalendarApp {
                             json_avail,
                             None,
                             None,
+                            false,
                         )
                         .await;
                     if res.is_err() {
@@ -671,6 +682,7 @@ impl CalendarApp {
                         json_string,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {
@@ -790,6 +802,7 @@ impl CalendarApp {
                                 json_string,
                                 None,
                                 None,
+                                false,
                             )
                             .await
                         {
@@ -876,6 +889,7 @@ impl CalendarApp {
                         json_string,
                         None,
                         None,
+                        false,
                     )
                     .await
                 {
@@ -905,6 +919,7 @@ impl CalendarApp {
                                         json_avail,
                                         None,
                                         None,
+                                        false,
                                     )
                                     .await
                                 {

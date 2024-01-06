@@ -125,13 +125,22 @@ impl PasswordManager {
             None,
             None,
             false,
-            Some("passmanager.txt"),
             None,
             None,
             // linearizability
             true,
             true,
             false,
+            // benchmark args
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await;
         Self { client }
@@ -174,7 +183,7 @@ impl PasswordManager {
 
         match context
             .client
-            .set_data(id.clone(), CONFIG_PREFIX.to_string(), json_string, None, None)
+            .set_data(id.clone(), CONFIG_PREFIX.to_string(), json_string, None, None, false)
             .await
         {
             Ok(_) => {
@@ -480,6 +489,7 @@ impl PasswordManager {
                     json_string,
                     None,
                     None,
+                    false,
                 )
                 .await
             {
@@ -505,6 +515,7 @@ impl PasswordManager {
                     json_string,
                     None,
                     None,
+                    false,
                 )
                 .await
             {
@@ -558,6 +569,7 @@ impl PasswordManager {
                             hotp_json,
                             None,
                             None,
+                            false,
                         )
                         .await
                     {
@@ -629,6 +641,7 @@ impl PasswordManager {
                             json_string,
                             None,
                             None,
+                            false,
                         )
                         .await
                     {
@@ -655,6 +668,7 @@ impl PasswordManager {
                             json_string,
                             None,
                             None,
+                            false,
                         )
                         .await
                     {

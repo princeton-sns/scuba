@@ -31,6 +31,7 @@ Each application client can be spun up by running `cargo run` in the relevant su
 ## Auctioning
 
 - [x] compiles
+- [ ] runs
 
 - Implements both open and closed auctions
 - Each auction is organized and decided by an auctioneer client
@@ -40,6 +41,7 @@ Each application client can be spun up by running `cargo run` in the relevant su
 ## Calendar
 
 - [x] compiles
+- [ ] runs
 
 - Patient clients can request specific time slots from provider clients
 - Providers share their overall availability with all patients
@@ -50,14 +52,17 @@ Each application client can be spun up by running `cargo run` in the relevant su
 ## Chess
 
 - [ ] compiles
+- [ ] runs
 
 ## Lightswitch
 
 - [ ] compiles
+- [ ] runs
 
 ## Password Manager
 
 - [x] compiles
+- [x] runs
 
 - Implements both TOTP and HOTP
 - Passwords are stored along with other metadata (application and user names)
@@ -67,10 +72,12 @@ Each application client can be spun up by running `cargo run` in the relevant su
 ## Period Tracker
 
 - [ ] compiles
+- [ ] runs
 
 ## Family Social Media
 
 - [x] compiles
+- [ ] runs
 
 - Family members can interact within "families"
 - They can create posts, comment on posts, and share their locations

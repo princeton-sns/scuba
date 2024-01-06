@@ -4,7 +4,7 @@ Before running, make sure the `epoch_log.txt` file nor `persist-outbox` director
 exist, removing them if they do via:
 
 ```sh
-rm epoch_log.txt && rm -rf persist-outbox/
+rm -rf epoch_log.txt && rm -rf persist-outbox/
 ```
 
 To start the sequencer, run: 

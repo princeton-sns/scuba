@@ -260,8 +260,7 @@ impl<C: CoreClient> Core<C> {
                 .session_encrypt(
                     self.server_comm.read().await.as_ref().unwrap(),
                     &idkey,
-                    bincode::serialize(&perrcpt_pt)
-                    .unwrap(),
+                    bincode::serialize(&perrcpt_pt).unwrap(),
                 )
                 .await;
 

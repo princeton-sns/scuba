@@ -868,8 +868,7 @@ async fn main() -> ReplResult<()> {
                 .arg(
                     Arg::new("secret").required(true).long("secret").short('s'),
                 )
-                .arg(Arg::new("type").required(true).short('t'))
-                .about("use either hotp or totp depending on the password id")
+                .arg(Arg::new("type").required(true).short('t').help("<type> should be either 'hotp' or 'totp'"))
                 .arg(
                     Arg::new("username")
                         .required(true)

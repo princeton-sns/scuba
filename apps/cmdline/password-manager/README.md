@@ -2,7 +2,7 @@
 
 Spin up two clients in separate windows by running `cargo run` in each window.
 When the apps start, you can type `help` to see what commands are available to you.
-You can quit the app via `Ctrl-C`.
+You can quit the app via `Ctrl-D`.
 Below is a demo that shows one way to use the app.
 
 ## Demo

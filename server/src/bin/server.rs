@@ -1,9 +1,9 @@
 use actix_web::{App, HttpServer};
 use clap::{Parser, Subcommand};
 
-use noise_server_lib::attestation_proxy;
-use noise_server_lib::sequencer;
-use noise_server_lib::shard;
+use scuba_server_lib::attestation_proxy;
+use scuba_server_lib::sequencer;
+use scuba_server_lib::shard;
 
 #[derive(Subcommand, Debug)]
 enum Commands {

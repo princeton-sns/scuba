@@ -9,13 +9,13 @@ edition = "2021"
 tokio = { version = "1.25.0", features = ["macros", "io-std", "io-util", "rt", "rt-multi-thread"] }
 serde_json = { version = "1.0.91", features = ["std"] }
 serde = { version = "1.0.152", features = ["derive"] }
-#noise-core = { path = "../../client/core" } 
+#scuba-core = { path = "../../client/core" } 
 #async-trait = "0.1.66"
 #parking_lot = { version = "0.12.1", features = ["send_guard"] }
 #async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }
 #bincode = "1.3.3"
 #rand = { version = "0.8.5", features = ["small_rng"] }
-single-key-dal = { path = "../../client/single-key-dal" }
+single-key-tank = { path = "../../client/single-key-tank" }
 uuid = "1.3.0"
 base64ct = { version = "1.6.0", features = ["alloc"] }
 sha2 = "0.10.8"

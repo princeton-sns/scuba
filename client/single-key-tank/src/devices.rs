@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::data::{DataStore, NoiseData};
+use crate::data::{DataStore, ScubaData};
 use crate::metadata::{Group, MetadataStore, PermType, PermissionSet};
 
 #[derive(Debug, PartialEq, Error)]
@@ -14,7 +14,7 @@ pub enum Error {
 }
 
 #[derive(Clone)]
-pub struct Device<T: NoiseData> {
+pub struct Device<T: ScubaData> {
     idkey: Arc<RwLock<String>>,
     pub meta_store: Arc<RwLock<MetadataStore>>,
     pub data_store: Arc<RwLock<DataStore<T>>>,
@@ -23,7 +23,7 @@ pub struct Device<T: NoiseData> {
 }
 
 // TODO linked_name => root or smthg
-impl<T: NoiseData> Device<T> {
+impl<T: ScubaData> Device<T> {
     pub fn new(
         idkey: String,
         linked_name_arg: Option<String>,
@@ -182,7 +182,7 @@ impl<T: NoiseData> Device<T> {
         }
 
         // add data
-        // into_iter() needed b/c NoiseData can't implement Clone(), so
+        // into_iter() needed b/c ScubaData can't implement Clone(), so
         // if we want this to stay generic then we need to move data_val
         // from new_data via into_iter() (as opposed to just iter())
         for (data_key, data_val) in new_data.into_iter() {

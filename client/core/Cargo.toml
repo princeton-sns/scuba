@@ -1,5 +1,5 @@
 [package]
-name = "noise-core"
+name = "scuba-core"
 version = "0.1.0"
 edition = "2021"
 
@@ -27,5 +27,5 @@ base64 = "0.21.0"
 ed25519-dalek = "1.0.1"
 bincode = "1.3.3"
 
-noise-server = { path = "../../server" }
+scuba-server = { path = "../../server" }
 aes-gcm = "0.10.3"

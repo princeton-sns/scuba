@@ -2,8 +2,8 @@ use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -150,7 +150,7 @@ struct AppointmentInfo {
     pending: bool,
     // TODO add perm field or resolved writer idkeys if clients make apptmts,
     // although data_store doesn't have access to metadata_store, so this would
-    // constitute a larger change in NoiseKV (the two are separate for locking
+    // constitute a larger change in Tank (the two are separate for locking
     // purposes now)
 }
 
@@ -204,12 +204,12 @@ impl Availability {
 
 #[derive(Clone)]
 struct CalendarApp {
-    client: NoiseKVClient,
+    client: TankClient,
 }
 
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
-        let client = NoiseKVClient::new(
+        let client = TankClient::new(
             None,
             None,
             false,
@@ -978,7 +978,7 @@ async fn main() -> ReplResult<()> {
     let mut repl = Repl::new(app.clone())
         .with_name("Calendar App")
         .with_version("v0.1.0")
-        .with_description("Noise calendar app")
+        .with_description("Scuba calendar app")
         .with_command_async(Command::new("init_new_device"), |_, context| {
             Box::pin(CalendarApp::init_new_device(context))
         })

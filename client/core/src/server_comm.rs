@@ -20,7 +20,7 @@ pub enum Event {
     Msg(EncryptedInboxMessage),
 }
 
-pub use noise_server_lib::shard::client_protocol::{
+pub use scuba_server_lib::shard::client_protocol::{
     Attestation, AttestationData, EncryptedCommonPayload,
     EncryptedInboxMessage, EncryptedOutboxMessage,
     EncryptedPerRecipientPayload, MessageBatch,

@@ -134,7 +134,7 @@ async fn client_loop(
         .await
         .unwrap();
 
-    let parsed: noise_server_lib::shard::client_protocol::MessageBatch =
+    let parsed: scuba_server_lib::shard::client_protocol::MessageBatch =
         bincode::deserialize(&messages_resp.bytes().await.unwrap()).unwrap();
 
     let duration = std::time::Instant::now().duration_since(start);

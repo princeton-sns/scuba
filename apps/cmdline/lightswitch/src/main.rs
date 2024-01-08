@@ -1,8 +1,8 @@
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -15,12 +15,12 @@ const LB_ON_VAL: &str = r#"{ "is_on": true }"#;
 
 #[derive(Clone)]
 struct LightswitchApp {
-    client: NoiseKVClient,
+    client: TankClient,
 }
 
 impl LightswitchApp {
     pub async fn new() -> LightswitchApp {
-        let client = NoiseKVClient::new(
+        let client = TankClient::new(
             None, None,
             //Some("sns26.cs.princeton.edu"),
             //Some("8080"),
@@ -415,7 +415,7 @@ async fn main() -> ReplResult<()> {
     let mut repl = Repl::new(app.clone())
         .with_name("Lightswitch App")
         .with_version("v0.1.0")
-        .with_description("Noise lightswitch app")
+        .with_description("Scuba lightswitch app")
         .with_command_async(Command::new("create_bulb"), |_, context| {
             Box::pin(LightswitchApp::create_bulb(context))
         })

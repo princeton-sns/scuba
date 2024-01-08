@@ -2,8 +2,8 @@ use passwords::PasswordGenerator;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -116,12 +116,12 @@ impl PasswordConfig {
 
 #[derive(Clone)]
 struct PasswordManager {
-    client: NoiseKVClient,
+    client: TankClient,
 }
 
 impl PasswordManager {
     pub async fn new() -> PasswordManager {
-        let client = NoiseKVClient::new(
+        let client = TankClient::new(
             None,
             None,
             false,
@@ -762,7 +762,7 @@ async fn main() -> ReplResult<()> {
     let mut repl = Repl::new(app.clone())
         .with_name("Password Manager App")
         .with_version("v0.1.0")
-        .with_description("Noise password manager app")
+        .with_description("Scuba password manager app")
         .with_command_async(
             Command::new("init_new_device"),
             |_, context| {

@@ -3,8 +3,8 @@ use chrono::DateTime;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -165,12 +165,12 @@ impl Member {
 
 #[derive(Clone)]
 struct FamilyApp {
-    client: NoiseKVClient,
+    client: TankClient,
 }
 
 impl FamilyApp {
     pub async fn new() -> FamilyApp {
-        let client = NoiseKVClient::new(
+        let client = TankClient::new(
             None,
             None,
             false,
@@ -1103,7 +1103,7 @@ async fn main() -> ReplResult<()> {
     let mut repl = Repl::new(app.clone())
         .with_name("Family App")
         .with_version("v0.1.0")
-        .with_description("Noise family app")
+        .with_description("Scuba family app")
         .with_command_async(
             Command::new("init_new_device").arg(
                 Arg::new("enable_loc_polling")

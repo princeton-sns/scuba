@@ -1,8 +1,8 @@
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -186,12 +186,12 @@ impl<'a> Game<'a> {
 
 #[derive(Clone)]
 struct ChessApp {
-    client: NoiseKVClient,
+    client: TankClient,
 }
 
 impl ChessApp {
     pub async fn new() -> ChessApp {
-        let client = NoiseKVClient::new(None, None, false, None, None).await;
+        let client = TankClient::new(None, None, false, None, None).await;
         Self { client }
     }
 
@@ -499,7 +499,7 @@ async fn main() -> ReplResult<()> {
     let mut repl = Repl::new(app.clone())
         .with_name("Chess App")
         .with_version("v0.1.0")
-        .with_description("Noise chess app")
+        .with_description("Scuba chess app")
         .with_command(
             Command::new("create_new_device"),
             ChessApp::create_new_device,

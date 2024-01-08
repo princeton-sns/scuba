@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
-pub trait NoiseData {
+pub trait ScubaData {
     fn data_id(&self) -> &String;
     fn data_type(&self) -> &String;
     fn data_val(&self) -> &String;
-    fn group_id(&self) -> &String;
+    fn perm_id(&self) -> &String;
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -14,7 +14,7 @@ pub struct BasicData {
     data_id: String,
     data_type: String,
     data_val: String,
-    group_id: String,
+    perm_id: String,
 }
 
 impl BasicData {
@@ -22,32 +22,32 @@ impl BasicData {
         data_id: String,
         data_type: String,
         data_val: String,
-        group_id: String,
+        perm_id: String,
     ) -> BasicData {
         Self {
             data_id,
             data_type,
             data_val,
-            group_id,
+            perm_id,
         }
     }
 }
 
-impl NoiseData for BasicData {
+impl ScubaData for BasicData {
     fn data_id(&self) -> &String {
         &self.data_id
     }
 
     fn data_type(&self) -> &String {
-        &self.data_id
+        &self.data_type
     }
 
     fn data_val(&self) -> &String {
         &self.data_val
     }
 
-    fn group_id(&self) -> &String {
-        &self.group_id
+    fn perm_id(&self) -> &String {
+        &self.perm_id
     }
 }
 
@@ -55,19 +55,19 @@ impl fmt::Display for BasicData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "id: {}, type: {}, group: {}, val: {}",
-            self.data_id, self.data_type, self.group_id, self.data_val
+            "id: {},\n\ttype: {},\n\tperm: {},\n\tval: {}",
+            self.data_id, self.data_type, self.perm_id, self.data_val
         )
     }
 }
 
 #[derive(Clone)]
-pub struct Validator<T: NoiseData> {
+pub struct Validator<T: ScubaData> {
     general_callback: fn(&String, &T) -> bool,
     per_type_callbacks: HashMap<String, fn(&String, &T) -> bool>,
 }
 
-fn default_general_callback<T: NoiseData>(
+fn default_general_callback<T: ScubaData>(
     data_id: &String,
     data_val: &T,
 ) -> bool {
@@ -80,7 +80,7 @@ fn default_general_callback<T: NoiseData>(
     true
 }
 
-impl<T: NoiseData> Validator<T> {
+impl<T: ScubaData> Validator<T> {
     pub fn new(
         general_callback: Option<fn(&String, &T) -> bool>,
     ) -> Validator<T> {
@@ -122,18 +122,22 @@ impl<T: NoiseData> Validator<T> {
 }
 
 #[derive(Clone)]
-pub struct DataStore<T: NoiseData> {
+pub struct DataStore<T: ScubaData> {
     store: HashMap<String, T>,
     validator: Validator<T>,
 }
 
 //fn get_all_data_with_type
-impl<T: NoiseData> DataStore<T> {
+impl<T: ScubaData> DataStore<T> {
     pub fn new() -> DataStore<T> {
         Self {
             store: HashMap::<String, T>::new(),
             validator: Validator::<T>::new(None),
         }
+    }
+
+    pub fn validator(&mut self) -> &mut Validator<T> {
+        &mut self.validator
     }
 
     pub fn get_data(&self, data_id: &String) -> Option<&T> {

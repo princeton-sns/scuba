@@ -1,16 +1,16 @@
 [package]
-name = "noise-server"
+name = "scuba-server"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "noise_server_lib"
+name = "scuba_server_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "noise-server"
+name = "scuba-server"
 path = "src/bin/server.rs"
 
 [dependencies]

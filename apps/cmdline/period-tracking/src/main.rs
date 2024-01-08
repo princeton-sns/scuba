@@ -1,8 +1,8 @@
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,12 +16,12 @@ const EMPTY_SYMPTOMS_VAL: &str = r#"{ "symptoms": [] }"#;
 
 #[derive(Clone)]
 struct PeriodTrackingApp {
-    client: NoiseKVClient,
+    client: TankClient,
 }
 
 impl PeriodTrackingApp {
     pub async fn new() -> PeriodTrackingApp {
-        let client = NoiseKVClient::new(
+        let client = TankClient::new(
             None, None,
             //Some("sns26.cs.princeton.edu"),
             //Some("8080"),
@@ -426,7 +426,7 @@ async fn main() -> ReplResult<()> {
     let mut repl = Repl::new(app.clone())
         .with_name("PeriodTracking App")
         .with_version("v0.1.0")
-        .with_description("Noise period tracking app")
+        .with_description("Scuba period tracking app")
         .with_command(
             Command::new("create_new_device"),
             PeriodTrackingApp::create_new_device,

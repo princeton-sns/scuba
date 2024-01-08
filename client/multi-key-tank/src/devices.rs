@@ -5,7 +5,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::data::{DataStore, NoiseData};
+use crate::data::{DataStore, ScubaData};
 use crate::groups::{Group, GroupStore};
 
 #[derive(Debug, PartialEq, Error)]
@@ -15,7 +15,7 @@ pub enum Error {
 }
 
 #[derive(Clone)]
-pub struct Device<T: NoiseData> {
+pub struct Device<T: ScubaData> {
     idkey: Arc<RwLock<String>>,
     pub group_store: Arc<Mutex<GroupStore>>, // FIXME rwlock
     pub data_store: Arc<RwLock<DataStore<T>>>,
@@ -23,7 +23,7 @@ pub struct Device<T: NoiseData> {
     pending_link_idkey: Arc<RwLock<Option<String>>>,
 }
 
-impl<T: NoiseData> Device<T> {
+impl<T: ScubaData> Device<T> {
     pub fn new(
         idkey: String,
         linked_name_arg: Option<String>,
@@ -152,7 +152,7 @@ impl<T: NoiseData> Device<T> {
         }
 
         // add data
-        // into_iter() needed b/c NoiseData can't implement Clone(), so
+        // into_iter() needed b/c ScubaData can't implement Clone(), so
         // if we want this to stay generic then we need to move data_val
         // from new_data via into_iter() (as opposed to just iter())
         for (data_key, data_val) in new_data.into_iter() {

@@ -2,9 +2,9 @@
 use chrono::offset::Utc;
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
-use single_key_dal::client::Error;
-use single_key_dal::client::NoiseKVClient;
-use single_key_dal::data::NoiseData;
+use single_key_tank::client::Error;
+use single_key_tank::client::TankClient;
+use single_key_tank::data::ScubaData;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -74,7 +74,7 @@ impl Post {
 
 #[derive(Clone)]
 struct FamilyApp {
-    client: NoiseKVClient,
+    client: TankClient,
     ts: Arc<Mutex<Vec<(usize, String, Instant)>>>,
     run_ctr: Arc<RwLock<Option<usize>>>,
     app_filename: String,
@@ -94,7 +94,7 @@ impl FamilyApp {
         dal_recv_filename_d: Option<String>,
         app_filename: String,
     ) -> FamilyApp {
-        let client = NoiseKVClient::new(
+        let client = TankClient::new(
             None,
             None,
             false,

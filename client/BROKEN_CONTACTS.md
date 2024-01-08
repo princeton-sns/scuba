@@ -23,5 +23,5 @@ But now the `get_contacts` command on the sharee returns the empty list
 
 However, nothing seems to check whether a group is a contact or not before 
 sharing, so for the purpose of sketching out applications this is fine for 
-the time being (contacts, as tracked by noise, are messed up, but this shouldn't
+the time being (contacts, as tracked by SCUBA, are messed up, but this shouldn't
 inhibit other functionality)

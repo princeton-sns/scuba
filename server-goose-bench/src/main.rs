@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use noise_server_lib::shard::client_protocol::{EncryptedPerRecipientPayload, EncryptedCommonPayload, EncryptedOutboxMessage};
+use scuba_server_lib::shard::client_protocol::{EncryptedPerRecipientPayload, EncryptedCommonPayload, EncryptedOutboxMessage};
 
 // Horribly unsafe AND unsound, never do this, this WILL break, it's terrible.
 static mut USERNAMES: Option<Vec<String>> = None;

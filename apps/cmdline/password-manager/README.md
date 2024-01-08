@@ -1,7 +1,12 @@
-# How to run (demo)
+# How to run
 
 Spin up two clients in separate windows by running `cargo run` in each window.
-Then run the following commands, where client A and client B are the two clients you just spun up (order doesn't matter).
+When the apps start, you can type `help` to see what commands are available to you.
+Below is a demo that shows one way to use the app.
+
+## Demo
+
+Run the following commands, where client A and client B are the two clients you just spun up (order doesn't matter).
 
 | Client A Cmds | Retvals | Client B Cmds | Retvals |
 | :--- | :--- | :--- | :--- |

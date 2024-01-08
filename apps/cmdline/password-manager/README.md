@@ -15,9 +15,9 @@ Run the following commands, where client A and client B are the two clients you 
 | | | `get_idkey` | `<idkey-B>` |
 | `add_contact <idkey-B>` | | | |
 | `config_app_password -a netflix -l 8 -n --lc --uc -s` | `<config-id>` | | |
-| `add_password -a netflix -s abc -t hotp -u np` | `<pass-id>` | | |
+| `add_password -a netflix -s abc -t hotp -u nataliepopescu` | `<pass-id>` | | |
 | | | `get_name` | `<name-B>` |
 | `share -c <config-id> -p <pass-id> -w <name-B>` | | | |
-| | | `get_data` | `shared pass obj (counter=0)` |
-| | | `get_otp <pass-id>` | `OTP` |
-| `get_data` | `updated pass obj (counter=1)` | `get_data` | `updated pass obj (counter=1)` |
+| | | `get_data <pass-id>` | `shared pass obj (counter=0)` |
+| | | `get_otp <pass-id>` | `<otp>` |
+| `get_data <pass-id>` | `updated pass obj (counter=1)` | `get_data <pass-id>` | `updated pass obj (counter=1)` |

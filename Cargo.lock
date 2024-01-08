@@ -533,7 +533,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -792,7 +792,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -806,7 +806,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -819,7 +819,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -830,7 +830,7 @@ version = "0.1.0"
 dependencies = [
  "itertools 0.10.5",
  "reedline-repl-rs",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -847,7 +847,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -859,7 +859,7 @@ dependencies = [
  "itertools 0.10.5",
  "reedline-repl-rs",
  "serde_json",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -873,7 +873,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-dal",
+ "single-key-tank",
  "tokio",
  "uuid",
 ]
@@ -1916,6 +1916,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "multi-key-tank"
+version = "0.1.0"
+dependencies = [
+ "async-condvar-fair",
+ "async-trait",
+ "futures",
+ "itertools 0.10.5",
+ "parking_lot",
+ "reqwest",
+ "scuba-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "nanorand"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1951,93 +1969,6 @@ dependencies = [
  "bitflags 2.4.1",
  "cfg-if",
  "libc",
-]
-
-[[package]]
-name = "noise-core"
-version = "0.1.0"
-dependencies = [
- "aes",
- "aes-gcm",
- "async-condvar-fair",
- "async-trait",
- "base64 0.21.5",
- "bincode",
- "cbc",
- "ed25519-dalek",
- "eventsource-client",
- "futures",
- "log",
- "noise-server",
- "olm-rs",
- "parking_lot",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.8",
- "tokio",
- "url",
- "urlencoding",
-]
-
-[[package]]
-name = "noise-server"
-version = "0.1.0"
-dependencies = [
- "actix",
- "actix-web",
- "actix-web-lab",
- "async-bincode",
- "base64 0.21.5",
- "bincode",
- "blist",
- "clap",
- "ed25519-dalek",
- "futures-io",
- "futures-sink",
- "futures-util",
- "itertools 0.12.0",
- "rand 0.7.3",
- "reqwest",
- "rkyv",
- "rkyv_codec",
- "serde",
- "serde_json",
- "sha2 0.10.8",
- "tokio",
- "tokio-stream",
- "tokio-util",
-]
-
-[[package]]
-name = "noise-server-bench"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "clap",
- "noise-server",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "noise-server-goose-bench"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "clap",
- "goose",
- "goose-eggs",
- "noise-server",
- "rand 0.8.5",
- "random-string",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -2821,6 +2752,93 @@ dependencies = [
 ]
 
 [[package]]
+name = "scuba-core"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "async-condvar-fair",
+ "async-trait",
+ "base64 0.21.5",
+ "bincode",
+ "cbc",
+ "ed25519-dalek",
+ "eventsource-client",
+ "futures",
+ "log",
+ "olm-rs",
+ "parking_lot",
+ "rand 0.8.5",
+ "reqwest",
+ "scuba-server",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "tokio",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
+name = "scuba-server"
+version = "0.1.0"
+dependencies = [
+ "actix",
+ "actix-web",
+ "actix-web-lab",
+ "async-bincode",
+ "base64 0.21.5",
+ "bincode",
+ "blist",
+ "clap",
+ "ed25519-dalek",
+ "futures-io",
+ "futures-sink",
+ "futures-util",
+ "itertools 0.12.0",
+ "rand 0.7.3",
+ "reqwest",
+ "rkyv",
+ "rkyv_codec",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+]
+
+[[package]]
+name = "scuba-server-bench"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "clap",
+ "reqwest",
+ "scuba-server",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "scuba-server-goose-bench"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "clap",
+ "goose",
+ "goose-eggs",
+ "rand 0.8.5",
+ "random-string",
+ "reqwest",
+ "scuba-server",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2922,24 +2940,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serializable-noise-kv"
-version = "0.1.0"
-dependencies = [
- "async-condvar-fair",
- "async-trait",
- "futures",
- "itertools 0.10.5",
- "noise-core",
- "parking_lot",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3028,7 +3028,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "single-key-dal"
+name = "single-key-tank"
 version = "0.1.0"
 dependencies = [
  "async-condvar-fair",
@@ -3036,9 +3036,9 @@ dependencies = [
  "bincode",
  "futures",
  "itertools 0.10.5",
- "noise-core",
  "parking_lot",
  "reqwest",
+ "scuba-core",
  "serde",
  "serde_json",
  "thiserror",

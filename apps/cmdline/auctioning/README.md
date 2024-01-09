@@ -18,17 +18,18 @@ Then, run the following commands, where client A and client B are the two client
 | | | `get_idkey` | `<idkey-B>` |
 | `add_contact <idkey-B>` | | | |
 | | | `get_name` | `<name-B>` |
-| `add_to_open_auction_list -i <name-B>` | | | |
+| `add_to_open_auction_list <name-B>` | | | |
 | `create_auction -d "book" -b 3 --start-date <todays-date> --start-time <soon> --end-date <todays-date> --end-time <soon+5min>` | `<auc-id>` | | |
-| `announce_open_auction -i <auc-id>` | | | |
+| `announce_open_auction <auc-id>` | | | |
 | | | `get_data <auc-id>` | `auction obj (highest bid=3)` |
 | | | `submit_bid -i <auc-id> -b 5` | `<bid-id>` |
 | `get_name` | `<name-A>` | | |
 | | | `share -i <bid-id> -r <name-A>` | |
 | | | `get_data <auc-id>` | `auction obj (highest bid=3)` |
-| `apply_bid -i <bid-id>` | | | |
+| `(before start) apply_bid -i <bid-id>` | `"TIME TOO EARLY\nInvalid bid."` | | |
+| `(after start) apply_bid -i <bid-id>` | `"Bid submitted!"` | | |
 | | | `get_data <auc-id>` | `updated auction obj (highest bid=5)` |
-| `(before end) announce_sale -i <auc-id>` | `"Auction is not over, cannot announce sale."` | | |
+| `(before end) announce_sale -i <auc-id>` | `"TIME TOO EARLY\nAuction is not over, cannot announce sale."` | | |
 | `(after end) announce_sale -i <auc-id>` | `"Auction is over, sold to client Some(<name-B>) for $Some(5)"` | | |
 
 ### Closed auction
@@ -46,8 +47,9 @@ Then, run the following commands, where client A and client B are the two client
 | `get_name` | `<name-A>` | | |
 | | | `share -i <bid-id> -r <name-A>` | |
 | | | `get_data <auc-id>` | `auction obj (highest bid=3)` |
-| `apply_bid -i <bid-id>` | | | |
+| `(before start) apply_bid -i <bid-id>` | `"TIME TOO EARLY\nInvalid bid."` | | |
+| `(after start) apply_bid -i <bid-id>` | `"Bid submitted!"` | | |
 | | | `get_data <auc-id>` | `updated auction obj (highest bid=5)` |
-| `(before end) announce_sale -i <auc-id>` | `"Auction is not over, cannot announce sale."` | | |
+| `(before end) announce_sale -i <auc-id>` | `"TIME TOO EARLY\nAuction is not over, cannot announce sale."` | | |
 | `(after end) announce_sale -i <auc-id>` | `"Auction is over, sold to client Some(<name-B>) for $Some(5)"` | | |
 

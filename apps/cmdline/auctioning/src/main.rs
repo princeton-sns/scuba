@@ -450,7 +450,7 @@ impl AuctioningApp {
         }
 
         Ok(Some(String::from(format!(
-            "Successfully shared datum {}",
+            "Successfully shared {}",
             id
         ))))
     }
@@ -835,37 +835,37 @@ async fn main() -> ReplResult<()> {
                 .arg(
                     Arg::new("item_description")
                         .required(true)
-                        .long("item_description")
+                        .long("item-description")
                         .short('d'),
                 )
                 .arg(
                     Arg::new("starting_bid")
                         .required(true)
-                        .long("starting_bid")
+                        .long("starting-bid")
                         .short('b'),
                 )
                 .arg(
                     Arg::new("start_date")
                         .required(true)
-                        .long("start_date")
+                        .long("start-date")
                         .help("Format: YYYY-MM-DD"),
                 )
                 .arg(
                     Arg::new("start_time")
                         .required(true)
-                        .long("start_time")
+                        .long("start-time")
                         .help("Format: HH:MM:SS (24-hour)"),
                 )
                 .arg(
                     Arg::new("end_date")
                         .required(true)
-                        .long("end_date")
+                        .long("end-date")
                         .help("Format: YYYY-MM-DD"),
                 )
                 .arg(
                     Arg::new("end_time")
                         .required(true)
-                        .long("end_time")
+                        .long("end-time")
                         .help("Format: HH:MM:SS (24-hour)"),
                 ),
             |args, context| {
@@ -886,16 +886,14 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("apply_bid").arg(
-                Arg::new("bid_id").required(true).long("bid_id").short('i'),
+                Arg::new("bid_id").required(true),
             ),
             |args, context| Box::pin(AuctioningApp::apply_bid(args, context)),
         )
         .with_command_async(
             Command::new("announce_sale").arg(
                 Arg::new("auction_id")
-                    .required(true)
-                    .long("auction_id")
-                    .short('i'),
+                    .required(true),
             ),
             |args, context| {
                 Box::pin(AuctioningApp::announce_sale(args, context))
@@ -904,9 +902,7 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("add_to_open_auction_list").arg(
                 Arg::new("client_id")
-                    .required(true)
-                    .long("client_id")
-                    .short('i'),
+                    .required(true),
             ),
             |args, context| {
                 Box::pin(AuctioningApp::add_to_open_auction_list(args, context))
@@ -915,9 +911,7 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("announce_open_auction").arg(
                 Arg::new("auction_id")
-                    .required(true)
-                    .long("auction_id")
-                    .short('i'),
+                    .required(true),
             ),
             |args, context| {
                 Box::pin(AuctioningApp::announce_open_auction(args, context))

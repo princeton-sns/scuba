@@ -26,10 +26,10 @@ Then, run the following commands, where client A and client B are the two client
 | `get_name` | `<name-A>` | | |
 | | | `share -i <bid-id> -r <name-A>` | |
 | | | `get_data <auc-id>` | `auction obj (highest bid=3)` |
-| `(before start) apply_bid -i <bid-id>` | `"TIME TOO EARLY\n Invalid bid."` | | |
+| `(before start) apply_bid -i <bid-id>` | `"TIME TOO EARLY. Invalid bid."` | | |
 | `(after start) apply_bid -i <bid-id>` | `"Bid submitted!"` | | |
 | | | `get_data <auc-id>` | `updated auction obj (highest bid=5)` |
-| `(before end) announce_sale -i <auc-id>` | `"TIME TOO EARLY\n Auction is not over, cannot announce sale."` | | |
+| `(before end) announce_sale -i <auc-id>` | `"TIME TOO EARLY. Auction is not over, cannot announce sale."` | | |
 | `(after end) announce_sale -i <auc-id>` | `"Auction is over, sold to client Some(<name-B>) for $Some(5)"` | | |
 
 ### Closed auction
@@ -47,9 +47,9 @@ Then, run the following commands, where client A and client B are the two client
 | `get_name` | `<name-A>` | | |
 | | | `share -i <bid-id> -r <name-A>` | |
 | | | `get_data <auc-id>` | `auction obj (highest bid=3)` |
-| `(before start) apply_bid -i <bid-id>` | `"TIME TOO EARLY\n Invalid bid."` | | |
+| `(before start) apply_bid -i <bid-id>` | `"TIME TOO EARLY. Invalid bid."` | | |
 | `(after start) apply_bid -i <bid-id>` | `"Bid submitted!"` | | |
 | | | `get_data <auc-id>` | `updated auction obj (highest bid=5)` |
-| `(before end) announce_sale -i <auc-id>` | `"TIME TOO EARLY\n Auction is not over, cannot announce sale."` | | |
+| `(before end) announce_sale -i <auc-id>` | `"TIME TOO EARLY. Auction is not over, cannot announce sale."` | | |
 | `(after end) announce_sale -i <auc-id>` | `"Auction is over, sold to client Some(<name-B>) for $Some(5)"` | | |
 

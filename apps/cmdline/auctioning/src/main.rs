@@ -90,21 +90,21 @@ impl Auction {
 
         // check after start time
         if cur_date.cmp(&self.start_date) == Ordering::Less {
-            println!("DATE TOO EARLY");
+            println!("DATE TOO EARLY.");
             return false;
         }
         if cur_time.cmp(&self.start_time) == Ordering::Less {
-            println!("TIME TOO EARLY");
+            println!("TIME TOO EARLY.");
             return false;
         }
 
         // check before end time
         if cur_date.cmp(&self.end_date) == Ordering::Greater {
-            println!("DATE TOO LATE");
+            println!("DATE TOO LATE.");
             return false;
         }
         if cur_time.cmp(&self.end_time) == Ordering::Greater {
-            println!("TIME TOO LATE");
+            println!("TIME TOO LATE.");
             return false;
         }
 
@@ -122,11 +122,11 @@ impl Auction {
 
         // check after end time
         if cur_date.cmp(&self.end_date) == Ordering::Less {
-            println!("DATE TOO EARLY");
+            println!("DATE TOO EARLY.");
             return false;
         }
         if cur_time.cmp(&self.end_time) == Ordering::Less {
-            println!("TIME TOO EARLY");
+            println!("TIME TOO EARLY.");
             return false;
         }
         true

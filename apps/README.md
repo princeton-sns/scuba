@@ -36,7 +36,7 @@ Each application client can be spun up by running `cargo run` in the relevant su
 - Implements both open and closed auctions
 - Each auction is organized and decided by an auctioneer client
 - In open auctions, clients must be added to the open auction list (via `add_to_open_auction_list`)
-- Uses single-key DAL to achieve sequential consistency
+- Uses single-key TANK to achieve sequential consistency
 
 ## Calendar
 
@@ -47,12 +47,21 @@ Each application client can be spun up by running `cargo run` in the relevant su
 - Providers share their overall availability with all patients
 - Providers either confirm or deny requested appointments
 - When a provider confirms an appointment, they also atomically update their availability object for all patients
-- Should use transactional DAL to achieve serializability (currently using single-key DAL)
+- TODO Should use transactional TANK to achieve serializability (currently using single-key TANK)
 
 ## Chess
 
 - [ ] compiles
 - [ ] runs
+
+## Family Social Media
+
+- [x] compiles
+- [x] runs
+
+- Family members can interact within "families"
+- They can create posts, comment on posts, and share their locations
+- Uses single-key TANK to achieve causal consistency
 
 ## Lightswitch
 
@@ -67,18 +76,10 @@ Each application client can be spun up by running `cargo run` in the relevant su
 - Implements both TOTP and HOTP
 - Passwords are stored along with other metadata (application and user names)
 - Passwords can also be automatically generated
-- Uses single-key DAL to achieve linearizability
+- Uses single-key TANK to achieve linearizability
 
 ## Period Tracker
 
 - [ ] compiles
 - [ ] runs
 
-## Family Social Media
-
-- [x] compiles
-- [ ] runs
-
-- Family members can interact within "families"
-- They can create posts, comment on posts, and share their locations
-- Uses single-key DAL to achieve causal consistency

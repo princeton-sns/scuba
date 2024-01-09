@@ -456,7 +456,30 @@ impl FamilyApp {
         Ok(Some(itertools::join(linked_devices, "\n")))
     }
 
-    pub async fn get_location(
+    pub async fn get_location_id(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        let member_obj = context
+            .client
+            .get_data(&MEMBER_PREFIX.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let member: Member =
+            serde_json::from_str(member_obj.data_val()).unwrap();
+
+        let loc_id = member.location_id;
+
+        Ok(Some(String::from(format!("{}", loc_id))))
+    }
+
+    pub async fn get_own_location(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -1134,9 +1157,12 @@ async fn main() -> ReplResult<()> {
                 Box::pin(FamilyApp::get_linked_devices(context))
             },
         )
-        .with_command_async(Command::new("get_location"), |_, context| {
-            Box::pin(FamilyApp::get_location(context))
+        .with_command_async(Command::new("get_location_id"), |_, context| {
+            Box::pin(FamilyApp::get_location_id(context))
         })
+        //.with_command_async(Command::new("get_own_location"), |_, context| {
+        //    Box::pin(FamilyApp::get_own_location(context))
+        //})
         .with_command_async(Command::new("init_family"), |_, context| {
             Box::pin(FamilyApp::init_family(context))
         })

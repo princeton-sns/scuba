@@ -83,9 +83,8 @@ impl Auction {
     }
 
     // returns true if updated, false otherwise
-    fn submit_bid(&mut self, bid: &Bid) -> bool {
+    fn apply_bid(&mut self, bid: &Bid) -> bool {
         let cur_datetime = Local::now();
-        println!("cur_datetime: {:?}", cur_datetime.clone());
         let cur_date = cur_datetime.date_naive();
         let cur_time = cur_datetime.time();
 
@@ -100,7 +99,6 @@ impl Auction {
         }
 
         // check before end time
-        println!("\n{:?}\n", cur_date.cmp(&self.end_date));
         if cur_date.cmp(&self.end_date) == Ordering::Greater {
             println!("DATE TOO LATE");
             return false;
@@ -628,10 +626,10 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(auction_id, AUCTION_PREFIX.to_owned(), auction_json, None, None, false)
+            .set_data(auction_id.clone(), AUCTION_PREFIX.to_owned(), auction_json, None, None, false)
             .await
         {
-            Ok(_) => Ok(Some(String::from("Successfully created auction"))),
+            Ok(_) => Ok(Some(String::from(format!("Successfully created auction with id {}", &auction_id)))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not create auction: {}",
                 err.to_string()
@@ -640,7 +638,7 @@ impl AuctioningApp {
     }
 
     // called by buyer
-    pub async fn create_bid(
+    pub async fn submit_bid(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -660,10 +658,10 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(bid_id, BID_PREFIX.to_owned(), bid_json, None, None, false)
+            .set_data(bid_id.clone(), BID_PREFIX.to_owned(), bid_json, None, None, false)
             .await
         {
-            Ok(_) => Ok(Some(String::from("Successfully created bid"))),
+            Ok(_) => Ok(Some(String::from(format!("Successfully created bid with id {}", &bid_id)))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not create bid: {}",
                 err.to_string()
@@ -672,7 +670,7 @@ impl AuctioningApp {
     }
 
     // called by auctioneer
-    pub async fn submit_bid(
+    pub async fn apply_bid(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -705,7 +703,7 @@ impl AuctioningApp {
         let mut auction: Auction =
             serde_json::from_str(auction_data_opt.unwrap().data_val()).unwrap();
 
-        if auction.submit_bid(&bid) {
+        if auction.apply_bid(&bid) {
             let auction_json = serde_json::to_string(&auction).unwrap();
             match context
                 .client
@@ -770,6 +768,7 @@ impl AuctioningApp {
                 )
                 .await
             {
+                // TODO if sold_bidder + sold_price == Some -> .unwrap()
                 Ok(_) => Ok(Some(String::from(format!(
                     "Auction is over, sold to client {:?} for ${:?}",
                     auction.sold_bidder, auction.sold_price
@@ -855,7 +854,7 @@ async fn main() -> ReplResult<()> {
                     Arg::new("start_time")
                         .required(true)
                         .long("start_time")
-                        .help("Format: HH:MM:SS"),
+                        .help("Format: HH:MM:SS (24-hour)"),
                 )
                 .arg(
                     Arg::new("end_date")
@@ -867,14 +866,15 @@ async fn main() -> ReplResult<()> {
                     Arg::new("end_time")
                         .required(true)
                         .long("end_time")
-                        .help("Format: HH:MM:SS"),
+                        .help("Format: HH:MM:SS (24-hour)"),
                 ),
             |args, context| {
                 Box::pin(AuctioningApp::create_auction(args, context))
             },
         )
         .with_command_async(
-            Command::new("create_bid")
+            // TODO automatically share with auctioneer
+            Command::new("submit_bid")
                 .arg(
                     Arg::new("auction_id")
                         .required(true)
@@ -882,13 +882,13 @@ async fn main() -> ReplResult<()> {
                         .short('i'),
                 )
                 .arg(Arg::new("bid").required(true).long("bid").short('b')),
-            |args, context| Box::pin(AuctioningApp::create_bid(args, context)),
+            |args, context| Box::pin(AuctioningApp::submit_bid(args, context)),
         )
         .with_command_async(
-            Command::new("submit_bid").arg(
+            Command::new("apply_bid").arg(
                 Arg::new("bid_id").required(true).long("bid_id").short('i'),
             ),
-            |args, context| Box::pin(AuctioningApp::submit_bid(args, context)),
+            |args, context| Box::pin(AuctioningApp::apply_bid(args, context)),
         )
         .with_command_async(
             Command::new("announce_sale").arg(

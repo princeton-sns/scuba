@@ -11,24 +11,24 @@ use uuid::Uuid;
 
 /*
  * Calendar
- * - [x] allows clients to book appointments with providers given the
+ * - [x] allows patients to book appointments with providers given the
  *   provider's availability
  * - how appointments are made
- *   - [x] client requests single time with provider, which the provider
+ *   - [x] patient requests single time with provider, which the provider
  *     must then confirm + update their own availability
- *   - [ ] client requests a prioritized list of appointment times which
+ *   - [ ] patient requests a prioritized list of appointment times which
  *     the provider can automatically confirm/deny based on the
  *     highest-pri slot that is available
  *   - [ ] provider puts the appointment confirmation and availability
  *     update in a transaction (serializability)
- * - [x] providers share their availability with all clients
- * - [x] appointments are private to provider and the client whom the
+ * - [x] providers share their availability with all patients
+ * - [x] appointments are private to provider and the patient whom the
  *   appointment is with, but update the provider's overall
- *   availability, visible to their other clients
+ *   availability, visible to their other patients
  * - [ ] providers can also block off times on their end without needing
  *   an appointment to be scheduled, e.g. for lunch breaks
- * - [x] the same device can act as both a client and provider
- * - [x] clients can have multiple providers
+ * - [x] the same device can act as both a patient and provider
+ * - [x] patients can have multiple providers
  * - [x] providers can have their own providers
  */
 
@@ -84,35 +84,37 @@ impl Blocked {
 /*
  * The following structs track information that is private to the
  * current-acting set of linked devices (e.g. user), whether that user
- * is a client, provider, or both.
+ * is a patient, provider, or both.
  */
 
 // TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Provider {
     appointment_ids: Vec<String>,
-    //clients: Vec<String>,
+    availability_id: String,
+    //patients: Vec<String>,
 }
 
 impl Provider {
-    fn new(durations: Option<Vec<u32>>) -> Self {
+    fn new(_durations: Option<Vec<u32>>, availability_id: String) -> Self {
         Provider {
             appointment_ids: Vec::<String>::new(),
-            //clients: Vec::<String>::new(),
+            availability_id,
+            //patients: Vec::<String>::new(),
         }
     }
 }
 
 // TODO impl Display
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Client {
+struct Patient {
     appointment_ids: Vec<String>,
     //providers: Vec<String>,
 }
 
-impl Client {
+impl Patient {
     fn new() -> Self {
-        Client {
+        Patient {
             appointment_ids: Vec::<String>::new(),
             //providers: Vec::<String>::new(),
         }
@@ -123,21 +125,21 @@ impl Client {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Roles {
     provider: Option<Provider>,
-    client: Option<Client>,
+    patient: Option<Patient>,
 }
 
 impl Roles {
     fn new() -> Self {
         Roles {
             provider: None,
-            client: None,
+            patient: None,
         }
     }
 }
 
 /*
  * The AppointmentInfo struct describes each appointment made and is
- * shared between client and provider
+ * shared between patient and provider
  */
 
 // TODO impl Display
@@ -146,9 +148,9 @@ struct AppointmentInfo {
     date: NaiveDate,
     time: NaiveTime,
     duration_min: u32,
-    client_notes: Option<String>,
+    patient_notes: Option<String>,
     pending: bool,
-    // TODO add perm field or resolved writer idkeys if clients make apptmts,
+    // TODO add perm field or resolved writer idkeys if patients make apptmts,
     // although data_store doesn't have access to metadata_store, so this would
     // constitute a larger change in Tank (the two are separate for locking
     // purposes now)
@@ -158,13 +160,13 @@ impl AppointmentInfo {
     fn new(
         date: NaiveDate,
         time: NaiveTime,
-        client_notes: Option<String>,
+        patient_notes: Option<String>,
     ) -> AppointmentInfo {
         AppointmentInfo {
             date,
             time,
             duration_min: DEFAULT_DUR,
-            client_notes,
+            patient_notes,
             pending: true,
         }
     }
@@ -172,7 +174,7 @@ impl AppointmentInfo {
 
 /*
  * The Availability struct info is shared by providers with their
- * clients. It obfuscates all appointment details or blocked slots and
+ * patients. It obfuscates all appointment details or blocked slots and
  * simply shows them all as "busy".
  */
 
@@ -354,8 +356,8 @@ impl CalendarApp {
     }
 
     // Called by provider only; upon contact addition, provider shares
-    // availability object with client
-    pub async fn add_client(
+    // availability object with patient
+    pub async fn add_patient(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -370,11 +372,11 @@ impl CalendarApp {
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
         match context.client.add_contact(idkey.clone()).await {
             Ok(_) => Ok(Some(String::from(format!(
-                "Client with idkey <{}> added",
+                "Patient with idkey <{}> added",
                 idkey
             )))),
             Err(err) => Ok(Some(String::from(format!(
-                "Could not add client: {}",
+                "Could not add patient: {}",
                 err.to_string()
             )))),
         }
@@ -391,81 +393,37 @@ impl CalendarApp {
             )));
         }
 
-        let client = args.get_one::<String>("client_name").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let vec = vec![&client];
-
-        let mut avail_id: String = AVAIL_PREFIX.to_owned();
-        avail_id.push_str("/");
-        // <avail_id> = avail/<provider_id>
-        avail_id.push_str(&context.client.linked_name());
-
-        match context.client.add_do_readers(avail_id, vec).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Availability shared with client {}",
-                client
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not share availability: {}",
-                err.to_string()
-            )))),
-        }
-    }
-
-    /*
-    // Called by provider
-    pub async fn add_client(
-        args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        // check that provider role exists
-        let roles_id = ROLES_PREFIX.to_owned();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let roles_opt = data_store_guard.get_data(&roles_id);
-
-        match roles_opt {
-            Some(roles_obj) => {
+        let patient = args.get_one::<String>("patient_name").unwrap().to_string();
+        let vec = vec![&patient];
+        match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
+            Ok(Some(roles_obj)) => {
                 let mut roles: Roles =
                     serde_json::from_str(roles_obj.data_val()).unwrap();
 
-                match roles.provider {
-                    Some(provider) => {
-                        // add client
-                        let client_idkey =
-                            args.get_one::<String>("client_idkey").unwrap().to_string();
-
-                        match context.client.add_contact(client_idkey.clone()).await {
-                            Ok(_) => Ok(Some(String::from(format!(
-                                "Client with idkey <{}> added",
-                                idkey
-                            )))),
-                            Err(err) => Ok(Some(String::from(format!(
-                                "Could not add client: {}",
-                                err.to_string()
-                            )))),
-                        }
+                if let Some(provider_role) = roles.provider {
+                    match context.client.add_do_readers(provider_role.availability_id, vec).await {
+                        Ok(_) => Ok(Some(String::from(format!(
+                            "Availability shared with patient {}",
+                            patient
+                        )))),
+                        Err(err) => Ok(Some(String::from(format!(
+                            "Could not share availability: {}",
+                            err.to_string()
+                        )))),
                     }
-                    None => Ok(Some(String::from(
-                        "Provider role does not exist; cannot add client.",
-                    ))),
+                } else {
+                    return Ok(Some(String::from("No provider role initialized.")));
                 }
-            }
-            None => {
-                Ok(Some(String::from("Roles do not exist; cannot add client")))
-            }
+            },
+            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting roles: {}", err.to_string()
+            )))),
         }
-    }
-    */
 
-    pub fn get_data(
+    }
+
+    pub async fn get_data(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -475,40 +433,25 @@ impl CalendarApp {
             )));
         }
 
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         if let Some(id) = args.get_one::<String>("id") {
-            match data_store_guard.get_data(id) {
-                Some(data) => Ok(Some(String::from(format!("{}", data)))),
-                None => Ok(Some(String::from(format!(
+            match context.client.get_data(id).await {
+                Ok(Some(data)) => Ok(Some(String::from(format!("{}", data)))),
+                Ok(None) => Ok(Some(String::from(format!(
                     "Data with id {} does not exist",
                     id
                 )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get data: {}",
+                    err.to_string()
+                )))),
             }
         } else {
-            let data = data_store_guard.get_all_data().values();
+            let data = context.client.get_all_data().await.unwrap();
             Ok(Some(itertools::join(data, "\n")))
         }
     }
 
-    pub fn get_perms(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perms = meta_store_guard.get_all_perms().values();
-
-        Ok(Some(itertools::join(perms, "\n")))
-    }
-
-    pub fn get_perm(
+    pub async fn get_perms(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -518,38 +461,25 @@ impl CalendarApp {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap();
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let perm_opt = meta_store_guard.get_perm(&id);
-
-        match perm_opt {
-            Some(perm) => Ok(Some(String::from(format!("{}", perm)))),
-            None => Ok(Some(String::from(format!(
-                "Perm with id {} does not exist",
-                id
-            )))),
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_perm(id).await {
+                Ok(Some(perm)) => Ok(Some(String::from(format!("{}", perm)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Perm with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get perm: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let perms = context.client.get_all_perms().await.unwrap();
+            Ok(Some(itertools::join(perms, "\n")))
         }
     }
 
-    pub fn get_groups(
-        _args: ArgMatches,
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
-        if !context.exists_device() {
-            return Ok(Some(String::from(
-                "Device does not exist, cannot run command.",
-            )));
-        }
-
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let groups = meta_store_guard.get_all_groups().values();
-
-        Ok(Some(itertools::join(groups, "\n")))
-    }
-
-    pub fn get_group(
+    pub async fn get_groups(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -559,22 +489,25 @@ impl CalendarApp {
             )));
         }
 
-        let id = args.get_one::<String>("id").unwrap();
-        let device_guard = context.client.device.read();
-        let meta_store_guard = device_guard.as_ref().unwrap().meta_store.read();
-        let group_opt = meta_store_guard.get_group(&id);
-
-        match group_opt {
-            Some(group) => Ok(Some(String::from(format!("{}", group)))),
-            None => Ok(Some(String::from(format!(
-                "Group with id {} does not exist",
-                id
-            )))),
+        if let Some(id) = args.get_one::<String>("id") {
+            match context.client.get_group(id).await {
+                Ok(Some(group)) => Ok(Some(String::from(format!("{}", group)))),
+                Ok(None) => Ok(Some(String::from(format!(
+                    "Group with id {} does not exist",
+                    id
+                )))),
+                Err(err) => Ok(Some(String::from(format!(
+                    "Could not get group: {}",
+                    err.to_string()
+                )))),
+            }
+        } else {
+            let groups = context.client.get_all_groups().await.unwrap();
+            Ok(Some(itertools::join(groups, "\n")))
         }
     }
 
-    pub fn get_roles(
-        _args: ArgMatches,
+    pub async fn get_roles(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
         if !context.exists_device() {
@@ -583,122 +516,173 @@ impl CalendarApp {
             )));
         }
 
-        // get roles
-        let roles_id = ROLES_PREFIX.to_owned();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let roles_opt = data_store_guard.get_data(&roles_id);
-
-        match roles_opt {
-            Some(roles_obj) => {
-                let roles: Roles =
+        match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
+            Ok(Some(roles_obj)) => {
+                let mut roles: Roles =
                     serde_json::from_str(roles_obj.data_val()).unwrap();
                 Ok(Some(String::from(format!("{:?}", roles))))
             }
-            None => Ok(Some(String::from("No roles found."))),
+            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting roles: {}", err.to_string()
+            )))),
         }
     }
 
-    pub async fn init_role(
-        args: ArgMatches,
+    pub async fn init_provider_role(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
-        let mut init_provider = false;
-        let mut init_client = false;
-        if args.get_flag("provider") {
-            init_provider = true;
-        }
-        if args.get_flag("client") {
-            init_client = true;
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
         }
 
-        if !init_client && !init_provider {
-            return Ok(Some(String::from("No roles to init.")));
-        }
-
-        // get roles
-        let roles_id = ROLES_PREFIX.to_owned();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let roles_opt = data_store_guard.get_data(&roles_id);
-
-        match roles_opt {
-            Some(roles_obj) => {
+        match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
+            Ok(Some(roles_obj)) => {
                 let mut roles: Roles =
                     serde_json::from_str(roles_obj.data_val()).unwrap();
 
-                if init_provider {
-                    //match args.get_many::<String>("durations") {
-                    //    Some(arg_durations) => {
-                    //        let durations = arg_durations
-                    //            .map(|s| s.parse::<u32>().unwrap())
-                    //            .collect::<Vec<u32>>();
-                    //        roles.provider =
-                    //            Some(Provider::new(Some(durations)));
-                    //    }
-                    //    None => roles.provider = Some(Provider::new(None)),
-                    //}
+                // init Availability object
+                let avail = Availability::new();
+                let mut avail_id: String = AVAIL_PREFIX.to_owned();
+                avail_id.push_str("/");
+                // <avail_id> = avail/<provider_id>
+                avail_id.push_str(&context.client.linked_name());
+                let json_avail = serde_json::to_string(&avail).unwrap();
 
-                    roles.provider = Some(Provider::new(None));
-
-                    // init Availability object
-                    let avail = Availability::new();
-                    let mut avail_id: String = AVAIL_PREFIX.to_owned();
-                    avail_id.push_str("/");
-                    // <avail_id> = avail/<provider_id>
-                    avail_id.push_str(&context.client.linked_name());
-                    let json_avail = serde_json::to_string(&avail).unwrap();
-
-                    let res = context
-                        .client
-                        .set_data(
-                            avail_id,
-                            AVAIL_PREFIX.to_string(),
-                            json_avail,
-                            None,
-                            None,
-                            false,
-                        )
-                        .await;
-                    if res.is_err() {
-                        return Ok(Some(String::from(format!(
-                            "Error creating availability: {}",
-                            res.err().unwrap().to_string()
-                        ))));
-                    }
+                let res = context
+                    .client
+                    .set_data(
+                        avail_id.clone(),
+                        AVAIL_PREFIX.to_string(),
+                        json_avail,
+                        None,
+                        None,
+                        false,
+                    )
+                    .await;
+                if res.is_err() {
+                    return Ok(Some(String::from(format!(
+                        "Error creating provider availability: {}",
+                        res.err().unwrap().to_string()
+                    ))));
                 }
 
-                if init_client {
-                    roles.client = Some(Client::new());
-                }
+                //match args.get_many::<String>("durations") {
+                //    Some(arg_durations) => {
+                //        let durations = arg_durations
+                //            .map(|s| s.parse::<u32>().unwrap())
+                //            .collect::<Vec<u32>>();
+                //        roles.provider =
+                //            Some(Provider::new(Some(durations)));
+                //    }
+                //    None => roles.provider = Some(Provider::new(None)),
+                //}
 
-                let json_string = serde_json::to_string(&roles).unwrap();
+                roles.provider = Some(Provider::new(None, avail_id.clone()));
+                let json_roles = serde_json::to_string(&roles).unwrap();
 
                 match context
                     .client
                     .set_data(
-                        roles_id.clone(),
                         ROLES_PREFIX.to_string(),
-                        json_string,
+                        ROLES_PREFIX.to_string(),
+                        json_roles,
                         None,
                         None,
                         false,
                     )
                     .await
                 {
-                    Ok(_) => Ok(Some(String::from("Created role(s)."))),
+                    Ok(_) => Ok(Some(String::from("Created provider role."))),
                     Err(err) => Ok(Some(String::from(format!(
-                        "Error creating role(s): {}",
+                        "Error creating provider role: {}",
                         err.to_string()
                     )))),
                 }
-            }
-            None => Ok(Some(String::from("Roles do not exist."))),
+            },
+            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting roles: {}", err.to_string()
+            )))),
         }
     }
 
-    // Called by either client or provider
-    pub fn get_appointment(
+    pub async fn init_patient_role(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
+            Ok(Some(roles_obj)) => {
+                let mut roles: Roles =
+                    serde_json::from_str(roles_obj.data_val()).unwrap();
+
+                roles.patient = Some(Patient::new());
+                let json_roles = serde_json::to_string(&roles).unwrap();
+
+                match context
+                    .client
+                    .set_data(
+                        ROLES_PREFIX.to_string(),
+                        ROLES_PREFIX.to_string(),
+                        json_roles,
+                        None,
+                        None,
+                        false,
+                    )
+                    .await
+                {
+                    Ok(_) => Ok(Some(String::from("Created patient role."))),
+                    Err(err) => Ok(Some(String::from(format!(
+                        "Error creating patient role: {}",
+                        err.to_string()
+                    )))),
+                }
+            },
+            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting roles: {}", err.to_string()
+            )))),
+        }
+    }
+
+    pub async fn get_availability_id(
+        context: &mut Arc<Self>,
+    ) -> ReplResult<Option<String>> {
+        if !context.exists_device() {
+            return Ok(Some(String::from(
+                "Device does not exist, cannot run command.",
+            )));
+        }
+
+        match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
+            Ok(Some(roles_obj)) => {
+                let mut roles: Roles =
+                    serde_json::from_str(roles_obj.data_val()).unwrap();
+
+                if let Some(provider_role) = roles.provider {
+                    return Ok(Some(String::from(format!(
+                        "Availability id is {}", provider_role.availability_id
+                    ))));
+                } else {
+                    return Ok(Some(String::from("No provider role initialized.")));
+                }
+            },
+            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting roles: {}", err.to_string()
+            )))),
+        }
+    }
+
+    // Called by either patient or provider
+    pub async fn get_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -709,26 +693,25 @@ impl CalendarApp {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let val_opt = data_store_guard.get_data(&id);
-
-        match val_opt {
-            Some(val_obj) => {
+        match context.client.get_data(&id).await {
+            Ok(Some(val_obj)) => {
                 let val: AppointmentInfo =
                     serde_json::from_str(val_obj.data_val()).unwrap();
                 Ok(Some(String::from(format!("{:?}", val))))
-            }
-            None => Ok(Some(String::from(format!(
+            },
+            Ok(None) => Ok(Some(String::from(format!(
                 "Appointment with id {} does not exist.",
                 id,
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting appointment: {}", err.to_string()
             )))),
         }
     }
 
     /*
     // TODO
-    // Called by client (see all appointments with one provider)
+    // Called by patient (see all appointments with one provider)
     pub fn get_provider_appointments(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -737,8 +720,8 @@ impl CalendarApp {
     }
 
     // TODO
-    // Called by provider (see all appointments with one client)
-    pub fn get_client_appointments(
+    // Called by provider (see all appointments with one patient)
+    pub fn get_patient_appointments(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -747,7 +730,7 @@ impl CalendarApp {
     */
 
     // TODO
-    // Called by client
+    // Called by patient
     //pub fn view_provider_availability(
     //    args: ArgMatches,
     //    context: &mut Arc<Self>,
@@ -763,7 +746,7 @@ impl CalendarApp {
     //    Ok(Some(String::from("TBD")))
     //}
 
-    // Called by client
+    // Called by patient
     pub async fn request_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -863,16 +846,12 @@ impl CalendarApp {
             )));
         }
 
-        // update pending field on appointment
-        let id = args.get_one::<String>("appt_id").unwrap().to_string();
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
-        let appt_opt = data_store_guard.get_data(&id);
-
-        match appt_opt {
-            Some(appt_str) => {
+        let id = args.get_one::<String>("id").unwrap().to_string();
+        match context.client.get_data(&id).await {
+            Ok(Some(appt_obj)) => {
+                // update pending field on appointment
                 let mut appt: AppointmentInfo =
-                    serde_json::from_str(appt_str.data_val()).unwrap();
+                    serde_json::from_str(appt_obj.data_val()).unwrap();
 
                 // TODO check that appointment doesn't conflict with any
                 // existing busy slots
@@ -880,8 +859,10 @@ impl CalendarApp {
                 appt.pending = false;
                 let json_string = serde_json::to_string(&appt).unwrap();
 
-                // TODO put following two operations into a transaction
-                match context
+                // TODO put following operations into a transaction
+
+                // confirm appointment
+                let mut res = context
                     .client
                     .set_data(
                         id.clone(),
@@ -891,69 +872,85 @@ impl CalendarApp {
                         None,
                         false,
                     )
-                    .await
-                {
-                    Ok(_) => {
-                        // update availability
-                        let datetime = NaiveDateTime::new(appt.date, appt.time);
-                        let mut avail_id: String = AVAIL_PREFIX.to_owned();
-                        avail_id.push_str("/");
-                        // <avail_id> = avail/<provider_id>
-                        avail_id.push_str(&context.client.linked_name());
-                        let avail_opt = data_store_guard.get_data(&avail_id);
+                    .await;
+                if res.is_err() {
+                    return Ok(Some(String::from(format!(
+                        "Could not update appointment: {}",
+                        res.err().unwrap().to_string()
+                    ))));
+                }
 
-                        match avail_opt {
-                            Some(avail_str) => {
-                                let mut avail: Availability =
-                                    serde_json::from_str(avail_str.data_val())
-                                        .unwrap();
-                                avail.add_busy_slot(datetime, DEFAULT_DUR);
-                                let json_avail =
-                                    serde_json::to_string(&avail).unwrap();
+                // update availability
+                let datetime = NaiveDateTime::new(appt.date, appt.time);
 
-                                match context
-                                    .client
-                                    .set_data(
-                                        AVAIL_PREFIX.to_string(),
-                                        AVAIL_PREFIX.to_string(),
-                                        json_avail,
-                                        None,
-                                        None,
-                                        false,
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => Ok(Some(String::from(format!(
-                                        "Confirmed appointment with id {}",
-                                        id
-                                    )))),
-                                    Err(err) => {
-                                        Ok(Some(String::from(format!(
-                                            "Could not modify availability: {}",
-                                            err
-                                        ))))
-                                    }
+                match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
+                    Ok(Some(roles_obj)) => {
+                        // get availability id
+                        let mut roles: Roles =
+                            serde_json::from_str(roles_obj.data_val()).unwrap();
+
+                        if let Some(provider_role) = roles.provider {
+                            let mut res = context.client.get_data(&provider_role.availability_id).await;
+                            if res.is_err() {
+                                return Ok(Some(String::from(format!(
+                                    "Error getting availability: {}",
+                                    res.err().unwrap().to_string()
+                                ))));
+                            }
+
+                            // add busy slot
+                            let mut avail: Availability =
+                                serde_json::from_str(res.unwrap().unwrap().data_val())
+                                    .unwrap();
+                            avail.add_busy_slot(datetime, DEFAULT_DUR);
+                            let json_avail =
+                                serde_json::to_string(&avail).unwrap();
+
+                            // set new avail obj
+                            match context
+                                .client
+                                .set_data(
+                                    provider_role.availability_id,
+                                    AVAIL_PREFIX.to_string(),
+                                    json_avail,
+                                    None,
+                                    None,
+                                    false,
+                                )
+                                .await
+                            {
+                                Ok(_) => Ok(Some(String::from(format!(
+                                    "Confirmed appointment with id {}",
+                                    id
+                                )))),
+                                Err(err) => {
+                                    Ok(Some(String::from(format!(
+                                        "Could not modify availability: {}",
+                                        err
+                                    ))))
                                 }
                             }
-                            None => Ok(Some(String::from(
-                                "Availability object does not exist - bug.",
-                            ))),
+                        } else {
+                            return Ok(Some(String::from("No provider role initialized.")));
                         }
-                    }
+                    },
+                    Ok(None) => Ok(Some(String::from("Roles do not exist."))),
                     Err(err) => Ok(Some(String::from(format!(
-                        "Could not confirm appointment: {}",
-                        err.to_string()
+                        "Error getting roles: {}", err.to_string()
                     )))),
                 }
-            }
-            None => Ok(Some(String::from(format!(
+            },
+            Ok(None) => Ok(Some(String::from(format!(
                 "Appointment with id {} does not exist.",
                 id,
+            )))),
+            Err(err) => Ok(Some(String::from(format!(
+                "Error getting appointment: {}", err.to_string()
             )))),
         }
     }
 
-    // Called by client
+    // Called by patient
     //pub async fn edit_appointment(
     //    args: ArgMatches,
     //    context: &mut Arc<Self>,
@@ -993,20 +990,20 @@ async fn main() -> ReplResult<()> {
         .with_command(Command::new("get_name"), CalendarApp::get_name)
         .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
         .with_command_async(
-            Command::new("add_client").arg(Arg::new("idkey").required(true)),
-            |args, context| Box::pin(CalendarApp::add_client(args, context)),
+            Command::new("add_patient").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(CalendarApp::add_patient(args, context)),
         )
         .with_command_async(
             Command::new("share_availability")
-                .arg(Arg::new("client_name").required(true)),
+                .arg(Arg::new("patient_name").required(true)),
             |args, context| {
                 Box::pin(CalendarApp::share_availability(args, context))
             },
         )
         //.with_command_async(
-        //    Command::new("add_client").arg(Arg::new("client_idkey").
+        //    Command::new("add_patient").arg(Arg::new("patient_idkey").
         // required(true).short('i')),    |args, context|
-        // Box::pin(CalendarApp::add_client(args, context)),
+        // Box::pin(CalendarApp::add_patient(args, context)),
         //)
         //.with_command_async(
         //    Command::new("add_provider").arg(Arg::new("provider_idkey").
@@ -1019,33 +1016,32 @@ async fn main() -> ReplResult<()> {
                 Box::pin(CalendarApp::get_linked_devices(context))
             },
         )
-        .with_command(
+        .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),
-            CalendarApp::get_data,
+            |args, context| Box::pin(CalendarApp::get_data(args, context)),
         )
-        .with_command(Command::new("get_perms"), CalendarApp::get_perms)
-        .with_command(
-            Command::new("get_perm").arg(Arg::new("id").required(true)),
-            CalendarApp::get_perm,
+        .with_command_async(
+            Command::new("get_perms").arg(Arg::new("id").required(true)),
+            |args, context| Box::pin(CalendarApp::get_perms(args, context)),
         )
-        .with_command(Command::new("get_groups"), CalendarApp::get_groups)
-        .with_command(
-            Command::new("get_group").arg(Arg::new("id").required(true)),
-            CalendarApp::get_group,
+        .with_command_async(
+            Command::new("get_groups").arg(Arg::new("id").required(true)),
+            |args, context| {
+                Box::pin(CalendarApp::get_groups(args, context))
+            },
         )
-        .with_command(Command::new("get_roles"), CalendarApp::get_roles)
-        //.with_command(Command::new("get_clients"), CalendarApp::get_clients)
+        .with_command_async(
+            Command::new("get_roles"), 
+            |_, context| Box::pin(CalendarApp::get_roles(context)),
+        )
+        //.with_command(Command::new("get_patients"), CalendarApp::get_patients)
         //.with_command(Command::new("get_providers"), CalendarApp::get_providers)
         .with_command_async(
-            Command::new("init_role")
-                .arg(
-                    Arg::new("provider")
-                        .required(false)
-                        .action(ArgAction::SetTrue)
-                        .long("provider")
-                        .short('p')
-                        .help("Init provider role"),
-                )
+            Command::new("init_patient_role"),
+            |_, context| Box::pin(CalendarApp::init_patient_role(context)),
+        )
+        .with_command_async(
+            Command::new("init_provider_role"),
                 //.arg(
                 //    Arg::new("durations")
                 //        .required(false)
@@ -1063,19 +1059,14 @@ async fn main() -> ReplResult<()> {
                 //        .short('b')
                 //        .help("Set blocked-off times (provider only)"),
                 //)
-                .arg(
-                    Arg::new("client")
-                        .required(false)
-                        .action(ArgAction::SetTrue)
-                        .long("client")
-                        .short('c')
-                        .help("Init client role"),
-                ),
-            |args, context| Box::pin(CalendarApp::init_role(args, context)),
+            |_, context| Box::pin(CalendarApp::init_provider_role(context)),
         )
-        .with_command(
+        .with_command_async(
+            Command::new("get_availability_id"), |_, context| Box::pin(CalendarApp::get_availability_id(context)),
+        )
+        .with_command_async(
             Command::new("get_appointment").arg(Arg::new("id").required(true)),
-            CalendarApp::get_appointment,
+            |args, context| Box::pin(CalendarApp::get_appointment(args, context)),
         )
         //.with_command(
         //    Command::new("get_provider_appointments").arg(
@@ -1087,13 +1078,13 @@ async fn main() -> ReplResult<()> {
         //    CalendarApp::get_provider_appointments,
         //)
         //.with_command(
-        //    Command::new("get_client_appointments").arg(
-        //        Arg::new("client_id")
+        //    Command::new("get_patient_appointments").arg(
+        //        Arg::new("patient_id")
         //            .required(true)
-        //            .long("client_id")
+        //            .long("patient_id")
         //            .short('c'),
         //    ),
-        //    CalendarApp::get_client_appointments,
+        //    CalendarApp::get_patient_appointments,
         //)
         //.with_command(
         //    Command::new("view_provider_availability").arg(
@@ -1124,7 +1115,7 @@ async fn main() -> ReplResult<()> {
                         .required(true)
                         .long("time")
                         .short('t')
-                        .help("Format: HH:MM:SS"),
+                        .help("Format: HH:MM:SS (24-hour)"),
                 )
                 .arg(
                     Arg::new("notes").required(false).long("notes").short('n'),
@@ -1135,10 +1126,8 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("confirm_appointment").arg(
-                Arg::new("appt_id")
-                    .required(true)
-                    .long("appt_id")
-                    .short('i'),
+                Arg::new("id")
+                    .required(true),
             ),
             |args, context| {
                 Box::pin(CalendarApp::confirm_appointment(args, context))

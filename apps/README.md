@@ -41,7 +41,7 @@ Each application client can be spun up by running `cargo run` in the relevant su
 ## Calendar
 
 - [x] compiles
-- [ ] runs
+- [x] runs
 
 - Patient clients can request specific time slots from provider clients
 - Providers share their overall availability with all patients

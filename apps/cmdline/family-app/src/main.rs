@@ -925,8 +925,6 @@ impl FamilyApp {
 
         let member_id = args.get_one::<String>("member_id").unwrap();
         // get own location object
-        let device_guard = context.client.device.read();
-        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
         let member_obj = context
             .client
             .get_data(&MEMBER_PREFIX.to_string())

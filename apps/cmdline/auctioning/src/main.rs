@@ -190,6 +190,7 @@ impl AuctioningApp {
             true,
             false,
             false,
+            false,
             // benchmarking args
             None,
             None,

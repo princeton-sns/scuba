@@ -217,9 +217,10 @@ impl CalendarApp {
             false,
             None,
             None,
-            // TODO fix for multi-key
+            // serializability
             true,
             false,
+            true,
             true,
             // benchmarking args
             None,

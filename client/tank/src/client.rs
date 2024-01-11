@@ -11,7 +11,7 @@ use std::time::Instant;
 use std::{thread, time};
 use thiserror::Error;
 
-use scuba_core::core::{Core, CoreClient};
+use scuba_core::core::{Core, CoreClient, SequenceNumber};
 
 use crate::data::{BasicData, ScubaData};
 use crate::devices::Device;
@@ -73,6 +73,18 @@ pub enum Error {
     },
     #[error("Received error while sending message: {0}.")]
     SendFailed(String),
+    #[error("Invalid transaction status")]
+    BadTransactionError,
+    #[error("Transaction conflicts")]
+    TransactionConflictsError,
+    #[error("Transaction timed out")]
+    Timeout,
+    #[error("not an error")]
+    SendToAll,
+    #[error("also not an error")]
+    NOOP,
+    #[error("Tx not found locall")]
+    TxNotFound,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -102,6 +114,10 @@ enum Operation {
     DeleteOtherDevice(String),
     Test(String),
     Dummy(u64),
+    //need to make sure these dont recurse
+    TxStart(String, Transaction),
+    TxCommit(String, SequenceNumber),
+    TxAbort(String, SequenceNumber),
 }
 
 impl Operation {
@@ -111,6 +127,252 @@ impl Operation {
 
     fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
         serde_json::from_str(msg.as_str())
+    }
+
+    fn get_data_id(operation: &Operation) -> String {
+        match operation {
+            Operation::UpdateData(data_id, data_val) => data_id.to_string(),
+            Operation::DeleteData(data_id) => data_id.to_string(),
+            // TODO confirm this is never used
+            _ => "".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Transaction {
+    coordinator: String,
+    recipients: Vec<String>,
+    num_recipients: Option<usize>,
+    ops: Vec<Operation>,
+    prepare_sequence_number: Option<SequenceNumber>,
+    commit_sequence_number: Option<SequenceNumber>,
+    prev_seq_number: SequenceNumber,
+    timeout: SequenceNumber,
+}
+
+impl Transaction {
+    fn new(
+        device_id: String,
+        recipients: Vec<String>,
+        ops: Vec<Operation>,
+        prev_seq_number: SequenceNumber,
+    ) -> Transaction {
+        Transaction {
+            coordinator: device_id,
+            recipients: recipients.clone(),
+            num_recipients: Some(recipients.len()),
+            ops,
+            prepare_sequence_number: None,
+            commit_sequence_number: None,
+            prev_seq_number,
+            timeout: 400, // TODO: make this dynamic? system dependent?
+        }
+    }
+
+    fn to_string(msg: &Transaction) -> Result<String, serde_json::Error> {
+        serde_json::to_string(msg)
+    }
+
+    fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
+        serde_json::from_str(msg.as_str())
+    }
+}
+
+pub struct TxCoordinator {
+    seq_number: SequenceNumber,
+    local_pending_tx: HashMap<SequenceNumber, (Vec<String>, Transaction)>,
+    remote_pending_tx: HashMap<SequenceNumber, Transaction>,
+    committed_tx: Vec<((SequenceNumber, SequenceNumber), Transaction)>,
+
+    tx_state: bool,
+    /* true if currently within transaction */
+    temp_tx_ops: Vec<Operation>,
+}
+
+// TODO: trim committed histories
+impl TxCoordinator {
+    fn new() -> TxCoordinator {
+        TxCoordinator {
+            seq_number: 0,
+            tx_state: false,
+            local_pending_tx: HashMap::new(),
+            remote_pending_tx: HashMap::new(),
+            committed_tx: Vec::new(),
+            temp_tx_ops: Vec::new(),
+        }
+    }
+
+    fn check_tx_state(&self) -> bool {
+        return self.tx_state;
+    }
+
+    // TODO should this update go through the server?! maybe only from strict
+    // serializability
+    fn enter_tx(&mut self) -> bool {
+        if self.tx_state {
+            return false;
+        }
+        self.tx_state = true;
+        return self.tx_state;
+    }
+
+    fn exit_tx(&mut self) -> (Vec<Operation>, SequenceNumber) {
+        let ops = self.temp_tx_ops.clone();
+        self.temp_tx_ops = Vec::new();
+        self.tx_state = false;
+        return (ops, self.seq_number);
+    }
+
+    fn add_op_to_cur_tx(&mut self, msg: Operation) {
+        self.temp_tx_ops.push(msg);
+    }
+
+    fn get_transaction(
+        &self,
+        tx_id: SequenceNumber,
+    ) -> Result<&Transaction, Error> {
+        if self.local_pending_tx.contains_key(&tx_id) {
+            return Ok(&self.local_pending_tx.get(&tx_id).unwrap().1);
+        } else if self.remote_pending_tx.contains_key(&tx_id) {
+            return Ok(&self.remote_pending_tx.get(&tx_id).unwrap());
+        }
+        return Err(Error::TxNotFound);
+    }
+
+    fn start_message(
+        &mut self,
+        my_device_id: String,
+        sender: String,
+        tx_id: SequenceNumber,
+        unsequenced_tx: Transaction,
+    ) -> Result<(), Error> {
+        let mut tx = unsequenced_tx.clone();
+        tx.prepare_sequence_number = Some(tx_id);
+
+        if sender == my_device_id {
+            self.local_pending_tx
+                .insert(tx_id, (Vec::new(), tx.clone()));
+        } else {
+            self.remote_pending_tx.insert(tx_id, tx.clone());
+        }
+
+        let res = self.detect_conflict(&tx);
+        if res {
+            return Ok(());
+        } else {
+            return Err(Error::TransactionConflictsError);
+        }
+    }
+
+    fn commit_message(
+        &mut self,
+        my_device_id: String,
+        sender: String,
+        tx_id: &SequenceNumber,
+        seq: SequenceNumber, /*use seq number of commit message when
+                              * committing */
+    ) -> Result<(), Error> {
+        // committing a tx i coordinated
+        if sender == my_device_id {
+            let q = &mut self.local_pending_tx;
+            let mut tx = q[tx_id].1.clone();
+            tx.commit_sequence_number = Some(seq);
+            q.remove(tx_id);
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+            {
+                return Err(Error::Timeout);
+            } else {
+                self.committed_tx.push(((*tx_id, seq), tx));
+            }
+        // commit message for a remote transaction
+        } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
+            == sender
+        {
+            let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
+            tx.commit_sequence_number = Some(seq);
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+            {
+                return Err(Error::Timeout);
+            } else {
+                self.committed_tx.push(((*tx_id, seq), tx));
+            }
+        }
+
+        self.seq_number = *tx_id;
+        Ok(())
+    }
+
+    fn abort_message(
+        &mut self,
+        my_device_id: String,
+        sender: String,
+        tx_id: &SequenceNumber,
+    ) -> Result<(), Error> {
+        // this client sent this abort message to all recipients
+        if sender == my_device_id && self.local_pending_tx.contains_key(tx_id) {
+            self.local_pending_tx.remove(tx_id);
+        // this client got an abort message from a recipient
+        // for a tx this client is coordinating
+        } else if self.local_pending_tx.contains_key(tx_id) {
+            assert!(self
+                .remote_pending_tx
+                .get(tx_id)
+                .unwrap()
+                .recipients
+                .contains(&sender));
+            return Err(Error::SendToAll);
+        // a coordinator for a remote transaction is telling this client to
+        // abort
+        } else if self.remote_pending_tx.contains_key(tx_id) {
+            assert_eq!(
+                self.remote_pending_tx.get(tx_id).unwrap().coordinator,
+                sender
+            );
+            self.remote_pending_tx.remove(tx_id);
+        }
+        Ok(())
+    }
+
+    fn detect_conflict(&self, msg: &Transaction) -> bool {
+        let mut tx_keys = Vec::new();
+
+        for op in msg.ops.clone().into_iter() {
+            tx_keys.push(Operation::get_data_id(&op));
+        }
+
+        //impl for all enums -> move to func over two txs
+        for tx in self.local_pending_tx.clone().into_iter() {
+            for op in tx.1 .1.ops.clone().into_iter() {
+                let data_id = Operation::get_data_id(&op);
+                if tx_keys.contains(&data_id) {
+                    return true;
+                }
+            }
+        }
+
+        for tx in self.remote_pending_tx.clone().into_iter() {
+            for op in tx.1.ops.clone().into_iter() {
+                let data_id = Operation::get_data_id(&op);
+                if tx_keys.contains(&data_id) {
+                    return true;
+                }
+            }
+        }
+
+        for tx in self.committed_tx.clone().into_iter() {
+            //only iterate through committed transactions that were sequenced
+            // after the prev txn accepted by the original client
+            if tx.1.prepare_sequence_number.unwrap() > msg.prev_seq_number {
+                for op in tx.1.ops.clone().into_iter() {
+                    let data_id = Operation::get_data_id(&op);
+                    if tx_keys.contains(&data_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }
 
@@ -125,7 +387,8 @@ pub struct TankClient {
     block_writes: bool,
     sync_reads: bool,
     mult_outstanding: bool,
-    multikey: bool,
+    //multikey: bool,
+    tx_coordinator: Arc<RwLock<Option<TxCoordinator>>>,
     op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
     op_id_ctr_cv: Arc<Condvar>,
     // benchmarking fields
@@ -147,7 +410,7 @@ pub struct TankClient {
 impl CoreClient for TankClient {
     async fn client_callback(
         &self,
-        _seq: scuba_core::core::SequenceNumber,
+        seq: SequenceNumber,
         sender: String,
         message: String,
         bench: bool,
@@ -184,7 +447,7 @@ impl CoreClient for TankClient {
                 match self.check_permissions(&sender, &operation) {
                     Ok(_) => {
                         if self.validate_data_invariants(&operation) {
-                            match self.demux(operation).await {
+                            match self.demux(seq, operation).await {
                                 Ok(_) => {}
                                 Err(err) => {
                                     println!("Error in demux: {:?}", err)
@@ -276,6 +539,7 @@ impl TankClient {
         block_writes: bool,
         sync_reads: bool,
         mult_outstanding: bool,
+        multikey: bool,
         // benchmarking args
         core_benchmark_sends: Option<usize>,
         core_benchmark_recvs: Option<usize>,
@@ -288,6 +552,12 @@ impl TankClient {
         recv_dummy_filename: Option<String>,
     ) -> TankClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
+        let tx_coordinator;
+        if multikey {
+            tx_coordinator = Arc::new(RwLock::new(Some(TxCoordinator::new())));
+        } else {
+            tx_coordinator = Arc::new(RwLock::new(None));
+        }
         let mut client = TankClient {
             core: None,
             device: Arc::new(RwLock::new(None)),
@@ -297,7 +567,7 @@ impl TankClient {
             block_writes,
             sync_reads,
             mult_outstanding,
-            multikey: false,
+            tx_coordinator,
             op_id_ctr: Arc::new(Mutex::new((0, HashSet::new()))),
             op_id_ctr_cv: Arc::new(Condvar::new()),
             benchmark_send: Arc::new(RwLock::new(benchmark_runs)),
@@ -349,6 +619,180 @@ impl TankClient {
         client.core = Some(core.clone());
         core.set_client(Arc::new(client.clone())).await;
         client
+    }
+
+    /* Transactions */
+
+    fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
+        let mut recipients = Vec::new();
+        for op in msg {
+            // FIXME support more than just UpdateData operation types in
+            // transactions
+            if let Operation::UpdateData(_, data) = op {
+                let mut group_ids = Vec::<&String>::new();
+                let perm = self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .get_perm(data.perm_id())
+                    .unwrap()
+                    .clone();
+                match perm.owners() {
+                    Some(group_id) => group_ids.push(group_id),
+                    None => {}
+                }
+                match perm.writers() {
+                    Some(group_id) => group_ids.push(group_id),
+                    None => {}
+                }
+                match perm.readers() {
+                    Some(group_id) => group_ids.push(group_id),
+                    None => {}
+                }
+
+                let device_ids = self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .resolve_group_ids(group_ids)
+                    .into_iter()
+                    .collect::<Vec<String>>();
+
+                recipients.extend(device_ids);
+            }
+        }
+
+        recipients.sort();
+        recipients.dedup();
+
+        return recipients;
+    }
+
+    fn collect_do_reader_recipients(
+        &self,
+        msg: Vec<Operation>,
+    ) -> Option<Vec<String>> {
+        let mut recipients = Vec::new();
+        for op in msg {
+            // FIXME support more than just UpdateData operation types in
+            // transactions
+            if let Operation::UpdateData(_, data) = op {
+                let mut group_ids = Vec::<&String>::new();
+                let perm = self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .get_perm(data.perm_id())
+                    .unwrap()
+                    .clone();
+                match perm.do_readers() {
+                    Some(group_id) => group_ids.push(group_id),
+                    None => {}
+                }
+
+                let device_ids = self
+                    .device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .meta_store
+                    .read()
+                    .resolve_group_ids(group_ids)
+                    .into_iter()
+                    .collect::<Vec<String>>();
+
+                recipients.extend(device_ids);
+            }
+        }
+
+        recipients.sort();
+        recipients.dedup();
+
+        if recipients.is_empty() {
+            return None;
+        }
+        return Some(recipients);
+    }
+
+    async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
+        let coord_guard = self.tx_coordinator.read();
+        let tx = coord_guard.as_ref().unwrap().get_transaction(tx_id).unwrap();
+        for op in tx.ops.clone().into_iter() {
+            //call into data store to apply
+            // TODO: handle errors
+            self.demux(tx_id.clone(), op);
+        }
+        Ok(())
+    }
+
+    async fn initiate_transaction(
+        &self,
+        device_id: String,
+        ops: Vec<Operation>,
+        prev_seq_number: SequenceNumber,
+    ) {
+        let recipients = self.collect_recipients(ops.clone());
+        let transaction = Transaction::new(
+            device_id.clone(),
+            recipients.clone(),
+            ops,
+            prev_seq_number,
+        );
+        self.send_message(
+            recipients,
+            &Operation::to_string(&Operation::TxStart(device_id, transaction))
+                .unwrap(),
+            false,
+        )
+        .await;
+    }
+
+    async fn send_abort_to_coordinator(
+        &self,
+        sender: String,
+        tx_id: SequenceNumber,
+    ) {
+        let recipients = vec![self.idkey(), sender];
+        self.send_message(
+            recipients,
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
+                .unwrap(),
+            false,
+        )
+        .await;
+    }
+
+    async fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
+        let binding = self.tx_coordinator.read();
+        let tx = binding.as_ref().unwrap().get_transaction(tx_id).unwrap().clone();
+        self.send_message(
+            tx.recipients,
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
+                .unwrap(),
+            false,
+        )
+        .await;
+    }
+
+    async fn send_commit_as_coordinator(&self, tx_id: SequenceNumber) {
+        let binding = self.tx_coordinator.read();
+        let tx = binding.as_ref().unwrap().get_transaction(tx_id).unwrap().clone();
+        self.send_message(
+            tx.recipients,
+            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
+                .unwrap(),
+            false,
+        )
+        .await;
     }
 
     /* Receiving-side functions */
@@ -548,7 +992,11 @@ impl TankClient {
         }
     }
 
-    async fn demux(&self, operation: Operation) -> Result<(), Error> {
+    async fn demux(
+        &self,
+        seq: SequenceNumber,
+        operation: Operation,
+    ) -> Result<(), Error> {
         match operation {
             Operation::UpdateLinked(
                 sender,
@@ -726,7 +1174,41 @@ impl TankClient {
                 op_id_ctr.1.remove(&op_id);
                 self.op_id_ctr_cv.notify_all();
                 core::mem::drop(op_id_ctr);
-
+                Ok(())
+            }
+            Operation::TxStart(sender, tx) => {
+                let res = self.tx_coordinator.write().as_mut().unwrap().start_message(
+                    self.idkey(),
+                    sender.clone(),
+                    seq,
+                    tx,
+                );
+                if res == Err(Error::TransactionConflictsError) {
+                    self.send_abort_to_coordinator(sender, seq).await;
+                }
+                Ok(())
+            }
+            Operation::TxCommit(sender, tx_id) => {
+                let resp = self.tx_coordinator.write().as_mut().unwrap().commit_message(
+                    self.idkey(),
+                    sender,
+                    &tx_id,
+                    seq,
+                );
+                if resp == Ok(()) {
+                    self.apply_locally(tx_id).await;
+                }
+                Ok(())
+            }
+            Operation::TxAbort(sender, tx_id) => {
+                let resp = self.tx_coordinator.write().as_mut().unwrap().abort_message(
+                    self.idkey(),
+                    sender,
+                    &tx_id,
+                );
+                if resp == Err(Error::SendToAll) {
+                    self.send_abort_as_coordinator(tx_id).await;
+                }
                 Ok(())
             }
         }
@@ -734,6 +1216,7 @@ impl TankClient {
 
     /* Sending-side functions */
 
+    // TODO: change message to be a collection of messages
     async fn send_message(
         &self,
         dst_idkeys: Vec<String>,
@@ -1320,6 +1803,49 @@ impl TankClient {
         vec
     }
 
+    /* TODO MOVE THESE SOMEWHERE ELSE */
+
+    pub fn start_transaction(&self) -> Result<(), Error> {
+        let res = self.tx_coordinator.write().as_mut().unwrap().enter_tx();
+        if !res {
+            return Err(Error::BadTransactionError);
+        }
+        Ok(())
+    }
+
+    // TODO cancel transaction func?
+
+    pub async fn end_transaction(&self) {
+        let (ops, prev_seq_number) = self.tx_coordinator.write().as_mut().unwrap().exit_tx();
+        self.initiate_transaction(self.idkey(), ops, prev_seq_number)
+            .await;
+    }
+
+    // TODO: change message to be a collection of messages
+    async fn send_or_add_to_txn(
+        &self,
+        dst_idkeys: Vec<String>,
+        op: &Operation,
+        bench: bool,
+    ) -> Result<(), Error> {
+        if self.tx_coordinator.read().as_ref().unwrap().check_tx_state() {
+            self.tx_coordinator.write().as_mut().unwrap().add_op_to_cur_tx(op.clone());
+            Ok(())
+        } else {
+            match self
+                .send_message(
+                    dst_idkeys,
+                    &Operation::to_string(op).unwrap(),
+                    bench,
+                )
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(err) => Err(Error::SendFailed(err.to_string())),
+            }
+        }
+    }
+
     pub async fn get_perm(
         &self,
         perm_id: &String,
@@ -1813,59 +2339,50 @@ impl TankClient {
 
                 // send perms
                 let mut res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         idkeys.clone(),
-                        &Operation::to_string(&Operation::SetPerm(
+                        &Operation::SetPerm(
                             perm_val.perm_id().to_string(),
                             perm_val.clone(),
-                        ))
-                        .unwrap(),
+                        ),
                         false,
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // send group
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         idkeys.clone(),
-                        &Operation::to_string(&Operation::SetGroup(
+                        &Operation::SetGroup(
                             group_val.group_id().to_string(),
                             group_val.clone(),
-                        ))
-                        .unwrap(),
+                        ),
                         false,
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // add newly created group as a parent of linked_name
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         idkeys.clone(),
-                        &Operation::to_string(&Operation::AddParent(
+                        &Operation::AddParent(
                             self.linked_name().to_string(),
                             group_val.group_id().to_string(),
-                        ))
-                        .unwrap(),
+                        ),
                         false,
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
             }
         }
@@ -1907,14 +2424,14 @@ impl TankClient {
             ));
         }
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 // includes idkeys of _all_ permissions
                 // (including data-only readers)
+                // TODO Make separate for read-only members of txn
                 device_ids.clone(),
-                &Operation::to_string(&Operation::UpdateData(
+                &Operation::UpdateData(
                     data_id, basic_data,
-                ))
-                .unwrap(),
+                ),
                 bench,
             )
             .await;
@@ -2328,60 +2845,49 @@ impl TankClient {
                 // first send SetPerm for existing, unmodified perm_set
                 // TODO remove this device from the idkeys for this op only
                 let mut res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::to_string(&Operation::SetPerm(
+                        &Operation::SetPerm(
                             perm_val.perm_id().to_string(),
                             perm_val.clone(),
-                        ))
-                        .unwrap(),
+                        ),
                         false,
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // then send SetGroups for all associated subgroups
                 // FIXME will overwrite is_contact_name fields
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::to_string(&Operation::SetGroups(
-                            assoc_groups,
-                        ))
-                        .unwrap(),
+                        &Operation::SetGroups(assoc_groups),
                         false,
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // PER ADDED PERM send AddPermMembers to all metadata-readers
                 res = self
-                    .send_message(
+                    .send_or_add_to_txn(
                         metadata_reader_idkeys.clone(),
-                        &Operation::to_string(&Operation::AddPermMembers(
+                        &Operation::AddPermMembers(
                             perm_val.perm_id().to_string(),
                             group_id_opt,
                             new_members,
-                        ))
-                        .unwrap(),
+                        ),
                         false,
                     )
                     .await;
 
                 if res.is_err() {
-                    return Err(Error::SendFailed(
-                        res.err().unwrap().to_string(),
-                    ));
+                    return res;
                 }
 
                 // finally, send UpdateData (via set_data) to set the

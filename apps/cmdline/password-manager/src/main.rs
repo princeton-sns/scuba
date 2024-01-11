@@ -131,6 +131,7 @@ impl PasswordManager {
             true,
             true,
             false,
+            false,
             // benchmark args
             None,
             None,

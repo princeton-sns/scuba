@@ -90,11 +90,7 @@ pub enum Error {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum Operation {
     UpdateLinked(String, String, HashMap<String, Group>),
-    ConfirmUpdateLinked(
-        String,
-        HashMap<String, Group>,
-        HashMap<String, BasicData>,
-    ),
+    ConfirmUpdateLinked(String, HashMap<String, Group>, HashMap<String, BasicData>),
     AddContact(String, String, HashMap<String, Group>),
     ConfirmAddContact(String, HashMap<String, Group>),
     SetPerm(String, PermissionSet),
@@ -228,10 +224,7 @@ impl TxCoordinator {
         self.temp_tx_ops.push(msg);
     }
 
-    fn get_transaction(
-        &self,
-        tx_id: SequenceNumber,
-    ) -> Result<&Transaction, Error> {
+    fn get_transaction(&self, tx_id: SequenceNumber) -> Result<&Transaction, Error> {
         if self.local_pending_tx.contains_key(&tx_id) {
             return Ok(&self.local_pending_tx.get(&tx_id).unwrap().1);
         } else if self.remote_pending_tx.contains_key(&tx_id) {
@@ -279,20 +272,16 @@ impl TxCoordinator {
             let mut tx = q[tx_id].1.clone();
             tx.commit_sequence_number = Some(seq);
             q.remove(tx_id);
-            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
-            {
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
             }
         // commit message for a remote transaction
-        } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator
-            == sender
-        {
+        } else if self.remote_pending_tx.get(tx_id).unwrap().coordinator == sender {
             let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
             tx.commit_sequence_number = Some(seq);
-            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
-            {
+            if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -436,9 +425,7 @@ impl CoreClient for TankClient {
         }
 
         if self.sec_wait_to_apply.is_some() {
-            thread::sleep(time::Duration::from_secs(
-                self.sec_wait_to_apply.unwrap(),
-            ));
+            thread::sleep(time::Duration::from_secs(self.sec_wait_to_apply.unwrap()));
         }
 
         match Operation::from_string(message.clone()) {
@@ -576,9 +563,11 @@ impl TankClient {
             send_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
-            recv_update_timestamp_vec: Arc::new(Mutex::new(
-                Vec::<(usize, String, Instant)>::new(),
-            )),
+            recv_update_timestamp_vec: Arc::new(Mutex::new(Vec::<(
+                usize,
+                String,
+                Instant,
+            )>::new())),
             recv_dummy_timestamp_vec: Arc::new(Mutex::new(
                 Vec::<(usize, String, Instant)>::new(),
             )),
@@ -674,10 +663,7 @@ impl TankClient {
         return recipients;
     }
 
-    fn collect_do_reader_recipients(
-        &self,
-        msg: Vec<Operation>,
-    ) -> Option<Vec<String>> {
+    fn collect_do_reader_recipients(&self, msg: Vec<Operation>) -> Option<Vec<String>> {
         let mut recipients = Vec::new();
         for op in msg {
             // FIXME support more than just UpdateData operation types in
@@ -725,7 +711,11 @@ impl TankClient {
 
     async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
         let coord_guard = self.tx_coordinator.read();
-        let tx = coord_guard.as_ref().unwrap().get_transaction(tx_id).unwrap();
+        let tx = coord_guard
+            .as_ref()
+            .unwrap()
+            .get_transaction(tx_id)
+            .unwrap();
         for op in tx.ops.clone().into_iter() {
             //call into data store to apply
             // TODO: handle errors
@@ -741,31 +731,21 @@ impl TankClient {
         prev_seq_number: SequenceNumber,
     ) {
         let recipients = self.collect_recipients(ops.clone());
-        let transaction = Transaction::new(
-            device_id.clone(),
-            recipients.clone(),
-            ops,
-            prev_seq_number,
-        );
+        let transaction =
+            Transaction::new(device_id.clone(), recipients.clone(), ops, prev_seq_number);
         self.send_message(
             recipients,
-            &Operation::to_string(&Operation::TxStart(device_id, transaction))
-                .unwrap(),
+            &Operation::to_string(&Operation::TxStart(device_id, transaction)).unwrap(),
             false,
         )
         .await;
     }
 
-    async fn send_abort_to_coordinator(
-        &self,
-        sender: String,
-        tx_id: SequenceNumber,
-    ) {
+    async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
         let recipients = vec![self.idkey(), sender];
         self.send_message(
             recipients,
-            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
-                .unwrap(),
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
             false,
         )
         .await;
@@ -773,11 +753,15 @@ impl TankClient {
 
     async fn send_abort_as_coordinator(&self, tx_id: SequenceNumber) {
         let binding = self.tx_coordinator.read();
-        let tx = binding.as_ref().unwrap().get_transaction(tx_id).unwrap().clone();
+        let tx = binding
+            .as_ref()
+            .unwrap()
+            .get_transaction(tx_id)
+            .unwrap()
+            .clone();
         self.send_message(
             tx.recipients,
-            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id))
-                .unwrap(),
+            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
             false,
         )
         .await;
@@ -785,11 +769,15 @@ impl TankClient {
 
     async fn send_commit_as_coordinator(&self, tx_id: SequenceNumber) {
         let binding = self.tx_coordinator.read();
-        let tx = binding.as_ref().unwrap().get_transaction(tx_id).unwrap().clone();
+        let tx = binding
+            .as_ref()
+            .unwrap()
+            .get_transaction(tx_id)
+            .unwrap()
+            .clone();
         self.send_message(
             tx.recipients,
-            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id))
-                .unwrap(),
+            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id)).unwrap(),
             false,
         )
         .await;
@@ -823,11 +811,7 @@ impl TankClient {
             //Operation::AddContact => Ok(()),
             //Operation::ConfirmAddContact => Ok(()),
             /* Special case: use pending idkey */
-            Operation::ConfirmUpdateLinked(
-                new_linked_name,
-                new_groups,
-                new_data,
-            ) => {
+            Operation::ConfirmUpdateLinked(new_linked_name, new_groups, new_data) => {
                 let pending_idkey_opt = self
                     .device
                     .read()
@@ -865,7 +849,8 @@ impl TankClient {
                     .get_perm(perm_id)
                     .is_some()
                 {
-                    return Ok(()); //return Err(Error::PermAlreadyExists(perm_id.to_string()));
+                    return Ok(()); //return Err(Error::PermAlreadyExists(perm_id.
+                                   // to_string()));
                 }
                 Ok(())
             }
@@ -957,10 +942,7 @@ impl TankClient {
                             .unwrap()
                             .meta_store
                             .read()
-                            .has_data_mod_permissions(
-                                sender,
-                                data_val.perm_id(),
-                            )
+                            .has_data_mod_permissions(sender, data_val.perm_id())
                         {
                             return Err(Error::InsufficientPermissions(
                                 sender.to_string(),
@@ -998,34 +980,21 @@ impl TankClient {
         operation: Operation,
     ) -> Result<(), Error> {
         match operation {
-            Operation::UpdateLinked(
-                sender,
-                temp_linked_name,
-                members_to_add,
-            ) => self
+            Operation::UpdateLinked(sender, temp_linked_name, members_to_add) => self
                 .update_linked_group(sender, temp_linked_name, members_to_add)
                 .await
                 .map_err(Error::from),
-            Operation::ConfirmUpdateLinked(
-                new_linked_name,
-                new_groups,
-                new_data,
-            ) => self
+            Operation::ConfirmUpdateLinked(new_linked_name, new_groups, new_data) => self
                 .device
                 .read()
                 .as_ref()
                 .unwrap()
-                .confirm_update_linked_group(
-                    new_linked_name,
-                    new_groups,
-                    new_data,
-                )
+                .confirm_update_linked_group(new_linked_name, new_groups, new_data)
                 .map_err(Error::from),
-            Operation::AddContact(sender, contact_name, contact_devices) => {
-                self.add_contact_response(sender, contact_name, contact_devices)
-                    .await
-                    .map_err(Error::from)
-            }
+            Operation::AddContact(sender, contact_name, contact_devices) => self
+                .add_contact_response(sender, contact_name, contact_devices)
+                .await
+                .map_err(Error::from),
             Operation::ConfirmAddContact(contact_name, contact_devices) => self
                 .device
                 .read()
@@ -1043,16 +1012,15 @@ impl TankClient {
                     .set_perm(perm_id, perm_val);
                 Ok(())
             }
-            Operation::AddPermMembers(perm_id, group_id_opt, new_members) => {
-                self.device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .write()
-                    .add_permissions(&perm_id, group_id_opt, new_members)
-                    .map_err(Error::from)
-            }
+            Operation::AddPermMembers(perm_id, group_id_opt, new_members) => self
+                .device
+                .read()
+                .as_ref()
+                .unwrap()
+                .meta_store
+                .write()
+                .add_permissions(&perm_id, group_id_opt, new_members)
+                .map_err(Error::from),
             Operation::SetGroup(group_id, group_val) => {
                 self.device
                     .read()
@@ -1189,12 +1157,12 @@ impl TankClient {
                 Ok(())
             }
             Operation::TxCommit(sender, tx_id) => {
-                let resp = self.tx_coordinator.write().as_mut().unwrap().commit_message(
-                    self.idkey(),
-                    sender,
-                    &tx_id,
-                    seq,
-                );
+                let resp = self
+                    .tx_coordinator
+                    .write()
+                    .as_mut()
+                    .unwrap()
+                    .commit_message(self.idkey(), sender, &tx_id, seq);
                 if resp == Ok(()) {
                     self.apply_locally(tx_id).await;
                 }
@@ -1280,8 +1248,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -1312,10 +1279,7 @@ impl TankClient {
         Ok(())
     }
 
-    pub async fn create_linked_device(
-        &self,
-        idkey: String,
-    ) -> Result<(), Error> {
+    pub async fn create_linked_device(&self, idkey: String) -> Result<(), Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -1339,8 +1303,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -1490,8 +1453,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -1524,10 +1486,7 @@ impl TankClient {
      * Contacts
      */
 
-    pub async fn add_contact(
-        &self,
-        contact_idkey: String,
-    ) -> Result<(), Error> {
+    pub async fn add_contact(&self, contact_idkey: String) -> Result<(), Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -1551,8 +1510,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -1711,10 +1669,7 @@ impl TankClient {
         }
     }
 
-    pub async fn delete_other_device(
-        &self,
-        to_delete: String,
-    ) -> Result<(), Error> {
+    pub async fn delete_other_device(&self, to_delete: String) -> Result<(), Error> {
         // TODO send to contact devices too
         match self
             .send_message(
@@ -1723,10 +1678,8 @@ impl TankClient {
                     .as_ref()
                     .unwrap()
                     .linked_devices_excluding_self_and_other(&to_delete),
-                &Operation::to_string(&Operation::DeleteOtherDevice(
-                    to_delete.clone(),
-                ))
-                .unwrap(),
+                &Operation::to_string(&Operation::DeleteOtherDevice(to_delete.clone()))
+                    .unwrap(),
                 false,
             )
             .await
@@ -1742,8 +1695,7 @@ impl TankClient {
                 match self
                     .send_message(
                         vec![to_delete.clone()],
-                        &Operation::to_string(&Operation::DeleteSelfDevice)
-                            .unwrap(),
+                        &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
                         false,
                     )
                     .await
@@ -1816,7 +1768,8 @@ impl TankClient {
     // TODO cancel transaction func?
 
     pub async fn end_transaction(&self) {
-        let (ops, prev_seq_number) = self.tx_coordinator.write().as_mut().unwrap().exit_tx();
+        let (ops, prev_seq_number) =
+            self.tx_coordinator.write().as_mut().unwrap().exit_tx();
         self.initiate_transaction(self.idkey(), ops, prev_seq_number)
             .await;
     }
@@ -1828,16 +1781,22 @@ impl TankClient {
         op: &Operation,
         bench: bool,
     ) -> Result<(), Error> {
-        if self.tx_coordinator.read().as_ref().unwrap().check_tx_state() {
-            self.tx_coordinator.write().as_mut().unwrap().add_op_to_cur_tx(op.clone());
+        if self
+            .tx_coordinator
+            .read()
+            .as_ref()
+            .unwrap()
+            .check_tx_state()
+        {
+            self.tx_coordinator
+                .write()
+                .as_mut()
+                .unwrap()
+                .add_op_to_cur_tx(op.clone());
             Ok(())
         } else {
             match self
-                .send_message(
-                    dst_idkeys,
-                    &Operation::to_string(op).unwrap(),
-                    bench,
-                )
+                .send_message(dst_idkeys, &Operation::to_string(op).unwrap(), bench)
                 .await
             {
                 Ok(_) => Ok(()),
@@ -1873,8 +1832,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -1930,8 +1888,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -1967,10 +1924,7 @@ impl TankClient {
         Ok(values)
     }
 
-    pub async fn get_group(
-        &self,
-        group_id: &String,
-    ) -> Result<Option<Group>, Error> {
+    pub async fn get_group(&self, group_id: &String) -> Result<Option<Group>, Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -1994,8 +1948,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -2051,8 +2004,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -2088,10 +2040,7 @@ impl TankClient {
         Ok(values)
     }
 
-    pub async fn get_data(
-        &self,
-        data_id: &String,
-    ) -> Result<Option<BasicData>, Error> {
+    pub async fn get_data(&self, data_id: &String) -> Result<Option<BasicData>, Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
         let op_id;
@@ -2115,8 +2064,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -2172,8 +2120,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 false,
             )
             .await;
@@ -2278,16 +2225,13 @@ impl TankClient {
 
                 // resolve idkeys
                 if data_reader_idkeys.is_none() {
-                    let group_ids =
-                        self.get_metadata_reader_groups_from_perm(&perm_val);
+                    let group_ids = self.get_metadata_reader_groups_from_perm(&perm_val);
                     device_ids = device_guard
                         .as_ref()
                         .unwrap()
                         .meta_store
                         .read()
-                        .resolve_group_ids(
-                            group_ids.iter().collect::<Vec<&String>>(),
-                        )
+                        .resolve_group_ids(group_ids.iter().collect::<Vec<&String>>())
                         .into_iter()
                         .collect::<Vec<String>>();
                 } else {
@@ -2406,9 +2350,7 @@ impl TankClient {
                     .unwrap()
                     .meta_store
                     .read()
-                    .resolve_group_ids(
-                        group_ids.iter().collect::<Vec<&String>>(),
-                    )
+                    .resolve_group_ids(group_ids.iter().collect::<Vec<&String>>())
                     .into_iter()
                     .collect::<Vec<String>>();
                 device_ids.append(&mut do_reader_ids);
@@ -2429,9 +2371,7 @@ impl TankClient {
                 // (including data-only readers)
                 // TODO Make separate for read-only members of txn
                 device_ids.clone(),
-                &Operation::UpdateData(
-                    data_id, basic_data,
-                ),
+                &Operation::UpdateData(data_id, basic_data),
                 bench,
             )
             .await;
@@ -2457,8 +2397,7 @@ impl TankClient {
         let res = self
             .send_message(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone()))
-                    .unwrap(),
+                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
                 bench,
             )
             .await;
@@ -2668,8 +2607,7 @@ impl TankClient {
         op_id: u64,
     ) -> Result<(), Error> {
         let device_guard = self.device.read();
-        let mut data_store_guard =
-            device_guard.as_ref().unwrap().data_store.read();
+        let mut data_store_guard = device_guard.as_ref().unwrap().data_store.read();
 
         // check that data exists
         match data_store_guard.get_data(&data_id) {
@@ -2749,9 +2687,7 @@ impl TankClient {
                 }
                 // PER ADDED PERM new member
                 match new_members {
-                    PermType::Owners(_)
-                    | PermType::Writers(_)
-                    | PermType::Readers(_) => {
+                    PermType::Owners(_) | PermType::Writers(_) | PermType::Readers(_) => {
                         metadata_readers.append(&mut new_members_refs.clone());
                         data_readers.append(&mut new_members_refs.clone());
                     }
@@ -2783,37 +2719,31 @@ impl TankClient {
                 // get owner subgroups
                 match perm_val.owners() {
                     Some(owners_group_id) => {
-                        assoc_groups.extend(
-                            meta_store_guard.get_all_subgroups(owners_group_id),
-                        );
+                        assoc_groups
+                            .extend(meta_store_guard.get_all_subgroups(owners_group_id));
                     }
                     None => {}
                 }
                 // get writer subgroups
                 match perm_val.writers() {
                     Some(writers_group_id) => {
-                        assoc_groups.extend(
-                            meta_store_guard
-                                .get_all_subgroups(writers_group_id),
-                        );
+                        assoc_groups
+                            .extend(meta_store_guard.get_all_subgroups(writers_group_id));
                     }
                     None => {}
                 }
                 // get reader subgroups
                 match perm_val.readers() {
                     Some(readers_group_id) => {
-                        assoc_groups.extend(
-                            meta_store_guard
-                                .get_all_subgroups(readers_group_id),
-                        );
+                        assoc_groups
+                            .extend(meta_store_guard.get_all_subgroups(readers_group_id));
                     }
                     None => {}
                 }
                 // PER ADDED PERM get new-member subgroups
                 for new_member_ref in &new_members_refs {
-                    assoc_groups.extend(
-                        meta_store_guard.get_all_subgroups(new_member_ref),
-                    );
+                    assoc_groups
+                        .extend(meta_store_guard.get_all_subgroups(new_member_ref));
                 }
                 // PER ADDED PERM create new group if doesn't exist
                 match group_id_opt.clone() {
@@ -2922,15 +2852,13 @@ impl TankClient {
 }
 
 mod tests {
-    use crate::client::{TankClient, Operation};
+    use crate::client::{Operation, TankClient};
     use crate::data::ScubaData;
 
     #[tokio::test]
     async fn test_send_one_message() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, None, None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 = TankClient::new(None, None, false, None, None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -2940,8 +2868,7 @@ mod tests {
 
         // send operation
         let operation =
-            Operation::to_string(&Operation::Test("hello".to_string()))
-                .unwrap();
+            Operation::to_string(&Operation::Test("hello".to_string())).unwrap();
         println!("sending operation to device 0");
         client_1
             .send_message(vec![client_0.idkey()], &operation)
@@ -2960,18 +2887,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_two_sequential_messages() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
 
         // send operation 1
         let operation_1 =
-            Operation::to_string(&Operation::Test("hello".to_string()))
-                .unwrap();
+            Operation::to_string(&Operation::Test("hello".to_string())).unwrap();
         println!("sending operation to device 0");
         client_1
             .send_message(vec![client_0.idkey()], &operation_1)
@@ -2989,8 +2913,7 @@ mod tests {
 
         // send operation 2
         let operation_2 =
-            Operation::to_string(&Operation::Test("goodbye".to_string()))
-                .unwrap();
+            Operation::to_string(&Operation::Test("goodbye".to_string())).unwrap();
         println!("sending operation to device 1");
         client_0
             .send_message(vec![client_1.idkey()], &operation_2)
@@ -3009,18 +2932,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_two_concurrent_messages() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
 
         // send operation 1
         let operation_1 =
-            Operation::to_string(&Operation::Test("hello".to_string()))
-                .unwrap();
+            Operation::to_string(&Operation::Test("hello".to_string())).unwrap();
         println!("sending operation to device 0");
         client_1
             .send_message(vec![client_0.idkey()], &operation_1)
@@ -3028,8 +2948,7 @@ mod tests {
 
         // send operation 2
         let operation_2 =
-            Operation::to_string(&Operation::Test("goodbye".to_string()))
-                .unwrap();
+            Operation::to_string(&Operation::Test("goodbye".to_string())).unwrap();
         println!("sending operation to device 1");
         client_0
             .send_message(vec![client_1.idkey()], &operation_2)
@@ -3058,10 +2977,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_linked_device() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         // sends operation to device 0 to link devices
@@ -3111,18 +3028,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_serialization() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(0), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_2 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_3 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_4 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_5 =
-            TankClient::new(None, None, false, Some(2), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(0), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_2 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_3 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_4 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_5 = TankClient::new(None, None, false, Some(2), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -3156,8 +3067,7 @@ mod tests {
 
         // construct a small message with a subset of recipients
         let operation_2 =
-            Operation::to_string(&Operation::Test("small".to_string()))
-                .unwrap();
+            Operation::to_string(&Operation::Test("small".to_string())).unwrap();
         let recipients_2 = vec![client_5.idkey()];
 
         // send the messages
@@ -3355,10 +3265,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_all_contacts() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(1), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(1), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(1), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -3507,8 +3415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_data() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(4), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(4), None).await;
         client_0.create_standalone_device();
 
         let data_type = "type".to_string();
@@ -3562,12 +3469,7 @@ mod tests {
         println!("");
 
         let res = client_0
-            .set_data(
-                data_id.clone(),
-                data_type.clone(),
-                json_val.clone(),
-                None,
-            )
+            .set_data(data_id.clone(), data_type.clone(), json_val.clone(), None)
             .await;
         if res.is_err() {
             panic!("send failed");
@@ -3673,10 +3575,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_writers() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(8), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(5), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(8), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(5), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -3801,12 +3701,7 @@ mod tests {
         println!("");
 
         res = client_0
-            .set_data(
-                data_id.clone(),
-                data_type.clone(),
-                json_val.clone(),
-                None,
-            )
+            .set_data(data_id.clone(), data_type.clone(), json_val.clone(), None)
             .await;
         if res.is_err() {
             panic!("send failed");
@@ -3850,10 +3745,7 @@ mod tests {
         println!("ADDING WRITERS");
 
         res = client_0
-            .add_writers(
-                data_val.data_id().clone(),
-                vec![&client_1.linked_name()],
-            )
+            .add_writers(data_val.data_id().clone(), vec![&client_1.linked_name()])
             .await;
         if res.is_err() {
             panic!("send failed");
@@ -3962,10 +3854,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_readers() {
-        let mut client_0 =
-            TankClient::new(None, None, false, Some(10), None).await;
-        let mut client_1 =
-            TankClient::new(None, None, false, Some(7), None).await;
+        let mut client_0 = TankClient::new(None, None, false, Some(10), None).await;
+        let mut client_1 = TankClient::new(None, None, false, Some(7), None).await;
 
         client_0.create_standalone_device();
         client_1.create_standalone_device();
@@ -4002,12 +3892,7 @@ mod tests {
         let data_id = crate::metadata::generate_uuid();
         let json_val = data_true.to_string();
         res = client_0
-            .set_data(
-                data_id.clone(),
-                data_type.clone(),
-                json_val.clone(),
-                None,
-            )
+            .set_data(data_id.clone(), data_type.clone(), json_val.clone(), None)
             .await;
         if res.is_err() {
             panic!("send failed");
@@ -4047,10 +3932,7 @@ mod tests {
         println!("ADDING READERS");
 
         res = client_0
-            .add_readers(
-                data_val.data_id().clone(),
-                vec![&client_1.linked_name()],
-            )
+            .add_readers(data_val.data_id().clone(), vec![&client_1.linked_name()])
             .await;
         if res.is_err() {
             panic!("send failed");

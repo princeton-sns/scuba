@@ -145,11 +145,7 @@ async fn client_loop(
             device_id: device_id.clone(),
             start_epoch: parsed.start_epoch_id,
             end_epoch: parsed.end_epoch_id,
-            message_count: parsed
-                .messages
-                .iter()
-                .map(|(_, m)| m.len())
-                .sum::<usize>(),
+            message_count: parsed.messages.iter().map(|(_, m)| m.len()).sum::<usize>(),
         })
         .unwrap();
 

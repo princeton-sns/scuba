@@ -1,9 +1,9 @@
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
+use std::sync::Arc;
 use tank::client::TankClient;
 use tank::data::ScubaData;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
@@ -230,9 +230,7 @@ impl ChessApp {
     ) -> ReplResult<Option<String>> {
         match context
             .client
-            .create_linked_device(
-                args.get_one::<String>("idkey").unwrap().to_string(),
-            )
+            .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
             Ok(_) => Ok(Some(String::from("Linked device created!"))),
@@ -418,8 +416,7 @@ impl ChessApp {
             )));
         }
 
-        let opponent_id =
-            args.get_one::<String>("opponent").unwrap().to_string();
+        let opponent_id = args.get_one::<String>("opponent").unwrap().to_string();
 
         let mut game_id = GAME_PREFIX.to_owned();
         game_id.push_str("/");
@@ -428,12 +425,7 @@ impl ChessApp {
 
         let res = context
             .client
-            .set_data(
-                game_id.clone(),
-                GAME_PREFIX.to_string(),
-                json_string,
-                None,
-            )
+            .set_data(game_id.clone(), GAME_PREFIX.to_string(), json_string, None)
             .await;
 
         if res.is_err() {
@@ -505,11 +497,8 @@ async fn main() -> ReplResult<()> {
             ChessApp::create_new_device,
         )
         .with_command_async(
-            Command::new("create_linked_device")
-                .arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(ChessApp::create_linked_device(args, context))
-            },
+            Command::new("create_linked_device").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(ChessApp::create_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), ChessApp::check_device)
         .with_command(Command::new("get_name"), ChessApp::get_name)
@@ -531,8 +520,7 @@ async fn main() -> ReplResult<()> {
             ChessApp::get_state,
         )
         .with_command_async(
-            Command::new("create_game")
-                .arg(Arg::new("opponent").required(true)),
+            Command::new("create_game").arg(Arg::new("opponent").required(true)),
             |args, context| Box::pin(ChessApp::create_game(args, context)),
         )
         .with_command_async(

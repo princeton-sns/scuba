@@ -4,10 +4,10 @@ use core::cmp::Ordering;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use tank::client::TankClient;
-use tank::data::ScubaData;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tank::client::TankClient;
+use tank::data::ScubaData;
 use uuid::Uuid;
 
 /*
@@ -73,11 +73,7 @@ impl Auction {
         }
     }
 
-    fn update_highest_bid(
-        &mut self,
-        new_highest_bid: u64,
-        new_highest_bidder: String,
-    ) {
+    fn update_highest_bid(&mut self, new_highest_bid: u64, new_highest_bidder: String) {
         self.highest_bid = new_highest_bid;
         self.highest_bidder = new_highest_bidder;
     }
@@ -181,26 +177,9 @@ struct AuctioningApp {
 impl AuctioningApp {
     pub async fn new() -> AuctioningApp {
         let client = TankClient::new(
-            None,
-            None,
-            false,
-            None,
-            None,
-            // sequential consistency
-            true,
-            false,
-            false,
-            false,
-            // benchmarking args
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, false, None, None, // sequential consistency
+            true, false, false, false, // benchmarking args
+            None, None, None, None, None, None, None, None, None,
         )
         .await;
         Self { client }
@@ -232,9 +211,7 @@ impl AuctioningApp {
         }
     }
 
-    pub async fn init_new_device(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn init_new_device(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         context.client.create_standalone_device().await;
         Ok(Some(String::from("Standalone device created.")))
     }
@@ -245,9 +222,7 @@ impl AuctioningApp {
     ) -> ReplResult<Option<String>> {
         match context
             .client
-            .create_linked_device(
-                args.get_one::<String>("idkey").unwrap().to_string(),
-            )
+            .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
             Ok(_) => Ok(Some(String::from("Linked device created!"))),
@@ -450,10 +425,7 @@ impl AuctioningApp {
             }
         }
 
-        Ok(Some(String::from(format!(
-            "Successfully shared {}",
-            id
-        ))))
+        Ok(Some(String::from(format!("Successfully shared {}", id))))
     }
 
     // called by auctioneer for announcing open auctions
@@ -467,8 +439,7 @@ impl AuctioningApp {
             )));
         }
 
-        let client_id =
-            args.get_one::<String>("client_id").unwrap().to_string();
+        let client_id = args.get_one::<String>("client_id").unwrap().to_string();
         let open_clients_opt = context
             .client
             .get_data(&OPEN_CLIENTS_PREFIX.to_string())
@@ -477,8 +448,7 @@ impl AuctioningApp {
         if open_clients_opt.is_none() {
             let mut open_clients = OpenAuctionClients::new();
             open_clients.add_client(&client_id);
-            let open_clients_json =
-                serde_json::to_string(&open_clients).unwrap();
+            let open_clients_json = serde_json::to_string(&open_clients).unwrap();
 
             match context
                 .client
@@ -502,11 +472,9 @@ impl AuctioningApp {
             }
         } else {
             let mut open_clients: OpenAuctionClients =
-                serde_json::from_str(&open_clients_opt.unwrap().data_val())
-                    .unwrap();
+                serde_json::from_str(&open_clients_opt.unwrap().data_val()).unwrap();
             open_clients.add_client(&client_id);
-            let open_clients_json =
-                serde_json::to_string(&open_clients).unwrap();
+            let open_clients_json = serde_json::to_string(&open_clients).unwrap();
 
             match context
                 .client
@@ -520,9 +488,7 @@ impl AuctioningApp {
                 )
                 .await
             {
-                Ok(_) => {
-                    Ok(Some(String::from("Added client to open auction list")))
-                }
+                Ok(_) => Ok(Some(String::from("Added client to open auction list"))),
                 Err(err) => Ok(Some(String::from(format!(
                     "Could not store open auction list: {}",
                     err.to_string()
@@ -542,8 +508,7 @@ impl AuctioningApp {
             )));
         }
 
-        let auction_id =
-            args.get_one::<String>("auction_id").unwrap().to_string();
+        let auction_id = args.get_one::<String>("auction_id").unwrap().to_string();
         let open_clients_opt = context
             .client
             .get_data(&OPEN_CLIENTS_PREFIX.to_string())
@@ -555,8 +520,7 @@ impl AuctioningApp {
             )));
         }
         let open_clients: OpenAuctionClients =
-            serde_json::from_str(&open_clients_opt.unwrap().data_val())
-                .unwrap();
+            serde_json::from_str(&open_clients_opt.unwrap().data_val()).unwrap();
         let clients = open_clients.client_ids.iter().collect::<Vec<&String>>();
         match context
             .client
@@ -627,10 +591,20 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(auction_id.clone(), AUCTION_PREFIX.to_owned(), auction_json, None, None, false)
+            .set_data(
+                auction_id.clone(),
+                AUCTION_PREFIX.to_owned(),
+                auction_json,
+                None,
+                None,
+                false,
+            )
             .await
         {
-            Ok(_) => Ok(Some(String::from(format!("Successfully created auction with id {}", &auction_id)))),
+            Ok(_) => Ok(Some(String::from(format!(
+                "Successfully created auction with id {}",
+                &auction_id
+            )))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not create auction: {}",
                 err.to_string()
@@ -649,8 +623,7 @@ impl AuctioningApp {
             )));
         }
 
-        let auction_id =
-            args.get_one::<String>("auction_id").unwrap().to_string();
+        let auction_id = args.get_one::<String>("auction_id").unwrap().to_string();
         let bid_str = args.get_one::<String>("bid").unwrap().to_string();
         let bid_val: u64 = bid_str.parse().unwrap();
         let bid = Bid::new(auction_id, bid_val, context.client.linked_name());
@@ -659,10 +632,20 @@ impl AuctioningApp {
 
         match context
             .client
-            .set_data(bid_id.clone(), BID_PREFIX.to_owned(), bid_json, None, None, false)
+            .set_data(
+                bid_id.clone(),
+                BID_PREFIX.to_owned(),
+                bid_json,
+                None,
+                None,
+                false,
+            )
             .await
         {
-            Ok(_) => Ok(Some(String::from(format!("Successfully created bid with id {}", &bid_id)))),
+            Ok(_) => Ok(Some(String::from(format!(
+                "Successfully created bid with id {}",
+                &bid_id
+            )))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not create bid: {}",
                 err.to_string()
@@ -689,12 +672,10 @@ impl AuctioningApp {
                 bid_id
             ))));
         }
-        let bid: Bid =
-            serde_json::from_str(bid_data_opt.unwrap().data_val()).unwrap();
+        let bid: Bid = serde_json::from_str(bid_data_opt.unwrap().data_val()).unwrap();
 
         let auction_id = bid.auction_id.clone();
-        let auction_data_opt =
-            context.client.get_data(&auction_id).await.unwrap();
+        let auction_data_opt = context.client.get_data(&auction_id).await.unwrap();
         if auction_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Auction with id {} does not exist",
@@ -740,11 +721,9 @@ impl AuctioningApp {
             )));
         }
 
-        let auction_id =
-            args.get_one::<String>("auction_id").unwrap().to_string();
+        let auction_id = args.get_one::<String>("auction_id").unwrap().to_string();
 
-        let auction_data_opt =
-            context.client.get_data(&auction_id).await.unwrap();
+        let auction_data_opt = context.client.get_data(&auction_id).await.unwrap();
         if auction_data_opt.is_none() {
             return Ok(Some(String::from(format!(
                 "Auction with id {} does not exist",
@@ -795,16 +774,12 @@ async fn main() -> ReplResult<()> {
         .with_name("Auctioning App")
         .with_version("v0.1.0")
         .with_description("Scuba online auctioning app")
+        .with_command_async(Command::new("init_new_device"), |_, context| {
+            Box::pin(AuctioningApp::init_new_device(context))
+        })
         .with_command_async(
-            Command::new("init_new_device"),
-            |_, context| Box::pin(AuctioningApp::init_new_device(context)),
-        )
-        .with_command_async(
-            Command::new("init_linked_device")
-                .arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(AuctioningApp::init_linked_device(args, context))
-            },
+            Command::new("init_linked_device").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(AuctioningApp::init_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), AuctioningApp::check_device)
         .with_command(Command::new("get_name"), AuctioningApp::get_name)
@@ -813,12 +788,9 @@ async fn main() -> ReplResult<()> {
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(AuctioningApp::add_contact(args, context)),
         )
-        .with_command_async(
-            Command::new("get_linked_devices"),
-            |_, context| {
-                Box::pin(AuctioningApp::get_linked_devices(context))
-            },
-        )
+        .with_command_async(Command::new("get_linked_devices"), |_, context| {
+            Box::pin(AuctioningApp::get_linked_devices(context))
+        })
         .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(AuctioningApp::get_data(args, context)),
@@ -869,9 +841,7 @@ async fn main() -> ReplResult<()> {
                         .long("end-time")
                         .help("Format: HH:MM:SS (24-hour)"),
                 ),
-            |args, context| {
-                Box::pin(AuctioningApp::create_auction(args, context))
-            },
+            |args, context| Box::pin(AuctioningApp::create_auction(args, context)),
         )
         .with_command_async(
             // TODO automatically share with auctioneer
@@ -886,37 +856,24 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(AuctioningApp::submit_bid(args, context)),
         )
         .with_command_async(
-            Command::new("apply_bid").arg(
-                Arg::new("bid_id").required(true),
-            ),
+            Command::new("apply_bid").arg(Arg::new("bid_id").required(true)),
             |args, context| Box::pin(AuctioningApp::apply_bid(args, context)),
         )
         .with_command_async(
-            Command::new("announce_sale").arg(
-                Arg::new("auction_id")
-                    .required(true),
-            ),
-            |args, context| {
-                Box::pin(AuctioningApp::announce_sale(args, context))
-            },
+            Command::new("announce_sale").arg(Arg::new("auction_id").required(true)),
+            |args, context| Box::pin(AuctioningApp::announce_sale(args, context)),
         )
         .with_command_async(
-            Command::new("add_to_open_auction_list").arg(
-                Arg::new("client_id")
-                    .required(true),
-            ),
+            Command::new("add_to_open_auction_list")
+                .arg(Arg::new("client_id").required(true)),
             |args, context| {
                 Box::pin(AuctioningApp::add_to_open_auction_list(args, context))
             },
         )
         .with_command_async(
-            Command::new("announce_open_auction").arg(
-                Arg::new("auction_id")
-                    .required(true),
-            ),
-            |args, context| {
-                Box::pin(AuctioningApp::announce_open_auction(args, context))
-            },
+            Command::new("announce_open_auction")
+                .arg(Arg::new("auction_id").required(true)),
+            |args, context| Box::pin(AuctioningApp::announce_open_auction(args, context)),
         )
         .with_command_async(
             Command::new("share")

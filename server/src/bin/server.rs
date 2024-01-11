@@ -99,9 +99,7 @@ async fn main() -> std::io::Result<()> {
             inbox_drop_messages,
             isb_chunk_size,
         } => {
-            if (isb_socket_addr.is_some() as u8)
-                ^ (isb_socket_port.is_some() as u8)
-                != 0
+            if (isb_socket_addr.is_some() as u8) ^ (isb_socket_port.is_some() as u8) != 0
             {
                 panic!("Must set either none or both of --isb-socket-addr and --isb-socket-port!");
             }
@@ -147,12 +145,10 @@ async fn main() -> std::io::Result<()> {
             async move {
                 let sequencer_closure = sequencer::init(1).await;
 
-                HttpServer::new(move || {
-                    App::new().configure(sequencer_closure.clone())
-                })
-                .bind(("127.0.0.1", sequencer_port))?
-                .run()
-                .await
+                HttpServer::new(move || App::new().configure(sequencer_closure.clone()))
+                    .bind(("127.0.0.1", sequencer_port))?
+                    .run()
+                    .await
             },
             async move {
                 let shard_closure = shard::init(
@@ -167,12 +163,10 @@ async fn main() -> std::io::Result<()> {
                 )
                 .await;
 
-                HttpServer::new(move || {
-                    App::new().configure(shard_closure.clone())
-                })
-                .bind(("0.0.0.0", shard_port))?
-                .run()
-                .await
+                HttpServer::new(move || App::new().configure(shard_closure.clone()))
+                    .bind(("0.0.0.0", shard_port))?
+                    .run()
+                    .await
             },
             async move {
                 if let Some(att_port) = attestation_proxy_port {
@@ -182,12 +176,10 @@ async fn main() -> std::io::Result<()> {
                     ))
                     .await;
 
-                    HttpServer::new(move || {
-                        App::new().configure(att_closure.clone())
-                    })
-                    .bind(("0.0.0.0", att_port))?
-                    .run()
-                    .await
+                    HttpServer::new(move || App::new().configure(att_closure.clone()))
+                        .bind(("0.0.0.0", att_port))?
+                        .run()
+                        .await
                 } else {
                     Ok(())
                 }

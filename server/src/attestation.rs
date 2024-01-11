@@ -64,10 +64,7 @@ pub struct AttestationMessage<'a> {
 }
 
 impl<'a> AttestationMessage<'a> {
-    pub fn from_inbox(
-        ibmsg: &'a EncryptedInboxMessage,
-        recipient: &'a str,
-    ) -> Self {
+    pub fn from_inbox(ibmsg: &'a EncryptedInboxMessage, recipient: &'a str) -> Self {
         let mut per_recipient = BTreeMap::new();
         for rcpt in ibmsg.recipients.iter() {
             per_recipient.insert(
@@ -123,9 +120,7 @@ impl AttestationData {
                     if let Some((c_type, c)) = ciphertext {
                         hasher.update(&usize::to_le_bytes(*c_type));
                         hasher.update(c);
-                        hasher.finalize_into_reset(
-                            (&mut ciphertext_digest).into(),
-                        );
+                        hasher.finalize_into_reset((&mut ciphertext_digest).into());
                     }
 
                     (recipient_digest, ciphertext_digest)
@@ -146,17 +141,16 @@ impl AttestationData {
         next_seq: u128,
         messages: impl Iterator<Item = T>,
     ) -> AttestationData {
-        let owned_messages: Vec<_> =
-            messages.map(|msg| msg.borrow().clone()).collect();
+        let owned_messages: Vec<_> = messages.map(|msg| msg.borrow().clone()).collect();
 
         Self::from_inbox_msgs_int(
             client_id,
             first_seq,
             next_seq,
             Self::message_hash_table(
-                owned_messages.iter().map(|ibmsg| {
-                    AttestationMessage::from_inbox(ibmsg, client_id)
-                }),
+                owned_messages
+                    .iter()
+                    .map(|ibmsg| AttestationMessage::from_inbox(ibmsg, client_id)),
             ),
         )
     }
@@ -175,9 +169,7 @@ impl AttestationData {
         )
     }
 
-    fn from_inbox_msgs_int<
-        T: Borrow<(u128, Vec<([u8; 32], [u8; 32])>, [u8; 32])>,
-    >(
+    fn from_inbox_msgs_int<T: Borrow<(u128, Vec<([u8; 32], [u8; 32])>, [u8; 32])>>(
         client_id: &str,
         first_seq: u128,
         next_seq: u128,
@@ -209,10 +201,7 @@ impl AttestationData {
         AttestationData(attestation_data)
     }
 
-    pub fn attest(
-        &self,
-        attestation_key: &ed25519_dalek::Keypair,
-    ) -> Attestation {
+    pub fn attest(&self, attestation_key: &ed25519_dalek::Keypair) -> Attestation {
         use ed25519_dalek::Signer;
         let signature = attestation_key.sign(&self.0);
 
@@ -237,11 +226,12 @@ impl AttestationData {
         }
 
         // Generate the hash-table to be passed alongside the attestation:
-        let message_hash_table: Vec<_> =
-            Self::message_hash_table(messages.iter().map(|ibmsg| {
-                AttestationMessage::from_inbox(ibmsg, client_id.as_str())
-            }))
-            .collect();
+        let message_hash_table: Vec<_> = Self::message_hash_table(
+            messages
+                .iter()
+                .map(|ibmsg| AttestationMessage::from_inbox(ibmsg, client_id.as_str())),
+        )
+        .collect();
 
         // Sanity check that the claim we're producing is supported by the
         // passed attestation:
@@ -344,16 +334,16 @@ impl AttestationClaim {
         public_key: &ed25519_dalek::PublicKey,
     ) -> bool {
         // Two claims support each other when
-        // - one contains a message at a sequence number that the other does
-        //   not, despite the other client being in the first's recipient list
-        //   (positive + negative claim), or
-        // - both contain a message with an identical sequence number but
-        //   differing receipients or common payload (positive + positive), or
-        // - both contain a message with an identical sequence number, and both
-        //   contain the per-recipient ciphertext for a given recipient (the
-        //   recipient digest matches and the following ciphertext is different
-        //   but non-null for both), which is a special case of (positive +
-        //   positive) used with sender-issued attestations.
+        // - one contains a message at a sequence number that the other does not, despite
+        //   the other client being in the first's recipient list (positive + negative
+        //   claim), or
+        // - both contain a message with an identical sequence number but differing
+        //   receipients or common payload (positive + positive), or
+        // - both contain a message with an identical sequence number, and both contain
+        //   the per-recipient ciphertext for a given recipient (the recipient digest
+        //   matches and the following ciphertext is different but non-null for both),
+        //   which is a special case of (positive + positive) used with sender-issued
+        //   attestations.
         //
         // For simpler handling, "sort" the two claims by whichever contains
         // a potentially conflicting message reference. It's invalid for
@@ -376,8 +366,7 @@ impl AttestationClaim {
         if let Some(pn_idx) = &claim_pn.message_idx {
             // Positive + positive claim! Compare sequence numbers. If they
             // match, recipients and payload must be identical.
-            let (p_seqid, p_recipients, p_payload) =
-                &claim_p.message_hash_table[*p_idx];
+            let (p_seqid, p_recipients, p_payload) = &claim_p.message_hash_table[*p_idx];
             let (pn_seqid, pn_recipients, pn_payload) =
                 &claim_pn.message_hash_table[*pn_idx];
 
@@ -432,8 +421,7 @@ impl AttestationClaim {
             // supported by the negative claim if the offending message's
             // sequence number is contained within the negative claim's
             // sequence space, so verify that.
-            let (p_seqid, p_recipients, _p_payload) =
-                &claim_p.message_hash_table[*p_idx];
+            let (p_seqid, p_recipients, _p_payload) = &claim_p.message_hash_table[*p_idx];
 
             if *p_seqid < claim_pn.first_seq || *p_seqid >= claim_pn.next_seq {
                 return false;
@@ -537,15 +525,15 @@ impl Attestation {
 
     pub fn first_epoch(&self) -> u64 {
         u64::from_le_bytes([
-            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5],
-            self.0[6], self.0[7],
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6],
+            self.0[7],
         ])
     }
 
     pub fn next_epoch(&self) -> u64 {
         u64::from_le_bytes([
-            self.0[8], self.0[9], self.0[10], self.0[11], self.0[12],
-            self.0[13], self.0[14], self.0[15],
+            self.0[8], self.0[9], self.0[10], self.0[11], self.0[12], self.0[13],
+            self.0[14], self.0[15],
         ])
     }
 
@@ -557,13 +545,9 @@ impl Attestation {
         data.0 == self.0[0..64] && self.verify_trusted(public_key)
     }
 
-    pub fn verify_trusted(
-        &self,
-        public_key: &ed25519_dalek::PublicKey,
-    ) -> bool {
+    pub fn verify_trusted(&self, public_key: &ed25519_dalek::PublicKey) -> bool {
         use ed25519_dalek::Verifier;
-        let signature =
-            ed25519_dalek::Signature::from_bytes(&self.0[64..]).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&self.0[64..]).unwrap();
         public_key.verify(&self.0[..64], &signature).is_ok()
     }
 }
@@ -632,20 +616,12 @@ mod test {
             seq_id: 42,
         };
 
-        let client_a_attdata = AttestationData::from_inbox_msgs(
-            "a",
-            0,
-            100,
-            [&ibmsg_client_a].into_iter(),
-        );
+        let client_a_attdata =
+            AttestationData::from_inbox_msgs("a", 0, 100, [&ibmsg_client_a].into_iter());
         let client_a_attestation = client_a_attdata.attest(&keypair);
 
-        let client_b_attdata = AttestationData::from_inbox_msgs(
-            "b",
-            0,
-            100,
-            [&ibmsg_client_b].into_iter(),
-        );
+        let client_b_attdata =
+            AttestationData::from_inbox_msgs("b", 0, 100, [&ibmsg_client_b].into_iter());
         let client_b_attestation = client_b_attdata.attest(&keypair);
 
         let client_a_claim = client_a_attdata.produce_claim_from_ibmsgs(
@@ -675,14 +651,8 @@ mod test {
             client_b_attestation,
         );
 
-        assert!(
-            client_a_claim.supports(&client_b_pos_claim, &keypair.public)
-                == false
-        );
-        assert!(
-            client_a_claim.supports(&client_b_neg_claim, &keypair.public)
-                == false
-        );
+        assert!(client_a_claim.supports(&client_b_pos_claim, &keypair.public) == false);
+        assert!(client_a_claim.supports(&client_b_neg_claim, &keypair.public) == false);
     }
 
     #[test]
@@ -700,12 +670,8 @@ mod test {
             seq_id: 42,
         };
 
-        let client_a_attdata = AttestationData::from_inbox_msgs(
-            "a",
-            0,
-            100,
-            [&ibmsg_client_a].into_iter(),
-        );
+        let client_a_attdata =
+            AttestationData::from_inbox_msgs("a", 0, 100, [&ibmsg_client_a].into_iter());
         let client_a_attestation = client_a_attdata.attest(&keypair);
 
         let client_b_attdata = AttestationData::from_inbox_msgs(
@@ -763,20 +729,12 @@ mod test {
             seq_id: 42,
         };
 
-        let client_a_attdata = AttestationData::from_inbox_msgs(
-            "a",
-            0,
-            100,
-            [&ibmsg_client_a].into_iter(),
-        );
+        let client_a_attdata =
+            AttestationData::from_inbox_msgs("a", 0, 100, [&ibmsg_client_a].into_iter());
         let client_a_attestation = client_a_attdata.attest(&keypair);
 
-        let client_b_attdata = AttestationData::from_inbox_msgs(
-            "b",
-            0,
-            100,
-            [&ibmsg_client_b].into_iter(),
-        );
+        let client_b_attdata =
+            AttestationData::from_inbox_msgs("b", 0, 100, [&ibmsg_client_b].into_iter());
         let client_b_attestation = client_b_attdata.attest(&keypair);
 
         let client_a_claim = client_a_attdata.produce_claim_from_ibmsgs(
@@ -815,12 +773,8 @@ mod test {
             seq_id: 42,
         };
 
-        let client_a_attdata = AttestationData::from_inbox_msgs(
-            "a",
-            0,
-            100,
-            [&ibmsg_client_a].into_iter(),
-        );
+        let client_a_attdata =
+            AttestationData::from_inbox_msgs("a", 0, 100, [&ibmsg_client_a].into_iter());
 
         let client_a_attestation = client_a_attdata.attest(&keypair);
 
@@ -832,12 +786,8 @@ mod test {
             per_recipient: sender_att_msg_per_rcpt,
             common: &[0, 1, 2, 3][..],
         };
-        let sender_attdata = AttestationData::from_att_msgs(
-            "c",
-            42,
-            43,
-            vec![sender_att_msg.clone()],
-        );
+        let sender_attdata =
+            AttestationData::from_att_msgs("c", 42, 43, vec![sender_att_msg.clone()]);
 
         let sender_attestation = sender_attdata.attest(&keypair);
 
@@ -877,12 +827,8 @@ mod test {
             seq_id: 42,
         };
 
-        let client_a_attdata = AttestationData::from_inbox_msgs(
-            "a",
-            0,
-            100,
-            [&ibmsg_client_a].into_iter(),
-        );
+        let client_a_attdata =
+            AttestationData::from_inbox_msgs("a", 0, 100, [&ibmsg_client_a].into_iter());
 
         let client_a_attestation = client_a_attdata.attest(&keypair);
 
@@ -894,12 +840,8 @@ mod test {
             per_recipient: sender_att_msg_per_rcpt,
             common: &[0, 1, 2, 3][..],
         };
-        let sender_attdata = AttestationData::from_att_msgs(
-            "c",
-            42,
-            43,
-            vec![sender_att_msg.clone()],
-        );
+        let sender_attdata =
+            AttestationData::from_att_msgs("c", 42, 43, vec![sender_att_msg.clone()]);
 
         let sender_attestation = sender_attdata.attest(&keypair);
 
@@ -921,8 +863,6 @@ mod test {
             sender_attestation.clone(),
         );
 
-        assert!(
-            client_a_claim.supports(&sender_claim, &keypair.public) == false
-        );
+        assert!(client_a_claim.supports(&sender_claim, &keypair.public) == false);
     }
 }

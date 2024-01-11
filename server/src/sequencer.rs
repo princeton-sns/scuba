@@ -1,6 +1,5 @@
 use actix::{
-    Actor, Addr, AsyncContext, Context, Handler, Message, MessageResponse,
-    ResponseFuture,
+    Actor, Addr, AsyncContext, Context, Handler, Message, MessageResponse, ResponseFuture,
 };
 use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
@@ -141,11 +140,7 @@ impl Handler<SequencerRegisterReq> for SequencerActor {
 impl Handler<ProbeShards> for SequencerActor {
     type Result = ResponseFuture<()>;
 
-    fn handle(
-        &mut self,
-        _msg: ProbeShards,
-        ctx: &mut Context<Self>,
-    ) -> Self::Result {
+    fn handle(&mut self, _msg: ProbeShards, ctx: &mut Context<Self>) -> Self::Result {
         let adds = self.shard_addresses.clone();
         let this = ctx.address().clone();
         let httpc = self.client.clone();
@@ -153,8 +148,7 @@ impl Handler<ProbeShards> for SequencerActor {
         Box::pin(async move {
             for (_, addr, _) in adds.iter() {
                 if let Err(_) = httpc.get(addr).send().await {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1))
-                        .await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     this.do_send(ProbeShards);
                     return;
                 }
@@ -179,11 +173,7 @@ impl Handler<ProbeShards> for SequencerActor {
 impl Handler<EpochStart> for SequencerActor {
     type Result = ResponseFuture<()>;
 
-    fn handle(
-        &mut self,
-        msg: EpochStart,
-        _ctx: &mut Context<Self>,
-    ) -> Self::Result {
+    fn handle(&mut self, msg: EpochStart, _ctx: &mut Context<Self>) -> Self::Result {
         let EpochStart(epoch_id) = msg;
         self.phase = Phase::Sequencing(epoch_id, std::time::Instant::now());
 
@@ -229,11 +219,7 @@ impl Handler<CurrentEpochReq> for SequencerActor {
 impl Handler<EndEpochReq> for SequencerActor {
     type Result = ();
 
-    fn handle(
-        &mut self,
-        msg: EndEpochReq,
-        ctx: &mut Context<Self>,
-    ) -> Self::Result {
+    fn handle(&mut self, msg: EndEpochReq, ctx: &mut Context<Self>) -> Self::Result {
         let epoch_start_time = match &self.phase {
             Phase::Sequencing(epoch_id, start_time) => {
                 assert!(*epoch_id == msg.epoch_id + 1);
@@ -289,9 +275,7 @@ impl Handler<SequencerShardMapReq> for SequencerActor {
                 shards: self
                     .shard_addresses
                     .iter()
-                    .map(|(_, addr, isb_socket)| {
-                        (addr.clone(), isb_socket.clone())
-                    })
+                    .map(|(_, addr, isb_socket)| (addr.clone(), isb_socket.clone()))
                     .collect(),
             }))
         }
@@ -303,9 +287,7 @@ async fn register(
     state: web::Data<Addr<SequencerActor>>,
     req: web::Json<SequencerRegisterReq>,
 ) -> impl Responder {
-    web::Json::<SequencerRegisterResp>(
-        state.send(req.into_inner()).await.unwrap(),
-    )
+    web::Json::<SequencerRegisterResp>(state.send(req.into_inner()).await.unwrap())
 }
 
 #[get("/shard-map")]
@@ -327,9 +309,7 @@ async fn end_epoch(
 }
 
 #[get("/current-epoch")]
-async fn current_epoch(
-    state: web::Data<Addr<SequencerActor>>,
-) -> impl Responder {
+async fn current_epoch(state: web::Data<Addr<SequencerActor>>) -> impl Responder {
     format!("{}", state.send(CurrentEpochReq).await.unwrap().0)
 }
 

@@ -2,31 +2,30 @@ use chrono::naive::{NaiveDate, NaiveDateTime, NaiveTime};
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use tank::client::TankClient;
-use tank::data::ScubaData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tank::client::TankClient;
+use tank::data::ScubaData;
 use uuid::Uuid;
 
 /*
  * Calendar
- * - [x] allows patients to book appointments with providers given the
- *   provider's availability
+ * - [x] allows patients to book appointments with providers given the provider's
+ *   availability
  * - how appointments are made
- *   - [x] patient requests single time with provider, which the provider
- *     must then confirm + update their own availability
- *   - [ ] patient requests a prioritized list of appointment times which
- *     the provider can automatically confirm/deny based on the
- *     highest-pri slot that is available
- *   - [ ] provider puts the appointment confirmation and availability
- *     update in a transaction (serializability)
+ *   - [x] patient requests single time with provider, which the provider must then
+ *     confirm + update their own availability
+ *   - [ ] patient requests a prioritized list of appointment times which the provider
+ *     can automatically confirm/deny based on the highest-pri slot that is available
+ *   - [ ] provider puts the appointment confirmation and availability update in a
+ *     transaction (serializability)
  * - [x] providers share their availability with all patients
- * - [x] appointments are private to provider and the patient whom the
- *   appointment is with, but update the provider's overall
- *   availability, visible to their other patients
- * - [ ] providers can also block off times on their end without needing
- *   an appointment to be scheduled, e.g. for lunch breaks
+ * - [x] appointments are private to provider and the patient whom the appointment is
+ *   with, but update the provider's overall availability, visible to their other
+ *   patients
+ * - [ ] providers can also block off times on their end without needing an appointment
+ *   to be scheduled, e.g. for lunch breaks
  * - [x] the same device can act as both a patient and provider
  * - [x] patients can have multiple providers
  * - [x] providers can have their own providers
@@ -191,11 +190,7 @@ impl Availability {
         }
     }
 
-    fn add_busy_slot(
-        &mut self,
-        datetime: NaiveDateTime,
-        duration: u32,
-    ) -> Option<u32> {
+    fn add_busy_slot(&mut self, datetime: NaiveDateTime, duration: u32) -> Option<u32> {
         self.busy_slots.insert(datetime, duration)
     }
 }
@@ -212,26 +207,9 @@ struct CalendarApp {
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
         let client = TankClient::new(
-            None,
-            None,
-            false,
-            None,
-            None,
-            // serializability
-            true,
-            false,
-            true,
-            true,
-            // benchmarking args
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, false, None, None, // serializability
+            true, false, true, true, // benchmarking args
+            None, None, None, None, None, None, None, None, None,
         )
         .await;
         Self { client }
@@ -263,9 +241,7 @@ impl CalendarApp {
         }
     }
 
-    pub async fn init_new_device(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn init_new_device(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         context.client.create_standalone_device().await;
 
         let roles_id = ROLES_PREFIX.to_owned();
@@ -298,9 +274,7 @@ impl CalendarApp {
     ) -> ReplResult<Option<String>> {
         match context
             .client
-            .create_linked_device(
-                args.get_one::<String>("idkey").unwrap().to_string(),
-            )
+            .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
             Ok(_) => Ok(Some(String::from("Linked device created!"))),
@@ -402,7 +376,11 @@ impl CalendarApp {
                     serde_json::from_str(roles_obj.data_val()).unwrap();
 
                 if let Some(provider_role) = roles.provider {
-                    match context.client.add_do_readers(provider_role.availability_id, vec).await {
+                    match context
+                        .client
+                        .add_do_readers(provider_role.availability_id, vec)
+                        .await
+                    {
                         Ok(_) => Ok(Some(String::from(format!(
                             "Availability shared with patient {}",
                             patient
@@ -415,13 +393,13 @@ impl CalendarApp {
                 } else {
                     return Ok(Some(String::from("No provider role initialized.")));
                 }
-            },
+            }
             Ok(None) => Ok(Some(String::from("Roles do not exist."))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}", err.to_string()
+                "Error getting roles: {}",
+                err.to_string()
             )))),
         }
-
     }
 
     pub async fn get_data(
@@ -508,9 +486,7 @@ impl CalendarApp {
         }
     }
 
-    pub async fn get_roles(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn get_roles(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         if !context.exists_device() {
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
@@ -525,7 +501,8 @@ impl CalendarApp {
             }
             Ok(None) => Ok(Some(String::from("Roles do not exist."))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}", err.to_string()
+                "Error getting roles: {}",
+                err.to_string()
             )))),
         }
     }
@@ -602,10 +579,11 @@ impl CalendarApp {
                         err.to_string()
                     )))),
                 }
-            },
+            }
             Ok(None) => Ok(Some(String::from("Roles do not exist."))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}", err.to_string()
+                "Error getting roles: {}",
+                err.to_string()
             )))),
         }
     }
@@ -645,10 +623,11 @@ impl CalendarApp {
                         err.to_string()
                     )))),
                 }
-            },
+            }
             Ok(None) => Ok(Some(String::from("Roles do not exist."))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}", err.to_string()
+                "Error getting roles: {}",
+                err.to_string()
             )))),
         }
     }
@@ -669,15 +648,17 @@ impl CalendarApp {
 
                 if let Some(provider_role) = roles.provider {
                     return Ok(Some(String::from(format!(
-                        "Availability id is {}", provider_role.availability_id
+                        "Availability id is {}",
+                        provider_role.availability_id
                     ))));
                 } else {
                     return Ok(Some(String::from("No provider role initialized.")));
                 }
-            },
+            }
             Ok(None) => Ok(Some(String::from("Roles do not exist."))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}", err.to_string()
+                "Error getting roles: {}",
+                err.to_string()
             )))),
         }
     }
@@ -699,13 +680,14 @@ impl CalendarApp {
                 let val: AppointmentInfo =
                     serde_json::from_str(val_obj.data_val()).unwrap();
                 Ok(Some(String::from(format!("{:?}", val))))
-            },
+            }
             Ok(None) => Ok(Some(String::from(format!(
                 "Appointment with id {} does not exist.",
                 id,
             )))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting appointment: {}", err.to_string()
+                "Error getting appointment: {}",
+                err.to_string()
             )))),
         }
     }
@@ -771,10 +753,8 @@ impl CalendarApp {
                 let time_str = args.get_one::<String>("time").unwrap();
                 match NaiveTime::parse_from_str(time_str, "%H:%M:%S") {
                     Ok(time) => {
-                        let appt =
-                            AppointmentInfo::new(date, time, notes.cloned());
-                        let id =
-                            Self::new_prefixed_id(&APPT_PREFIX.to_string());
+                        let appt = AppointmentInfo::new(date, time, notes.cloned());
+                        let id = Self::new_prefixed_id(&APPT_PREFIX.to_string());
                         let json_string = serde_json::to_string(&appt).unwrap();
 
                         // store appointment request
@@ -800,14 +780,13 @@ impl CalendarApp {
                                 // data already exists, so must wait for
                                 // set_data
                                 // message to return from the server
-                                std::thread::sleep(
-                                    std::time::Duration::from_secs(1),
-                                );
+                                std::thread::sleep(std::time::Duration::from_secs(1));
 
                                 match context
                                     .client
                                     .add_writers(id.clone(), vec.clone())
-                                    .await {
+                                    .await
+                                {
                                     Ok(_) => Ok(Some(String::from(format!(
                                         "Successfully requested appointment with id {}",
                                         id.clone()
@@ -824,15 +803,12 @@ impl CalendarApp {
                             )))),
                         }
                     }
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error parsing time: {}",
-                        err
-                    )))),
+                    Err(err) => {
+                        Ok(Some(String::from(format!("Error parsing time: {}", err))))
+                    }
                 }
             }
-            Err(err) => {
-                Ok(Some(String::from(format!("Error parsing date: {}", err))))
-            }
+            Err(err) => Ok(Some(String::from(format!("Error parsing date: {}", err)))),
         }
     }
 
@@ -891,7 +867,10 @@ impl CalendarApp {
                             serde_json::from_str(roles_obj.data_val()).unwrap();
 
                         if let Some(provider_role) = roles.provider {
-                            let mut res = context.client.get_data(&provider_role.availability_id).await;
+                            let mut res = context
+                                .client
+                                .get_data(&provider_role.availability_id)
+                                .await;
                             if res.is_err() {
                                 return Ok(Some(String::from(format!(
                                     "Error getting availability: {}",
@@ -904,8 +883,7 @@ impl CalendarApp {
                                 serde_json::from_str(res.unwrap().unwrap().data_val())
                                     .unwrap();
                             avail.add_busy_slot(datetime, DEFAULT_DUR);
-                            let json_avail =
-                                serde_json::to_string(&avail).unwrap();
+                            let json_avail = serde_json::to_string(&avail).unwrap();
 
                             // set new avail obj
                             match context
@@ -924,29 +902,31 @@ impl CalendarApp {
                                     "Confirmed appointment with id {}",
                                     id
                                 )))),
-                                Err(err) => {
-                                    Ok(Some(String::from(format!(
-                                        "Could not modify availability: {}",
-                                        err
-                                    ))))
-                                }
+                                Err(err) => Ok(Some(String::from(format!(
+                                    "Could not modify availability: {}",
+                                    err
+                                )))),
                             }
                         } else {
-                            return Ok(Some(String::from("No provider role initialized.")));
+                            return Ok(Some(String::from(
+                                "No provider role initialized.",
+                            )));
                         }
-                    },
+                    }
                     Ok(None) => Ok(Some(String::from("Roles do not exist."))),
                     Err(err) => Ok(Some(String::from(format!(
-                        "Error getting roles: {}", err.to_string()
+                        "Error getting roles: {}",
+                        err.to_string()
                     )))),
                 }
-            },
+            }
             Ok(None) => Ok(Some(String::from(format!(
                 "Appointment with id {} does not exist.",
                 id,
             )))),
             Err(err) => Ok(Some(String::from(format!(
-                "Error getting appointment: {}", err.to_string()
+                "Error getting appointment: {}",
+                err.to_string()
             )))),
         }
     }
@@ -981,11 +961,8 @@ async fn main() -> ReplResult<()> {
             Box::pin(CalendarApp::init_new_device(context))
         })
         .with_command_async(
-            Command::new("init_linked_device")
-                .arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(CalendarApp::init_linked_device(args, context))
-            },
+            Command::new("init_linked_device").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(CalendarApp::init_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), CalendarApp::check_device)
         .with_command(Command::new("get_name"), CalendarApp::get_name)
@@ -997,9 +974,7 @@ async fn main() -> ReplResult<()> {
         .with_command_async(
             Command::new("share_availability")
                 .arg(Arg::new("patient_name").required(true)),
-            |args, context| {
-                Box::pin(CalendarApp::share_availability(args, context))
-            },
+            |args, context| Box::pin(CalendarApp::share_availability(args, context)),
         )
         //.with_command_async(
         //    Command::new("add_patient").arg(Arg::new("patient_idkey").
@@ -1011,12 +986,9 @@ async fn main() -> ReplResult<()> {
         // required(true).short('p')),    |args, context|
         // Box::pin(CalendarApp::add_provider(args, context)),
         //)
-        .with_command_async(
-            Command::new("get_linked_devices"),
-            |_, context| {
-                Box::pin(CalendarApp::get_linked_devices(context))
-            },
-        )
+        .with_command_async(Command::new("get_linked_devices"), |_, context| {
+            Box::pin(CalendarApp::get_linked_devices(context))
+        })
         .with_command_async(
             Command::new("get_data").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(CalendarApp::get_data(args, context)),
@@ -1027,44 +999,40 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("get_groups").arg(Arg::new("id").required(true)),
-            |args, context| {
-                Box::pin(CalendarApp::get_groups(args, context))
-            },
+            |args, context| Box::pin(CalendarApp::get_groups(args, context)),
         )
-        .with_command_async(
-            Command::new("get_roles"), 
-            |_, context| Box::pin(CalendarApp::get_roles(context)),
-        )
+        .with_command_async(Command::new("get_roles"), |_, context| {
+            Box::pin(CalendarApp::get_roles(context))
+        })
         //.with_command(Command::new("get_patients"), CalendarApp::get_patients)
         //.with_command(Command::new("get_providers"), CalendarApp::get_providers)
-        .with_command_async(
-            Command::new("init_patient_role"),
-            |_, context| Box::pin(CalendarApp::init_patient_role(context)),
-        )
+        .with_command_async(Command::new("init_patient_role"), |_, context| {
+            Box::pin(CalendarApp::init_patient_role(context))
+        })
         .with_command_async(
             Command::new("init_provider_role"),
-                //.arg(
-                //    Arg::new("durations")
-                //        .required(false)
-                //        .action(ArgAction::Append)
-                //        .long("durations")
-                //        .short('d')
-                //        .help("Set valid appointment duration options
-                // (provider only)"),
-                //)
-                //.arg(
-                //    Arg::new("blocked")
-                //        .required(false)
-                //        .action(ArgAction::Append)
-                //        .long("blocked")
-                //        .short('b')
-                //        .help("Set blocked-off times (provider only)"),
-                //)
+            //.arg(
+            //    Arg::new("durations")
+            //        .required(false)
+            //        .action(ArgAction::Append)
+            //        .long("durations")
+            //        .short('d')
+            //        .help("Set valid appointment duration options
+            // (provider only)"),
+            //)
+            //.arg(
+            //    Arg::new("blocked")
+            //        .required(false)
+            //        .action(ArgAction::Append)
+            //        .long("blocked")
+            //        .short('b')
+            //        .help("Set blocked-off times (provider only)"),
+            //)
             |_, context| Box::pin(CalendarApp::init_provider_role(context)),
         )
-        .with_command_async(
-            Command::new("get_availability_id"), |_, context| Box::pin(CalendarApp::get_availability_id(context)),
-        )
+        .with_command_async(Command::new("get_availability_id"), |_, context| {
+            Box::pin(CalendarApp::get_availability_id(context))
+        })
         .with_command_async(
             Command::new("get_appointment").arg(Arg::new("id").required(true)),
             |args, context| Box::pin(CalendarApp::get_appointment(args, context)),
@@ -1118,21 +1086,12 @@ async fn main() -> ReplResult<()> {
                         .short('t')
                         .help("Format: HH:MM:SS (24-hour)"),
                 )
-                .arg(
-                    Arg::new("notes").required(false).long("notes").short('n'),
-                ),
-            |args, context| {
-                Box::pin(CalendarApp::request_appointment(args, context))
-            },
+                .arg(Arg::new("notes").required(false).long("notes").short('n')),
+            |args, context| Box::pin(CalendarApp::request_appointment(args, context)),
         )
         .with_command_async(
-            Command::new("confirm_appointment").arg(
-                Arg::new("id")
-                    .required(true),
-            ),
-            |args, context| {
-                Box::pin(CalendarApp::confirm_appointment(args, context))
-            },
+            Command::new("confirm_appointment").arg(Arg::new("id").required(true)),
+            |args, context| Box::pin(CalendarApp::confirm_appointment(args, context)),
         );
     //.with_command_async(
     //    Command::new("edit_appointment")

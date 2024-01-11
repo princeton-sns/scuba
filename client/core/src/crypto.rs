@@ -45,35 +45,36 @@ impl Crypto {
         &self,
         mut pt: Vec<u8>,
     ) -> (Vec<u8>, [u8; 16], [u8; 32], [u8; 12]) {
-	use aes_gcm::{
-	    aead::{Aead, AeadInPlace, KeyInit, OsRng},
-	    Aes256Gcm, Nonce // Or `Aes128Gcm`
-	};
+        use aes_gcm::{
+            aead::{Aead, AeadInPlace, KeyInit, OsRng},
+            Aes256Gcm,
+            Nonce, // Or `Aes128Gcm`
+        };
 
-	// Convert the plain text to bytes and short-circuit if encryption is
-	// disabled.
-	if self.turn_encryption_off {
+        // Convert the plain text to bytes and short-circuit if encryption is
+        // disabled.
+        if self.turn_encryption_off {
             return (pt, [0; 16], [0; 32], [0; 12]);
         }
 
-	let mut rng = rand::thread_rng();
+        let mut rng = rand::thread_rng();
 
-	let key = Aes256Gcm::generate_key(&mut rng);
+        let key = Aes256Gcm::generate_key(&mut rng);
 
-	let mut nonce = [0u8; 12];
-	rng.fill_bytes(&mut nonce);
+        let mut nonce = [0u8; 12];
+        rng.fill_bytes(&mut nonce);
 
-	// We may want to include additional context such as the sending user
-	// in the associated data:
+        // We may want to include additional context such as the sending user
+        // in the associated data:
         let tag = Aes256Gcm::new(&key)
-	    .encrypt_in_place_detached(&nonce.into(), &[], &mut pt)
-	    .unwrap();
+            .encrypt_in_place_detached(&nonce.into(), &[], &mut pt)
+            .unwrap();
 
-	let mut key_arr = [0u8; 32];
-	key_arr.copy_from_slice(key.as_slice());
+        let mut key_arr = [0u8; 32];
+        key_arr.copy_from_slice(key.as_slice());
 
-	let mut tag_arr = [0u8; 16];
-	tag_arr.copy_from_slice(tag.as_slice());
+        let mut tag_arr = [0u8; 16];
+        tag_arr.copy_from_slice(tag.as_slice());
 
         (pt, tag_arr, key_arr, nonce)
     }
@@ -82,23 +83,24 @@ impl Crypto {
         &self,
         mut ct: Vec<u8>,
         key: [u8; 32],
-	tag: [u8; 16],
+        tag: [u8; 16],
         nonce: [u8; 12],
     ) -> Vec<u8> {
-	use aes_gcm::{
-	    aead::{Aead, AeadInPlace, KeyInit, OsRng},
-	    Aes256Gcm, Nonce // Or `Aes128Gcm`
-	};
+        use aes_gcm::{
+            aead::{Aead, AeadInPlace, KeyInit, OsRng},
+            Aes256Gcm,
+            Nonce, // Or `Aes128Gcm`
+        };
 
         if self.turn_encryption_off {
-	    return ct;
+            return ct;
         }
 
-	Aes256Gcm::new(&key.into())
-	    .decrypt_in_place_detached(&nonce.into(), &[], &mut ct, &tag.into())
-	    .unwrap();
+        Aes256Gcm::new(&key.into())
+            .decrypt_in_place_detached(&nonce.into(), &[], &mut ct, &tag.into())
+            .unwrap();
 
-	ct
+        ct
     }
 
     pub fn generate_otkeys(&self, num: Option<usize>) -> OneTimeKeys {
@@ -120,10 +122,11 @@ impl Crypto {
     ) -> OlmSession {
         match server_comm.get_otkey_from_server(dst_idkey).await {
             Ok(dst_otkey) => {
-                match self.account.lock().create_outbound_session(
-                    dst_idkey,
-                    &String::from(dst_otkey),
-                ) {
+                match self
+                    .account
+                    .lock()
+                    .create_outbound_session(dst_idkey, &String::from(dst_otkey))
+                {
                     Ok(new_session) => return new_session,
                     Err(err) => {
                         panic!("Error creating outbound session: {:?}", err)
@@ -178,11 +181,9 @@ impl Crypto {
             } else {
                 *is_fetching = true;
                 mem::drop(sessions);
-                let new_session =
-                    self.new_outbound_session(server_comm, dst_idkey).await;
+                let new_session = self.new_outbound_session(server_comm, dst_idkey).await;
                 let mut sessions = self.sessions.lock();
-                let (is_fetching, sessions_list) =
-                    sessions.get_mut(dst_idkey).unwrap();
+                let (is_fetching, sessions_list) = sessions.get_mut(dst_idkey).unwrap();
                 *is_fetching = false;
                 sessions_list.push(new_session);
                 self.sessions_cv.notify_all();
@@ -203,8 +204,7 @@ impl Crypto {
                 if sessions.get(sender).is_none() {
                     panic!("No pairwise sessions exist for idkey {:?}", sender);
                 } else {
-                    let sessions_list =
-                        &mut sessions.get_mut(sender).unwrap().1;
+                    let sessions_list = &mut sessions.get_mut(sender).unwrap().1;
                     f(&sessions_list[sessions_list.len() - 1])
                 }
             }
@@ -239,9 +239,7 @@ impl Crypto {
             match session.decrypt(ciphertext.clone()) {
                 Ok(plaintext) => {
                     use base64::{engine::general_purpose, Engine as _};
-                    return general_purpose::STANDARD_NO_PAD
-                        .decode(plaintext)
-                        .unwrap();
+                    return general_purpose::STANDARD_NO_PAD.decode(plaintext).unwrap();
                 }
                 _ => continue,
             }
@@ -321,9 +319,7 @@ impl Crypto {
         match res {
             Ok(plaintext) => {
                 use base64::{engine::general_purpose, Engine as _};
-                return general_purpose::STANDARD_NO_PAD
-                    .decode(plaintext)
-                    .unwrap();
+                return general_purpose::STANDARD_NO_PAD.decode(plaintext).unwrap();
             }
             Err(err) => {
                 match ciphertext {

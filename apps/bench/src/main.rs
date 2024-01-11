@@ -1,7 +1,7 @@
 use std::env;
 
-mod pass_bench;
 mod fam_bench;
+mod pass_bench;
 
 #[tokio::main]
 async fn main() {

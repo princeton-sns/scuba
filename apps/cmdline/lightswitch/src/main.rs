@@ -1,9 +1,9 @@
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
+use std::sync::Arc;
 use tank::client::TankClient;
 use tank::data::ScubaData;
-use std::sync::Arc;
 use uuid::Uuid;
 
 const LB_PREFIX: &str = "bulb";
@@ -80,9 +80,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn create_bulb(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn create_bulb(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
 
         let id: String = DEVICE_PREFIX.to_owned();
@@ -100,9 +98,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn create_switch(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn create_switch(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         context.client.create_standalone_device();
 
         let id: String = DEVICE_PREFIX.to_owned();
@@ -126,9 +122,7 @@ impl LightswitchApp {
     ) -> ReplResult<Option<String>> {
         match context
             .client
-            .create_linked_device(
-                args.get_one::<String>("idkey").unwrap().to_string(),
-            )
+            .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
             Ok(_) => Ok(Some(String::from("Linked device created!"))),
@@ -304,9 +298,7 @@ impl LightswitchApp {
         }
     }
 
-    pub async fn add_bulb(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn add_bulb(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         if !context.exists_device() {
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
@@ -322,9 +314,7 @@ impl LightswitchApp {
             .set_data(id.clone(), LB_PREFIX.to_string(), json_string, None)
             .await
         {
-            Ok(_) => {
-                Ok(Some(String::from(format!("Created bulb with id {}", id))))
-            }
+            Ok(_) => Ok(Some(String::from(format!("Created bulb with id {}", id)))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not add bulb: {}",
                 err.to_string()
@@ -423,23 +413,15 @@ async fn main() -> ReplResult<()> {
             Box::pin(LightswitchApp::create_switch(context))
         })
         .with_command_async(
-            Command::new("create_linked_switch")
-                .arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(LightswitchApp::create_linked_switch(args, context))
-            },
+            Command::new("create_linked_switch").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(LightswitchApp::create_linked_switch(args, context)),
         )
-        .with_command(
-            Command::new("check_device"),
-            LightswitchApp::check_device,
-        )
+        .with_command(Command::new("check_device"), LightswitchApp::check_device)
         .with_command(Command::new("get_name"), LightswitchApp::get_name)
         .with_command(Command::new("get_idkey"), LightswitchApp::get_idkey)
         .with_command_async(
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(LightswitchApp::add_contact(args, context))
-            },
+            |args, context| Box::pin(LightswitchApp::add_contact(args, context)),
         )
         .with_command(
             Command::new("get_contacts").about("broken - don't use"),
@@ -480,9 +462,7 @@ async fn main() -> ReplResult<()> {
         )
         .with_command_async(
             Command::new("turn_on").arg(Arg::new("id").required(true)),
-            |args, context| {
-                Box::pin(LightswitchApp::set_state(args, LB_ON_VAL, context))
-            },
+            |args, context| Box::pin(LightswitchApp::set_state(args, LB_ON_VAL, context)),
         )
         .with_command_async(
             Command::new("turn_off").arg(Arg::new("id").required(true)),

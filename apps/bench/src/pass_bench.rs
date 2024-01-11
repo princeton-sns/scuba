@@ -1,14 +1,14 @@
 use passwords::PasswordGenerator;
 use serde::{Deserialize, Serialize};
-use tank::client::Error;
-use tank::client::TankClient;
-use tank::data::ScubaData;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
+use tank::client::Error;
+use tank::client::TankClient;
+use tank::data::ScubaData;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
@@ -183,8 +183,7 @@ impl PasswordManager {
     async fn gen_password_from_config(&self, config_id: &String) -> String {
         let config_opt = self.client.get_data(&config_id).await;
         let config = config_opt.unwrap().unwrap().clone();
-        let config_obj: Config =
-            serde_json::from_str(config.data_val()).unwrap();
+        let config_obj: Config = serde_json::from_str(config.data_val()).unwrap();
         // this is horrible for perf?
         let pgi = PasswordGenerator::new()
             .length(config_obj.length)
@@ -203,12 +202,8 @@ impl PasswordManager {
         password: String,
     ) -> Result<String, Error> {
         //let password = self.gen_password_from_config(config_id).await;
-        let pass_info = Password::new(
-            config_id.to_string(),
-            username,
-            password,
-            otp_secret,
-        );
+        let pass_info =
+            Password::new(config_id.to_string(), username, password, otp_secret);
         let id = Self::new_prefixed_id(&PASS_PREFIX.to_string());
         let json_string = serde_json::to_string(&pass_info).unwrap();
         let res = self
@@ -241,22 +236,20 @@ impl PasswordManager {
         )
         .unwrap();
 
-        self.ts.lock().await.push((
-            idx,
-            String::from("enter update"),
-            Instant::now(),
-        ));
+        self.ts
+            .lock()
+            .await
+            .push((idx, String::from("enter update"), Instant::now()));
 
         //let new_pass =
         // self.gen_password_from_config(&password_obj.config_id).await;
         password_obj.password = password;
         let json_string = serde_json::to_string(&password_obj).unwrap();
 
-        self.ts.lock().await.push((
-            idx,
-            String::from("enter DAL"),
-            Instant::now(),
-        ));
+        self.ts
+            .lock()
+            .await
+            .push((idx, String::from("enter DAL"), Instant::now()));
         let res = self
             .client
             .set_data(
@@ -268,17 +261,15 @@ impl PasswordManager {
                 true,
             )
             .await;
-        self.ts.lock().await.push((
-            idx,
-            String::from("exit DAL"),
-            Instant::now(),
-        ));
+        self.ts
+            .lock()
+            .await
+            .push((idx, String::from("exit DAL"), Instant::now()));
 
-        self.ts.lock().await.push((
-            idx,
-            String::from("exit update"),
-            Instant::now(),
-        ));
+        self.ts
+            .lock()
+            .await
+            .push((idx, String::from("exit update"), Instant::now()));
         if idx == 1 {
             let mut f = File::options()
                 .append(true)
@@ -333,7 +324,8 @@ impl PasswordManager {
 }
 
 pub async fn run() {
-    for num_clients in [2] { //[1, 2, 4, 8, 16, 32] {
+    for num_clients in [2] {
+        //[1, 2, 4, 8, 16, 32] {
         println!("Running {} clients", &num_clients);
         let num_warmup = 2; //1000;
         let num_runs = 2; //10000;
@@ -344,10 +336,7 @@ pub async fn run() {
 
         let mut dirname: String;
         loop {
-            dirname = String::from(format!(
-                "./{}_{}",
-                &base_dirname, &idx
-            ));
+            dirname = String::from(format!("./{}_{}", &base_dirname, &idx));
 
             let res = fs::create_dir(dirname.clone());
             if res.is_ok() {
@@ -367,10 +356,8 @@ pub async fn run() {
             "{}/{}c_{}r_ts_core_recv.txt",
             &dirname, &num_clients, &num_runs
         );
-        let app_filename = format!(
-            "{}/{}c_{}r_ts_app.txt",
-            &dirname, &num_clients, &num_runs
-        );
+        let app_filename =
+            format!("{}/{}c_{}r_ts_app.txt", &dirname, &num_clients, &num_runs);
         let dal_send_filename = format!(
             "{}/{}c_{}r_ts_dal_send.txt",
             &dirname, &num_clients, &num_runs
@@ -397,16 +384,18 @@ pub async fn run() {
         println!("num_dal_send: {}", &num_dal_send);
         println!("num_dal_recv: {}", &num_dal_recv);
 
-        let bw_out = format!(
-            "{}/{}c_{}r_bw_pmapp.txt",
-            &dirname, &num_clients, &num_runs
-        );
+        let bw_out =
+            format!("{}/{}c_{}r_bw_pmapp.txt", &dirname, &num_clients, &num_runs);
         let mut f_bw = File::options()
             .append(true)
             .create(true)
             .open(bw_out.clone())
             .unwrap();
-        write!(f_bw, "NEW EXP: {} runs, {} clients\n", &num_runs, &num_clients);
+        write!(
+            f_bw,
+            "NEW EXP: {} runs, {} clients\n",
+            &num_runs, &num_clients
+        );
 
         let mut clients = HashMap::new();
         let sender = PasswordManager::new(
@@ -445,23 +434,13 @@ pub async fn run() {
                 app_filename.clone(),
             )
             .await;
-            clients.insert(
-                client.client.idkey(),
-                (client.client.linked_name(), client),
-            );
+            clients.insert(client.client.idkey(), (client.client.linked_name(), client));
         }
 
         let idkeys: Vec<String> = clients.keys().cloned().collect();
 
         let sender_config = sender
-            .config_app_password(
-                String::from("netflix"),
-                14,
-                true,
-                true,
-                true,
-                true,
-            )
+            .config_app_password(String::from("netflix"), 14, true, true, true, true)
             .await
             .unwrap();
         // wait for write to propagate
@@ -493,10 +472,7 @@ pub async fn run() {
 
         for run in 0..total_runs {
             sender
-                .update_password(
-                    sender_pass.clone(),
-                    String::from("j8/#k$ddno2"),
-                )
+                .update_password(sender_pass.clone(), String::from("j8/#k$ddno2"))
                 .await;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

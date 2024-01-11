@@ -67,10 +67,7 @@ pub struct Validator<T: ScubaData> {
     per_type_callbacks: HashMap<String, fn(&String, &T) -> bool>,
 }
 
-fn default_general_callback<T: ScubaData>(
-    data_id: &String,
-    data_val: &T,
-) -> bool {
+fn default_general_callback<T: ScubaData>(data_id: &String, data_val: &T) -> bool {
     if data_id.is_empty() || data_val.data_id().is_empty() {
         return false;
     }
@@ -81,14 +78,10 @@ fn default_general_callback<T: ScubaData>(
 }
 
 impl<T: ScubaData> Validator<T> {
-    pub fn new(
-        general_callback: Option<fn(&String, &T) -> bool>,
-    ) -> Validator<T> {
+    pub fn new(general_callback: Option<fn(&String, &T) -> bool>) -> Validator<T> {
         Self {
-            general_callback: general_callback
-                .unwrap_or(default_general_callback),
-            per_type_callbacks: HashMap::<String, fn(&String, &T) -> bool>::new(
-            ),
+            general_callback: general_callback.unwrap_or(default_general_callback),
+            per_type_callbacks: HashMap::<String, fn(&String, &T) -> bool>::new(),
         }
     }
 
@@ -105,10 +98,7 @@ impl<T: ScubaData> Validator<T> {
         }
     }
 
-    pub fn set_general_validate_callback(
-        &mut self,
-        callback: fn(&String, &T) -> bool,
-    ) {
+    pub fn set_general_validate_callback(&mut self, callback: fn(&String, &T) -> bool) {
         self.general_callback = callback;
     }
 

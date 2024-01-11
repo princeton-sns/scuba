@@ -1,6 +1,7 @@
 /**
  * Notes: there must be better ways to do half of these things. Things to fix:
- * - have multiple transactions in a scenario over the user username in the system
+ * - have multiple transactions in a scenario over the user username in the
+ *   system
  * - reuse request generators in complex patterns like deletepostdelete
  * - make username generation based on number of users
  */
@@ -14,7 +15,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use scuba_server_lib::shard::client_protocol::{EncryptedPerRecipientPayload, EncryptedCommonPayload, EncryptedOutboxMessage};
+use scuba_server_lib::shard::client_protocol::{
+    EncryptedCommonPayload, EncryptedOutboxMessage, EncryptedPerRecipientPayload,
+};
 
 // Horribly unsafe AND unsound, never do this, this WILL break, it's terrible.
 static mut USERNAMES: Option<Vec<String>> = None;
@@ -29,28 +32,29 @@ async fn main() -> Result<(), GooseError> {
     let g = GooseAttack::initialize()?;
 
     COMMON_PAYLOAD_LEN.store(
-	std::env::vars()
+        std::env::vars()
             .find(|(var, _)| var == "NOISE_CMPLDLEN")
             .map(|(_, val)| val)
-	    .and_then(|val| val.parse::<usize>().ok())
+            .and_then(|val| val.parse::<usize>().ok())
             .unwrap_or(12),
-	Ordering::Relaxed,
+        Ordering::Relaxed,
     );
 
     INDIVIDUAL_PAYLOAD_LEN.store(
-	std::env::vars()
-	    .find(|(var, _)| var == "NOISE_IDPLDLEN")
-	    .map(|(_, val)| val)
-	    .and_then(|val| val.parse::<usize>().ok())
-	    .unwrap_or(42),
-	Ordering::Relaxed,
+        std::env::vars()
+            .find(|(var, _)| var == "NOISE_IDPLDLEN")
+            .map(|(_, val)| val)
+            .and_then(|val| val.parse::<usize>().ok())
+            .unwrap_or(42),
+        Ordering::Relaxed,
     );
 
     let usernames_str = std::env::vars()
         .find(|(var, _)| var == "NOISE_USERS")
         .map(|(_, val)| val)
         .unwrap();
-    let usernames: Vec<String> = usernames_str.split(":").map(|s| s.to_string()).collect();
+    let usernames: Vec<String> =
+        usernames_str.split(":").map(|s| s.to_string()).collect();
     unsafe { USERNAMES = Some(usernames.clone()) };
 
     let friends_str = std::env::vars()
@@ -70,7 +74,10 @@ async fn main() -> Result<(), GooseError> {
             .map(|(sender, friends)| {
                 (
                     sender.clone(),
-                    construct_message(&sender, friends.into_iter().map(|f| Cow::Owned(f))),
+                    construct_message(
+                        &sender,
+                        friends.into_iter().map(|f| Cow::Owned(f)),
+                    ),
                 )
             })
             .collect();
@@ -86,7 +93,7 @@ async fn main() -> Result<(), GooseError> {
                     .set_name("generate username")
                     .set_on_start(),
             )
-            .register_transaction(transaction!(post_message).set_name("post request"))
+            .register_transaction(transaction!(post_message).set_name("post request")),
     )
     // This is important to avoid constant redirects and overloading any
     // single shard. The server will automatically direct individual users
@@ -95,26 +102,31 @@ async fn main() -> Result<(), GooseError> {
     .unwrap()
     //.register_scenario(
     //    scenario!("DeleteOneMailbox")
-    //        .register_transaction(transaction!(set_username).set_name("generate username"))
-    //        .register_transaction(transaction!(delete_mailbox).set_name("delete mailbox")),
+    //        .register_transaction(transaction!(set_username).set_name("generate
+    // username"))        .register_transaction(transaction!(delete_mailbox).
+    // set_name("delete mailbox")),
     //)
     //.register_scenario(
     //    scenario!("GetOneMailbox")
-    //        .register_transaction(transaction!(set_username).set_name("generate username"))
-    //        .register_transaction(transaction!(get_mailbox).set_name("get mailbox")),
+    //        .register_transaction(transaction!(set_username).set_name("generate
+    // username"))        .register_transaction(transaction!(get_mailbox).set_name("
+    // get mailbox")),
     //)
     //.register_scenario(
     //    scenario!("DeletePostGetDelete")
-    //        .register_transaction(transaction!(set_username).set_name("generate username"))
-    //        .register_transaction(transaction!(delete_mailbox).set_name("delete mailbox"))
-    //        .register_transaction(transaction!(post_message).set_name("post request"))
+    //        .register_transaction(transaction!(set_username).set_name("generate
+    // username"))        .register_transaction(transaction!(delete_mailbox).
+    // set_name("delete mailbox"))        .register_transaction(transaction!
+    // (post_message).set_name("post request"))
     //        .register_transaction(transaction!(get_mailbox).set_name("get mailbox"))
-    //        .register_transaction(transaction!(delete_mailbox).set_name("delete mailbox")),
+    //        .register_transaction(transaction!(delete_mailbox).set_name("delete
+    // mailbox")),
     //)
     //.register_scenario(
     //    scenario!("ValidateGetMessageAfterPost")
-    //        .register_transaction(transaction!(set_username).set_name("generate username"))
-    //        .register_transaction(transaction!(loop_message).set_name("loop message")),
+    //        .register_transaction(transaction!(set_username).set_name("generate
+    // username"))        .register_transaction(transaction!(loop_message).set_name("
+    // loop message")),
     //)
     .execute()
     .await?;
@@ -152,11 +164,15 @@ fn construct_message<'a>(
     _sender: &str,
     friends: impl Iterator<Item = Cow<'a, str>>,
 ) -> EncryptedOutboxMessage {
-    let common_payload = std::iter::repeat(b'X' as u8).take(COMMON_PAYLOAD_LEN.load(Ordering::Relaxed)).collect::<Vec<u8>>();
+    let common_payload = std::iter::repeat(b'X' as u8)
+        .take(COMMON_PAYLOAD_LEN.load(Ordering::Relaxed))
+        .collect::<Vec<u8>>();
 
     let recipient_payloads: BTreeMap<String, EncryptedPerRecipientPayload> = friends
         .map(|f| {
-            let ciphertext = std::iter::repeat(b'X' as u8).take(INDIVIDUAL_PAYLOAD_LEN.load(Ordering::Relaxed)).collect::<Vec<u8>>();
+            let ciphertext = std::iter::repeat(b'X' as u8)
+                .take(INDIVIDUAL_PAYLOAD_LEN.load(Ordering::Relaxed))
+                .collect::<Vec<u8>>();
             (
                 f.into_owned(),
                 EncryptedPerRecipientPayload {
@@ -185,7 +201,7 @@ async fn post_message(user: &mut GooseUser) -> TransactionResult {
     );
 
     let request_builder = user
-	// JSON:
+        // JSON:
         // .get_request_builder(&GooseMethod::Post, "/message")?
         .get_request_builder(&GooseMethod::Post, "/message-bin")?
         .headers(headers);
@@ -206,8 +222,8 @@ async fn post_message(user: &mut GooseUser) -> TransactionResult {
     // let goose_request = GooseRequest::builder()
     //     .method(GooseMethod::Post)
     //     .path("/message")
-    //     .set_request_builder(request_builder.json(Borrow::<EncryptedOutboxMessage>::borrow(&msg)))
-    //     .build();
+    //     .set_request_builder(request_builder.
+    // json(Borrow::<EncryptedOutboxMessage>::borrow(&msg)))     .build();
     let mut ll = std::collections::LinkedList::new();
     ll.push_back(msg.into_owned());
     let serialized = bincode::serialize(&ll).unwrap();

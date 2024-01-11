@@ -110,10 +110,7 @@ impl ValidationPayload {
         }
     }
 
-    pub fn dummy(
-        mut recipients: Vec<DeviceId>,
-        message: Vec<u8>,
-    ) -> ValidationPayload {
+    pub fn dummy(mut recipients: Vec<DeviceId>, message: Vec<u8>) -> ValidationPayload {
         let hash = hash_message(None, &mut recipients, message);
         ValidationPayload {
             consistency_loopback: false,
@@ -134,10 +131,7 @@ impl ValidationPayload {
         prev_seq
     }
 
-    fn set_validation_digest(
-        &mut self,
-        validation_digest: Hash,
-    ) -> Option<Hash> {
+    fn set_validation_digest(&mut self, validation_digest: Hash) -> Option<Hash> {
         let prev_digest = self.validation_digest;
         self.validation_digest = Some(validation_digest);
         prev_digest
@@ -186,8 +180,7 @@ impl HashVectors {
         recipients.sort();
         self.register_message(recipients.clone(), message.clone());
 
-        let mut recipient_payloads =
-            HashMap::<DeviceId, ValidationPayload>::new();
+        let mut recipient_payloads = HashMap::<DeviceId, ValidationPayload>::new();
         for recipient in recipients.iter() {
             recipient_payloads.insert(
                 recipient.to_string(),
@@ -220,11 +213,7 @@ impl HashVectors {
         recipient_payload
     }
 
-    fn register_message(
-        &mut self,
-        mut recipients: Vec<DeviceId>,
-        message: Vec<u8>,
-    ) {
+    fn register_message(&mut self, mut recipients: Vec<DeviceId>, message: Vec<u8>) {
         let message_hash_entry = hash_message(
             Some(self.pending_messages.back().unwrap()),
             &mut recipients,
@@ -265,9 +254,7 @@ impl HashVectors {
                     self.validate_trim_vector(sender, validation_payload);
                 log::debug!("num_trimmed_entries: {:?}", num_trimmed_entries);
 
-                if *sender == self.own_device
-                    && recipient_payload.consistency_loopback
-                {
+                if *sender == self.own_device && recipient_payload.consistency_loopback {
                     // This message has been sent back to us just for the
                     // consistency validation, discard it
                     return Ok(None);
@@ -347,10 +334,7 @@ impl HashVectors {
         Ok(local_seq)
     }
 
-    fn get_validation_payload(
-        &self,
-        recipient: &DeviceId,
-    ) -> Option<(usize, Hash)> {
+    fn get_validation_payload(&self, recipient: &DeviceId) -> Option<(usize, Hash)> {
         let recipient_vector = self.vectors.get(recipient)?;
         Some((
             recipient_vector.offset + recipient_vector.vector.len() - 1,
@@ -450,8 +434,7 @@ impl HashVectors {
 
         // Trim the hash vectors
         if let Some((seq, _)) = validation_payload {
-            let pairwise_vector =
-                self.vectors.get_mut(validation_sender).unwrap();
+            let pairwise_vector = self.vectors.get_mut(validation_sender).unwrap();
 
             // Trim the vector up to, but excluding, the referenced seq
             // num
@@ -498,8 +481,7 @@ mod test {
         let idkey = String::from("0");
         let mut hash_vectors = HashVectors::new(idkey.clone());
         let mut recipients = vec![idkey];
-        let message =
-            bincode::serialize(&String::from("first message")).unwrap();
+        let message = bincode::serialize(&String::from("first message")).unwrap();
 
         let hashed_message = hash_message(
             Some(hash_vectors.pending_messages.back().unwrap()),
@@ -507,8 +489,7 @@ mod test {
             message.clone(),
         );
         hash_vectors.register_message(recipients.clone(), message);
-        let pending_messages =
-            VecDeque::from(vec![Hash::default(), hashed_message]);
+        let pending_messages = VecDeque::from(vec![Hash::default(), hashed_message]);
         assert_eq!(hash_vectors.pending_messages, pending_messages);
     }
 
@@ -518,8 +499,7 @@ mod test {
         let idkey_1 = String::from("1");
         let mut hash_vectors = HashVectors::new(idkey_0.clone());
         let mut recipients = vec![idkey_0.clone(), idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let hashed_message = hash_message(
             Some(hash_vectors.pending_messages.back().unwrap()),
@@ -527,8 +507,7 @@ mod test {
             message.clone(),
         );
         hash_vectors.register_message(recipients.clone(), message);
-        let pending_messages =
-            VecDeque::from(vec![Hash::default(), hashed_message]);
+        let pending_messages = VecDeque::from(vec![Hash::default(), hashed_message]);
         assert_eq!(hash_vectors.pending_messages, pending_messages);
     }
 
@@ -549,8 +528,7 @@ mod test {
         let idkey = String::from("0");
         let mut hash_vectors = HashVectors::new(idkey.clone());
         let recipients = vec![idkey.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let (common_payload, recipient_payloads) =
             hash_vectors.prepare_message(recipients.clone(), message.clone());
@@ -575,8 +553,7 @@ mod test {
         let idkey_1 = String::from("1");
         let mut hash_vectors = HashVectors::new(idkey_0.clone());
         let recipients = vec![idkey_0.clone(), idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let (common_payload, recipient_payloads) =
             hash_vectors.prepare_message(recipients.clone(), message.clone());
@@ -610,8 +587,7 @@ mod test {
         let mut hash_vectors = HashVectors::new(idkey_0.clone());
         let recipients = vec![idkey_1.clone()];
         let loopback_recipients = vec![idkey_0.clone(), idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let (common_payload, recipient_payloads) =
             hash_vectors.prepare_message(recipients.clone(), message.clone());
@@ -648,27 +624,18 @@ mod test {
         let idkey = String::from("0");
         let mut hash_vectors = HashVectors::new(idkey.clone());
         let mut recipients = vec![idkey.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
-        let (_, _) =
-            hash_vectors.prepare_message(recipients.clone(), message.clone());
+        let (_, _) = hash_vectors.prepare_message(recipients.clone(), message.clone());
 
-        match hash_vectors.insert_message(
-            &idkey,
-            recipients.clone(),
-            message.clone(),
-        ) {
+        match hash_vectors.insert_message(&idkey, recipients.clone(), message.clone()) {
             Ok(seq) => {
                 // check seq num
                 assert_eq!(seq, 0);
 
                 // check pending_messages
-                let message_hash_entry = hash_message(
-                    Some(&Hash::default()),
-                    &mut recipients,
-                    message,
-                );
+                let message_hash_entry =
+                    hash_message(Some(&Hash::default()), &mut recipients, message);
                 let pending_messages = VecDeque::from(vec![message_hash_entry]);
                 assert_eq!(hash_vectors.pending_messages, pending_messages);
 
@@ -690,17 +657,12 @@ mod test {
         let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
         let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
         let mut recipients = vec![idkey_0.clone(), idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
-        let (_, _) =
-            hash_vectors_0.prepare_message(recipients.clone(), message.clone());
+        let (_, _) = hash_vectors_0.prepare_message(recipients.clone(), message.clone());
 
-        match hash_vectors_0.insert_message(
-            &idkey_0,
-            recipients.clone(),
-            message.clone(),
-        ) {
+        match hash_vectors_0.insert_message(&idkey_0, recipients.clone(), message.clone())
+        {
             Ok(seq) => {
                 // check seq num
                 assert_eq!(seq, 0);
@@ -722,19 +684,13 @@ mod test {
 
                 let vector_hash_entry =
                     hash_message(None, &mut recipients, message.clone());
-                assert_eq!(
-                    vector_hash_entry,
-                    vector.vector.back().unwrap().digest
-                );
+                assert_eq!(vector_hash_entry, vector.vector.back().unwrap().digest);
             }
             Err(err) => panic!("Error inserting message: {:?}", err),
         }
 
-        match hash_vectors_1.insert_message(
-            &idkey_0,
-            recipients.clone(),
-            message.clone(),
-        ) {
+        match hash_vectors_1.insert_message(&idkey_0, recipients.clone(), message.clone())
+        {
             Ok(seq) => {
                 // check seq num
                 assert_eq!(seq, 0);
@@ -751,10 +707,7 @@ mod test {
 
                 let vector_hash_entry =
                     hash_message(None, &mut recipients, message.clone());
-                assert_eq!(
-                    vector_hash_entry,
-                    vector.vector.back().unwrap().digest
-                );
+                assert_eq!(vector_hash_entry, vector.vector.back().unwrap().digest);
             }
             Err(err) => panic!("Error inserting message: {:?}", err),
         }
@@ -768,11 +721,9 @@ mod test {
         let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
         let recipients = vec![idkey_1.clone()];
         let mut loopback_recipients = vec![idkey_0.clone(), idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
-        let (_, _) =
-            hash_vectors_0.prepare_message(recipients.clone(), message.clone());
+        let (_, _) = hash_vectors_0.prepare_message(recipients.clone(), message.clone());
 
         match hash_vectors_0.insert_message(
             &idkey_0,
@@ -798,15 +749,9 @@ mod test {
                     .entry(idkey_1.clone())
                     .or_insert_with(|| DeviceState::default());
 
-                let vector_hash_entry = hash_message(
-                    None,
-                    &mut loopback_recipients,
-                    message.clone(),
-                );
-                assert_eq!(
-                    vector_hash_entry,
-                    vector.vector.back().unwrap().digest
-                );
+                let vector_hash_entry =
+                    hash_message(None, &mut loopback_recipients, message.clone());
+                assert_eq!(vector_hash_entry, vector.vector.back().unwrap().digest);
             }
             Err(err) => panic!("Error inserting message: {:?}", err),
         }
@@ -830,15 +775,9 @@ mod test {
                     .entry(idkey_0.clone())
                     .or_insert_with(|| DeviceState::default());
 
-                let vector_hash_entry = hash_message(
-                    None,
-                    &mut loopback_recipients,
-                    message.clone(),
-                );
-                assert_eq!(
-                    vector_hash_entry,
-                    vector.vector.back().unwrap().digest
-                );
+                let vector_hash_entry =
+                    hash_message(None, &mut loopback_recipients, message.clone());
+                assert_eq!(vector_hash_entry, vector.vector.back().unwrap().digest);
             }
             Err(err) => panic!("Error inserting message: {:?}", err),
         }
@@ -851,8 +790,7 @@ mod test {
         let idkey = String::from("0");
         let mut hash_vectors = HashVectors::new(idkey.clone());
         let recipients = vec![idkey.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let (common_payload, recipient_payloads) =
             hash_vectors.prepare_message(recipients.clone(), message.clone());
@@ -876,8 +814,7 @@ mod test {
         let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
         let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
         let recipients = vec![idkey_0.clone(), idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let (common_payload, recipient_payloads) =
             hash_vectors_0.prepare_message(recipients.clone(), message.clone());
@@ -912,8 +849,7 @@ mod test {
         let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
         let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
         let recipients = vec![idkey_1.clone()];
-        let message =
-            bincode::serialize(&String::from("test message")).unwrap();
+        let message = bincode::serialize(&String::from("test message")).unwrap();
 
         let (common_payload, recipient_payloads) =
             hash_vectors_0.prepare_message(recipients.clone(), message.clone());
@@ -951,17 +887,14 @@ mod test {
         let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
         let recipients = vec![idkey_0.clone(), idkey_1.clone()];
 
-        let message_1 =
-            bincode::serialize(&String::from("first message")).unwrap();
-        let message_2 =
-            bincode::serialize(&String::from("second message")).unwrap();
-        let message_3 =
-            bincode::serialize(&String::from("third message")).unwrap();
+        let message_1 = bincode::serialize(&String::from("first message")).unwrap();
+        let message_2 = bincode::serialize(&String::from("second message")).unwrap();
+        let message_3 = bincode::serialize(&String::from("third message")).unwrap();
 
         // 0 -> 1
         assert!(hash_vectors_0.get_validation_payload(&idkey_1).is_none());
-        let (_, recipient_payloads_0) = hash_vectors_0
-            .prepare_message(recipients.clone(), message_1.clone());
+        let (_, recipient_payloads_0) =
+            hash_vectors_0.prepare_message(recipients.clone(), message_1.clone());
 
         // 1 receives message from 0
         assert_eq!(
@@ -1004,8 +937,7 @@ mod test {
             .unwrap();
 
         // 1 -> 0
-        let message_2_vp =
-            hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
+        let message_2_vp = hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
         assert_eq!(message_2_vp.0, 0);
         hash_vectors_1.prepare_message(recipients.clone(), message_2.clone());
 
@@ -1028,8 +960,7 @@ mod test {
             .unwrap();
 
         // 0 -> 1
-        let message_3_vp =
-            hash_vectors_0.get_validation_payload(&idkey_1).unwrap();
+        let message_3_vp = hash_vectors_0.get_validation_payload(&idkey_1).unwrap();
         assert_eq!(message_3_vp.0, 1);
         hash_vectors_0.prepare_message(recipients.clone(), message_3.clone());
 
@@ -1044,10 +975,7 @@ mod test {
 
         // 1 receives message from 0
         let trimmed = hash_vectors_1
-            .validate_trim_vector(
-                &idkey_0,
-                Some((message_3_vp.0, message_3_vp.1)),
-            )
+            .validate_trim_vector(&idkey_0, Some((message_3_vp.0, message_3_vp.1)))
             .unwrap();
         assert_eq!(trimmed, 1);
         hash_vectors_1
@@ -1064,16 +992,13 @@ mod test {
         let mut hash_vectors_0 = HashVectors::new(idkey_0.clone());
         let mut hash_vectors_1 = HashVectors::new(idkey_1.clone());
 
-        let message_1 =
-            bincode::serialize(&String::from("first message")).unwrap();
-        let message_2 =
-            bincode::serialize(&String::from("second message")).unwrap();
-        let message_3 =
-            bincode::serialize(&String::from("third message")).unwrap();
+        let message_1 = bincode::serialize(&String::from("first message")).unwrap();
+        let message_2 = bincode::serialize(&String::from("second message")).unwrap();
+        let message_3 = bincode::serialize(&String::from("third message")).unwrap();
 
         // 0 sends first msg to 1
-        let (common_payload_1, recipient_payloads_1) = hash_vectors_0
-            .prepare_message(vec![idkey_1.clone()], message_1.clone());
+        let (common_payload_1, recipient_payloads_1) =
+            hash_vectors_0.prepare_message(vec![idkey_1.clone()], message_1.clone());
 
         // 1 receives first msg from 0
         assert_eq!(
@@ -1100,8 +1025,8 @@ mod test {
         );
 
         // 1 sends second msg to 1
-        let (common_payload_2, recipient_payloads_2) = hash_vectors_1
-            .prepare_message(vec![idkey_0.clone()], message_2.clone());
+        let (common_payload_2, recipient_payloads_2) =
+            hash_vectors_1.prepare_message(vec![idkey_0.clone()], message_2.clone());
 
         // 0 receives second msg from 1
         assert_eq!(
@@ -1129,10 +1054,7 @@ mod test {
 
         // 0 sends third msg to 0 and 1
         let (common_payload_3, recipient_payloads_3) = hash_vectors_0
-            .prepare_message(
-                vec![idkey_0.clone(), idkey_1.clone()],
-                message_3.clone(),
-            );
+            .prepare_message(vec![idkey_0.clone(), idkey_1.clone()], message_3.clone());
 
         // 1 receives third msg from 0
         assert_eq!(
@@ -1169,8 +1091,8 @@ mod test {
 
         // 0 -> 1 (no validation payload)
         let message_0 = bincode::serialize(&String::from("Hi Bob!")).unwrap();
-        let (common_payload_0, recipient_payloads_0) = hash_vectors_0
-            .prepare_message(recipients.clone(), message_0.clone());
+        let (common_payload_0, recipient_payloads_0) =
+            hash_vectors_0.prepare_message(recipients.clone(), message_0.clone());
 
         // 1 receives message from 0
         let (seq, received_msg_0) = hash_vectors_1
@@ -1198,14 +1120,12 @@ mod test {
 
         // 1 replies to 0 (with validation payload)
         let message_1 =
-            bincode::serialize(&String::from("Hey Alice, how are you?"))
-                .unwrap();
-        let message_1_vp =
-            hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
+            bincode::serialize(&String::from("Hey Alice, how are you?")).unwrap();
+        let message_1_vp = hash_vectors_1.get_validation_payload(&idkey_0).unwrap();
         // seq num
         assert_eq!(message_1_vp.0, 0);
-        let (common_payload_1, recipient_payloads_1) = hash_vectors_1
-            .prepare_message(recipients.clone(), message_1.clone());
+        let (common_payload_1, recipient_payloads_1) =
+            hash_vectors_1.prepare_message(recipients.clone(), message_1.clone());
 
         // 1 receives own message
         let (seq, received_msg_1) = hash_vectors_1
@@ -1233,14 +1153,12 @@ mod test {
 
         // 0 replies to 1 (with validation payload)
         let message_2 =
-            bincode::serialize(&String::from("I'm good, thanks for asking!"))
-                .unwrap();
-        let message_2_vp =
-            hash_vectors_0.get_validation_payload(&idkey_1).unwrap();
+            bincode::serialize(&String::from("I'm good, thanks for asking!")).unwrap();
+        let message_2_vp = hash_vectors_0.get_validation_payload(&idkey_1).unwrap();
         // seq num
         assert_eq!(message_2_vp.0, 1);
-        let (common_payload_2, recipient_payloads_2) = hash_vectors_0
-            .prepare_message(recipients.clone(), message_2.clone());
+        let (common_payload_2, recipient_payloads_2) =
+            hash_vectors_0.prepare_message(recipients.clone(), message_2.clone());
 
         // 0 receives own message
         let (seq, received_msg_2) = hash_vectors_0

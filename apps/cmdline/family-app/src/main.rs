@@ -3,11 +3,11 @@ use chrono::DateTime;
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use tank::client::TankClient;
-use tank::data::ScubaData;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use tank::client::TankClient;
+use tank::data::ScubaData;
 use uuid::Uuid;
 
 /*
@@ -25,8 +25,8 @@ use uuid::Uuid;
  *   - [x] post length
  *   - [x] comment length
  *   - [ ] reaction type (subset of emojies)
- * - [ ] moderator permissions can be granted to users to help keep
- *   messages appropriate
+ * - [ ] moderator permissions can be granted to users to help keep messages
+ *   appropriate
  */
 
 // TODO use the struct name as the type/prefix instead
@@ -171,26 +171,9 @@ struct FamilyApp {
 impl FamilyApp {
     pub async fn new() -> FamilyApp {
         let client = TankClient::new(
-            None,
-            None,
-            false,
-            None,
-            None,
-            // causal consistency
-            false,
-            false,
-            true,
-            false,
-            // benchmarking args
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, false, None, None, // causal consistency
+            false, false, true, false, // benchmarking args
+            None, None, None, None, None, None, None, None, None,
         )
         .await;
         Self { client }
@@ -236,8 +219,7 @@ impl FamilyApp {
         }
 
         let device_guard = context.client.device.read();
-        let mut data_store_guard =
-            device_guard.as_ref().unwrap().data_store.write();
+        let mut data_store_guard = device_guard.as_ref().unwrap().data_store.write();
 
         // register callback that validates char limit for posts
         data_store_guard.validator().set_validate_callback_for_type(
@@ -255,8 +237,7 @@ impl FamilyApp {
         data_store_guard.validator().set_validate_callback_for_type(
             COMMENT_PREFIX.to_string(),
             |_, val| {
-                let comment: Comment =
-                    serde_json::from_str(val.data_val()).unwrap();
+                let comment: Comment = serde_json::from_str(val.data_val()).unwrap();
                 if comment.contents.len() > 100 {
                     return false;
                 }
@@ -339,8 +320,7 @@ impl FamilyApp {
                                     );
 
                                     loc.inc();
-                                    loc_json =
-                                        serde_json::to_string(&loc).unwrap();
+                                    loc_json = serde_json::to_string(&loc).unwrap();
 
                                     // for some reason this set_data message has
                                     // a
@@ -375,9 +355,7 @@ impl FamilyApp {
                                 loc_id
                             ))))
                         } else {
-                            Ok(Some(String::from(
-                                "No location polling initiated",
-                            )))
+                            Ok(Some(String::from("No location polling initiated")))
                         }
                     }
                     Err(err) => Ok(Some(String::from(format!(
@@ -399,9 +377,7 @@ impl FamilyApp {
     ) -> ReplResult<Option<String>> {
         match context
             .client
-            .create_linked_device(
-                args.get_one::<String>("idkey").unwrap().to_string(),
-            )
+            .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
             Ok(_) => Ok(Some(String::from("Linked device created!"))),
@@ -457,9 +433,7 @@ impl FamilyApp {
         Ok(Some(itertools::join(linked_devices, "\n")))
     }
 
-    pub async fn get_location_id(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn get_location_id(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         if !context.exists_device() {
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
@@ -472,17 +446,14 @@ impl FamilyApp {
             .await
             .unwrap()
             .unwrap();
-        let member: Member =
-            serde_json::from_str(member_obj.data_val()).unwrap();
+        let member: Member = serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
 
         Ok(Some(String::from(format!("{}", loc_id))))
     }
 
-    pub async fn get_own_location(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn get_own_location(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         if !context.exists_device() {
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
@@ -495,8 +466,7 @@ impl FamilyApp {
             .await
             .unwrap()
             .unwrap();
-        let member: Member =
-            serde_json::from_str(member_obj.data_val()).unwrap();
+        let member: Member = serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
         let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
@@ -540,21 +510,24 @@ impl FamilyApp {
         }
     }
 
-    pub async fn init_family(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn init_family(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         let id = Self::new_prefixed_id(&FAM_PREFIX.to_string());
         let fam = Family::new(vec![context.client.linked_name()]);
         let json_fam = serde_json::to_string(&fam).unwrap();
 
         match context
             .client
-            .set_data(id.clone(), FAM_PREFIX.to_string(), json_fam, None, None, false)
+            .set_data(
+                id.clone(),
+                FAM_PREFIX.to_string(),
+                json_fam,
+                None,
+                None,
+                false,
+            )
             .await
         {
-            Ok(_) => {
-                Ok(Some(String::from(format!("Family created with id {}", id))))
-            }
+            Ok(_) => Ok(Some(String::from(format!("Family created with id {}", id)))),
             Err(err) => Ok(Some(String::from(format!(
                 "Could not create family: {}",
                 err.to_string()
@@ -579,8 +552,7 @@ impl FamilyApp {
 
         match fam_opt {
             Some(fam_obj) => {
-                let mut fam: Family =
-                    serde_json::from_str(fam_obj.data_val()).unwrap();
+                let mut fam: Family = serde_json::from_str(fam_obj.data_val()).unwrap();
                 fam.add_member(contact_name);
                 let fam_json = serde_json::to_string(&fam).unwrap();
 
@@ -692,19 +664,11 @@ impl FamilyApp {
                         // message to return from the server
                         std::thread::sleep(std::time::Duration::from_secs(1));
 
-                        match context
-                            .client
-                            .add_readers(post_id.clone(), sharees)
-                            .await
-                        {
+                        match context.client.add_readers(post_id.clone(), sharees).await {
                             Ok(_) => {
                                 // add to family
-                                fam.add_post(
-                                    post.creation_time(),
-                                    post_id.clone(),
-                                );
-                                let fam_json =
-                                    serde_json::to_string(&fam).unwrap();
+                                fam.add_post(post.creation_time(), post_id.clone());
+                                let fam_json = serde_json::to_string(&fam).unwrap();
 
                                 match context
                                     .client
@@ -768,8 +732,7 @@ impl FamilyApp {
         match post_opt {
             Some(post_obj) => {
                 // create post
-                let comment_id =
-                    Self::new_prefixed_id(&COMMENT_PREFIX.to_string());
+                let comment_id = Self::new_prefixed_id(&COMMENT_PREFIX.to_string());
                 let comment = Comment::new(post_id, contents);
                 let comment_json = serde_json::to_string(&comment).unwrap();
 
@@ -790,12 +753,8 @@ impl FamilyApp {
                         let mut post: Post =
                             serde_json::from_str(post_obj.data_val()).unwrap();
                         let fam_id = post.family_id.clone();
-                        let fam_obj = context
-                            .client
-                            .get_data(&fam_id)
-                            .await
-                            .unwrap()
-                            .unwrap();
+                        let fam_obj =
+                            context.client.get_data(&fam_id).await.unwrap().unwrap();
                         let fam: Family =
                             serde_json::from_str(fam_obj.data_val()).unwrap();
                         let own_name = context.client.linked_name();
@@ -824,8 +783,7 @@ impl FamilyApp {
                                     comment.creation_time(),
                                     comment_id.clone(),
                                 );
-                                let post_json =
-                                    serde_json::to_string(&post).unwrap();
+                                let post_json = serde_json::to_string(&post).unwrap();
 
                                 match context
                                     .client
@@ -868,9 +826,7 @@ impl FamilyApp {
         }
     }
 
-    pub async fn update_location(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn update_location(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         if !context.exists_device() {
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
@@ -883,14 +839,12 @@ impl FamilyApp {
             .await
             .unwrap()
             .unwrap();
-        let member: Member =
-            serde_json::from_str(member_obj.data_val()).unwrap();
+        let member: Member = serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
         let loc_obj = context.client.get_data(&loc_id).await.unwrap().unwrap();
 
-        let mut loc: Location =
-            serde_json::from_str(loc_obj.data_val()).unwrap();
+        let mut loc: Location = serde_json::from_str(loc_obj.data_val()).unwrap();
         loc.inc();
         let loc_json = serde_json::to_string(&loc).unwrap();
 
@@ -932,8 +886,7 @@ impl FamilyApp {
             .await
             .unwrap()
             .unwrap();
-        let member: Member =
-            serde_json::from_str(member_obj.data_val()).unwrap();
+        let member: Member = serde_json::from_str(member_obj.data_val()).unwrap();
 
         let loc_id = member.location_id;
         let readers = vec![member_id];
@@ -1136,11 +1089,8 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(FamilyApp::init_new_device(args, context)),
         )
         .with_command_async(
-            Command::new("init_linked_device")
-                .arg(Arg::new("idkey").required(true)),
-            |args, context| {
-                Box::pin(FamilyApp::init_linked_device(args, context))
-            },
+            Command::new("init_linked_device").arg(Arg::new("idkey").required(true)),
+            |args, context| Box::pin(FamilyApp::init_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), FamilyApp::check_device)
         .with_command(Command::new("get_name"), FamilyApp::get_name)
@@ -1150,12 +1100,9 @@ async fn main() -> ReplResult<()> {
             Command::new("add_contact").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(FamilyApp::add_contact(args, context)),
         )
-        .with_command_async(
-            Command::new("get_linked_devices"),
-            |_, context| {
-                Box::pin(FamilyApp::get_linked_devices(context))
-            },
-        )
+        .with_command_async(Command::new("get_linked_devices"), |_, context| {
+            Box::pin(FamilyApp::get_linked_devices(context))
+        })
         .with_command_async(Command::new("get_location_id"), |_, context| {
             Box::pin(FamilyApp::get_location_id(context))
         })

@@ -10,8 +10,7 @@ async fn delete_messages(
 ) -> crate::shard::client_protocol::MessageBatch<'static> {
     let bearer_token = auth.into_inner();
     let device_id = bearer_token.token().to_string();
-    let bucket =
-        crate::shard::hash_into_bucket(&device_id, state.shard_map.len(), true);
+    let bucket = crate::shard::hash_into_bucket(&device_id, state.shard_map.len(), true);
     let inbox_shard_url = &state.shard_map[bucket].0;
 
     let messages_resp = state
@@ -25,15 +24,14 @@ async fn delete_messages(
     let parsed: shard::inbox::DeviceMessages =
         bincode::deserialize(&messages_resp.bytes().await.unwrap()).unwrap();
 
-    let attestation =
-        crate::shard::client_protocol::AttestationData::from_inbox_epochs(
-            &device_id,
-            parsed.from_epoch,
-            parsed.to_epoch,
-            parsed.messages.iter().flat_map(|(_, msgs)| msgs.iter()),
-        )
-        .attest(&state.attestation_key)
-        .into_arr();
+    let attestation = crate::shard::client_protocol::AttestationData::from_inbox_epochs(
+        &device_id,
+        parsed.from_epoch,
+        parsed.to_epoch,
+        parsed.messages.iter().flat_map(|(_, msgs)| msgs.iter()),
+    )
+    .attest(&state.attestation_key)
+    .into_arr();
 
     crate::shard::client_protocol::MessageBatch {
         start_epoch_id: parsed.from_epoch,
@@ -103,8 +101,7 @@ pub async fn init(
 
     {
         use base64::{engine::general_purpose, Engine as _};
-        let encoded =
-            general_purpose::STANDARD_NO_PAD.encode(&keypair.public.to_bytes());
+        let encoded = general_purpose::STANDARD_NO_PAD.encode(&keypair.public.to_bytes());
         println!("Loaded attestation key, public key: {}", encoded);
     }
 

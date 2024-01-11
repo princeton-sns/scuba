@@ -21,9 +21,8 @@ pub enum Event {
 }
 
 pub use scuba_server_lib::shard::client_protocol::{
-    Attestation, AttestationData, EncryptedCommonPayload,
-    EncryptedInboxMessage, EncryptedOutboxMessage,
-    EncryptedPerRecipientPayload, MessageBatch,
+    Attestation, AttestationData, EncryptedCommonPayload, EncryptedInboxMessage,
+    EncryptedOutboxMessage, EncryptedPerRecipientPayload, MessageBatch,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,20 +50,12 @@ impl From<OtkeyResponse> for String {
 
 #[async_trait]
 pub trait ServerComm {
-    async fn send_message(
-        &self,
-        batch: EncryptedOutboxMessage,
-    ) -> Result<Response>;
+    async fn send_message(&self, batch: EncryptedOutboxMessage) -> Result<Response>;
 
-    async fn get_otkey_from_server(
-        &self,
-        dst_idkey: &String,
-    ) -> Result<OtkeyResponse>;
+    async fn get_otkey_from_server(&self, dst_idkey: &String) -> Result<OtkeyResponse>;
 
-    async fn delete_messages_from_server(
-        &self,
-        to_delete: &ToDelete,
-    ) -> Result<Response>;
+    async fn delete_messages_from_server(&self, to_delete: &ToDelete)
+        -> Result<Response>;
 
     async fn add_otkeys_to_server<'a>(
         &self,
@@ -93,19 +84,17 @@ impl<C: CoreClient> ServerCommImpl<C> {
         // Resolve our home-shard base-url by contacting the bootstrap shard:
         let client = reqwest::Client::new();
         let base_url = Url::parse(
-	    &client
+            &client
                 .get(format!("{}/shard", BOOTSTRAP_SERVER_URL))
-                .header(
-                    "Authorization",
-                    &format!("Bearer {}", &idkey),
-                )
+                .header("Authorization", &format!("Bearer {}", &idkey))
                 .send()
                 .await
                 .expect("Failed to contact the bootstrap server shard")
                 .text()
                 .await
-                .expect("Failed to retrieve response from the bootstrap server shard")
-        ).expect("Failed to construct home-shard base url from response");
+                .expect("Failed to retrieve response from the bootstrap server shard"),
+        )
+        .expect("Failed to construct home-shard base url from response");
 
         let server_attestation_pubkey = {
             use base64::{engine::general_purpose, Engine as _};
@@ -163,24 +152,18 @@ impl<C: CoreClient> ServerCommImpl<C> {
                                         //   task_idkey
                                         //);
                                         if let Some(ref core) = core_option {
-                                            core.server_comm_callback(Ok(
-                                                Event::Otkey,
-                                            ))
-                                            .await;
+                                            core.server_comm_callback(Ok(Event::Otkey))
+                                                .await;
                                         }
                                     }
                                     "msg" => {
                                         //println!("got MSG event from
                                         // server");
                                         if let Some(ref core) = core_option {
-                                            core.server_comm_callback(Ok(
-                                                Event::Msg(
-                                                    serde_json::from_str(
-                                                        event.data.as_str(),
-                                                    )
+                                            core.server_comm_callback(Ok(Event::Msg(
+                                                serde_json::from_str(event.data.as_str())
                                                     .unwrap(),
-                                                ),
-                                            ))
+                                            )))
                                             .await;
                                         }
                                     }
@@ -189,28 +172,56 @@ impl<C: CoreClient> ServerCommImpl<C> {
                                         // from server");
                                         if let Some(ref core) = core_option {
                                             let emb: MessageBatch =
-                                                serde_json::from_str(
-                                                    &event.data,
-                                                )
-                                                .unwrap();
+                                                serde_json::from_str(&event.data)
+                                                    .unwrap();
                                             // TODO: handle lost epochs
                                             //println!("MessageBatch for epochs
                                             // {} to {}", emb.start_epoch_id,
                                             // emb.end_epoch_id);
 
-                                            let attestation = Attestation::from_bytes(&emb.attestation).expect("Failed to parse attestation payload");
-                                            assert!(attestation.first_epoch() == next_epoch, "Attestation does not cover all epochs");
+                                            let attestation = Attestation::from_bytes(
+                                                &emb.attestation,
+                                            )
+                                            .expect(
+                                                "Failed to parse attestation payload",
+                                            );
+                                            assert!(
+                                                attestation.first_epoch() == next_epoch,
+                                                "Attestation does not cover all epochs"
+                                            );
                                             assert!(attestation.next_epoch() == emb.end_epoch_id, "Attestation claims to cover unreceived epochs");
                                             let attestation_data =
                                                 AttestationData::from_inbox_epochs(
                                                     &task_idkey,
-                                            attestation.first_epoch(), attestation.next_epoch(),
-                                            emb.messages.iter().flat_map(|(_epoch_id, epoch_messages)| epoch_messages.iter()));
-                                            assert!(attestation.verify(&attestation_data, &server_attestation_pubkey), "Attestation verification failed");
-                                            next_epoch =
-                                                attestation.next_epoch();
+                                                    attestation.first_epoch(),
+                                                    attestation.next_epoch(),
+                                                    emb.messages.iter().flat_map(
+                                                        |(_epoch_id, epoch_messages)| {
+                                                            epoch_messages.iter()
+                                                        },
+                                                    ),
+                                                );
+                                            assert!(
+                                                attestation.verify(
+                                                    &attestation_data,
+                                                    &server_attestation_pubkey
+                                                ),
+                                                "Attestation verification failed"
+                                            );
+                                            next_epoch = attestation.next_epoch();
 
-                                            for msg in emb.messages.into_owned().into_iter().flat_map(|(_epoch_id, epoch_messages)| epoch_messages.into_owned().into_iter()) {
+                                            for msg in emb
+                                                .messages
+                                                .into_owned()
+                                                .into_iter()
+                                                .flat_map(
+                                                    |(_epoch_id, epoch_messages)| {
+                                                        epoch_messages
+                                                            .into_owned()
+                                                            .into_iter()
+                                                    },
+                                                )
+                                            {
                                                 core.server_comm_callback(Ok(
                                                     Event::Msg(msg),
                                                 ))
@@ -218,10 +229,7 @@ impl<C: CoreClient> ServerCommImpl<C> {
                                             }
                                         }
                                     }
-                                    _ => panic!(
-                                        "Got unexpected SSE event: {:?}",
-                                        event
-                                    ),
+                                    _ => panic!("Got unexpected SSE event: {:?}", event),
                                 }
                             }
                         }
@@ -242,10 +250,7 @@ impl<C: CoreClient> ServerCommImpl<C> {
 
 #[async_trait]
 impl<C: CoreClient> ServerComm for ServerCommImpl<C> {
-    async fn send_message(
-        &self,
-        batch: EncryptedOutboxMessage,
-    ) -> Result<Response> {
+    async fn send_message(&self, batch: EncryptedOutboxMessage) -> Result<Response> {
         let mut series = LinkedList::new();
         series.push_back(batch);
 
@@ -258,10 +263,7 @@ impl<C: CoreClient> ServerComm for ServerCommImpl<C> {
             .await
     }
 
-    async fn get_otkey_from_server(
-        &self,
-        dst_idkey: &String,
-    ) -> Result<OtkeyResponse> {
+    async fn get_otkey_from_server(&self, dst_idkey: &String) -> Result<OtkeyResponse> {
         use tokio::time::{sleep, Duration};
 
         let mut retry_count = 0;

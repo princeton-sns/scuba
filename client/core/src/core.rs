@@ -11,8 +11,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::crypto::Crypto;
 use crate::hash_vectors::{CommonPayload, HashVectors, ValidationPayload};
 use crate::server_comm::{
-    EncryptedCommonPayload, EncryptedOutboxMessage,
-    EncryptedPerRecipientPayload, Event, ServerComm, ServerCommImpl, ToDelete,
+    EncryptedCommonPayload, EncryptedOutboxMessage, EncryptedPerRecipientPayload, Event,
+    ServerComm, ServerCommImpl, ToDelete,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -88,12 +88,8 @@ impl<C: CoreClient> Core<C> {
             client: RwLock::new(client),
             init: parking_lot::Mutex::new(false),
             init_cv: Condvar::new(),
-            outgoing_queue: Arc::new(Mutex::new(
-                VecDeque::<CommonPayload>::new(),
-            )),
-            incoming_queue: Arc::new(Mutex::new(
-                VecDeque::<CommonPayload>::new(),
-            )),
+            outgoing_queue: Arc::new(Mutex::new(VecDeque::<CommonPayload>::new())),
+            incoming_queue: Arc::new(Mutex::new(VecDeque::<CommonPayload>::new())),
             oq_cv: Condvar::new(),
             iq_cv: Condvar::new(),
             bandwidth_filename,
@@ -163,10 +159,7 @@ impl<C: CoreClient> Core<C> {
 
         let mut hash_vectors_guard = self.hash_vectors.lock().await;
         let (common_payload, val_payloads) = hash_vectors_guard
-            .prepare_message(
-                dst_idkeys.clone(),
-                bincode::serialize(payload).unwrap(),
-            );
+            .prepare_message(dst_idkeys.clone(), bincode::serialize(payload).unwrap());
 
         // FIXME What if common_payloads are identical?
         // If they're identical here, they can trigger a reordering detection,
@@ -211,20 +204,16 @@ impl<C: CoreClient> Core<C> {
             write!(f, "op: {}\n", payload);
             write!(f, "sender: {}\n", self.idkey());
             write!(f, "#recipients: {}\n", &dst_idkeys.len());
-            let num_op_pt_bytes =
-                bincode::serialize(payload).unwrap().len() as f64;
+            let num_op_pt_bytes = bincode::serialize(payload).unwrap().len() as f64;
             let num_common_pt_bytes =
                 bincode::serialize(&common_payload).unwrap().len() as f64;
             let num_common_ct_bytes = common_ct.len() as f64;
             //let rcpt_list_len_diff = num_common_pt_bytes - num_op_pt_bytes;
-            let rcpt_list_perc: f64 =
-                (num_common_pt_bytes / num_op_pt_bytes) * 100.0;
+            let rcpt_list_perc: f64 = (num_common_pt_bytes / num_op_pt_bytes) * 100.0;
             //let symenc_len_diff = num_common_ct_bytes - num_common_pt_bytes;
-            let symenc_perc: f64 =
-                (num_common_ct_bytes / num_common_pt_bytes) * 100.0;
+            let symenc_perc: f64 = (num_common_ct_bytes / num_common_pt_bytes) * 100.0;
             //let total_len_diff = num_common_ct_bytes - num_op_pt_bytes;
-            let both_perc: f64 =
-                (num_common_ct_bytes / num_op_pt_bytes) * 100.0;
+            let both_perc: f64 = (num_common_ct_bytes / num_op_pt_bytes) * 100.0;
             write!(f, "---common overhead\n");
             write!(f, "#op_pt_bytes: {}\n", &num_op_pt_bytes);
             write!(f, "#common_pt_bytes: {}\n", &num_common_pt_bytes);
@@ -248,11 +237,11 @@ impl<C: CoreClient> Core<C> {
         // Can't use .iter().map().collect() due to async/await
         let mut encrypted_per_recipient_payloads = BTreeMap::new();
         for (idkey, val_payload) in val_payloads {
-	        let perrcpt_pt = PerRecipientPayload {
+            let perrcpt_pt = PerRecipientPayload {
                 val_payload: val_payload.clone(),
                 key,
                 tag,
-		        nonce,
+                nonce,
             };
 
             let (c_type, ciphertext) = self
@@ -297,8 +286,7 @@ impl<C: CoreClient> Core<C> {
                 let sessionlock = self.crypto.sessions.lock();
                 if let Some(val) = sessionlock.get(&idkey) {
                     let session = &val.1[0];
-                    let pickled =
-                        session.pickle(olm_rs::PicklingMode::Unencrypted);
+                    let pickled = session.pickle(olm_rs::PicklingMode::Unencrypted);
                     write!(f, "--storage overhead\n");
                     write!(f, "pickled session len: {:?}\n", &pickled.len());
                 }
@@ -306,10 +294,7 @@ impl<C: CoreClient> Core<C> {
 
             // Ensure we're never encrypting to the same key twice
             assert!(encrypted_per_recipient_payloads
-                .insert(
-                    idkey,
-                    EncryptedPerRecipientPayload { c_type, ciphertext }
-                )
+                .insert(idkey, EncryptedPerRecipientPayload { c_type, ciphertext })
                 .is_none());
         }
 
@@ -365,10 +350,7 @@ impl<C: CoreClient> Core<C> {
             .await
     }
 
-    pub async fn server_comm_callback(
-        &self,
-        event: eventsource_client::Result<Event>,
-    ) {
+    pub async fn server_comm_callback(&self, event: eventsource_client::Result<Event>) {
         match event {
             Err(err) => panic!("err: {:?}", err),
             Ok(Event::Otkey) => {
@@ -533,8 +515,7 @@ impl<C: CoreClient> Core<C> {
                             write!(f, "{:?}\n", entry);
                         }
                     } else if cur_count > 1 {
-                        *self.benchmark_recv.write().await =
-                            Some(cur_count - 1);
+                        *self.benchmark_recv.write().await = Some(cur_count - 1);
                     }
                     //println!("core ctr_check_recv: {:?}", ctr_check_guard);
                 }
@@ -552,8 +533,7 @@ impl<C: CoreClient> Core<C> {
                             .client_callback(
                                 seq as SequenceNumber,
                                 msg.sender.clone(),
-                                bincode::deserialize::<String>(&message)
-                                    .unwrap(),
+                                bincode::deserialize::<String>(&message).unwrap(),
                                 msg.bench,
                             )
                             .await;
@@ -565,16 +545,13 @@ impl<C: CoreClient> Core<C> {
                             .await
                             .as_ref()
                             .unwrap()
-                            .delete_messages_from_server(
-                                &ToDelete::from_seq_id(seq.try_into().unwrap()),
-                            )
+                            .delete_messages_from_server(&ToDelete::from_seq_id(
+                                seq.try_into().unwrap(),
+                            ))
                             .await
                         {
                             Ok(_) => {}
-                            Err(err) => panic!(
-                                "Error sending delete-message: {:?}",
-                                err
-                            ),
+                            Err(err) => panic!("Error sending delete-message: {:?}", err),
                         }
                     }
                     Err(err) => {
@@ -723,8 +700,7 @@ mod tests {
         let idkey_c = arc_core_c.crypto.get_idkey();
 
         let payload = String::from("hello from me");
-        let recipients =
-            vec![idkey_a.clone(), idkey_b.clone(), idkey_c.clone()];
+        let recipients = vec![idkey_a.clone(), idkey_b.clone(), idkey_c.clone()];
 
         println!("READY TO SEND");
 

@@ -75,9 +75,7 @@ impl Group {
 
         let children = match children_arg {
             Some(option) => match option {
-                Some(vec_children) => {
-                    Some(HashSet::from_iter(vec_children.into_iter()))
-                }
+                Some(vec_children) => Some(HashSet::from_iter(vec_children.into_iter())),
                 None => Some(HashSet::<String>::new()),
             },
             None => None,
@@ -236,10 +234,7 @@ impl PermissionSet {
         &self.do_readers
     }
 
-    pub fn set_do_readers(
-        &mut self,
-        do_reader_group_id: &String,
-    ) -> Option<String> {
+    pub fn set_do_readers(&mut self, do_reader_group_id: &String) -> Option<String> {
         let old_do_readers = self.do_readers.clone();
         self.do_readers = Some(do_reader_group_id.to_string());
         old_do_readers
@@ -316,9 +311,7 @@ impl MetadataStore {
                         // group id
                         Ok(())
                     }
-                    None => Err(Error::GroupDoesNotExist(
-                        existing_group_id.to_string(),
-                    )),
+                    None => Err(Error::GroupDoesNotExist(existing_group_id.to_string())),
                 }
             }
             None => {
@@ -329,10 +322,7 @@ impl MetadataStore {
                     false,
                     Some(Some(new_members.clone())),
                 );
-                self.set_group(
-                    new_group.group_id().to_string(),
-                    new_group.clone(),
-                );
+                self.set_group(new_group.group_id().to_string(), new_group.clone());
                 for new_member in new_members {
                     self.add_parent(&new_member, new_group.group_id());
                 }
@@ -363,11 +353,7 @@ impl MetadataStore {
         &self.perm_store
     }
 
-    pub fn has_data_mod_permissions(
-        &self,
-        group_id: &String,
-        perm_id: &String,
-    ) -> bool {
+    pub fn has_data_mod_permissions(&self, group_id: &String, perm_id: &String) -> bool {
         let perm_opt = self.get_perm(perm_id);
         match perm_opt {
             Some(perm_val) => {
@@ -413,18 +399,12 @@ impl MetadataStore {
         }
     }
 
-    pub fn has_owner_mod_permissions(
-        &self,
-        group_id: &String,
-        perm_id: &String,
-    ) -> bool {
+    pub fn has_owner_mod_permissions(&self, group_id: &String, perm_id: &String) -> bool {
         let perm_opt = self.get_perm(perm_id);
         match perm_opt {
             // check if owner
             Some(perm_val) => match perm_val.owners() {
-                Some(owner_group) => {
-                    self.is_group_member(group_id, owner_group, &None)
-                }
+                Some(owner_group) => self.is_group_member(group_id, owner_group, &None),
                 None => false,
             },
             None => false,
@@ -464,11 +444,7 @@ impl MetadataStore {
         self.group_store.get_mut(group_id)
     }
 
-    pub fn set_group(
-        &mut self,
-        group_id: String,
-        group_val: Group,
-    ) -> Option<Group> {
+    pub fn set_group(&mut self, group_id: String, group_val: Group) -> Option<Group> {
         self.group_store.insert(group_id, group_val)
     }
 
@@ -639,8 +615,7 @@ impl MetadataStore {
         // delete from any childrens' parents lists
         if let Some(children) = group_val.children {
             for child_id in children {
-                let mut child_group =
-                    self.get_group(&child_id).unwrap().clone();
+                let mut child_group = self.get_group(&child_id).unwrap().clone();
                 child_group.remove_parent(group_id);
                 self.set_group(child_id.to_string(), child_group);
             }
@@ -656,11 +631,7 @@ impl MetadataStore {
         false
     }
 
-    pub fn add_members(
-        &mut self,
-        base_group_id: &String,
-        ids_to_add: Vec<&String>,
-    ) {
+    pub fn add_members(&mut self, base_group_id: &String, ids_to_add: Vec<&String>) {
         for id_to_add in ids_to_add {
             self.link_groups(base_group_id, id_to_add);
         }
@@ -676,10 +647,7 @@ impl MetadataStore {
         }
     }
 
-    pub fn resolve_group_ids<'a>(
-        &'a self,
-        ids: Vec<&'a String>,
-    ) -> HashSet<String> {
+    pub fn resolve_group_ids<'a>(&'a self, ids: Vec<&'a String>) -> HashSet<String> {
         let mut resolved_ids = HashSet::<String>::new();
         let mut visited = HashSet::<&String>::new();
 

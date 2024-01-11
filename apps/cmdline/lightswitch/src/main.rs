@@ -1,8 +1,8 @@
 use reedline_repl_rs::clap::{Arg, ArgAction, ArgMatches, Command};
 use reedline_repl_rs::Repl;
 use reedline_repl_rs::Result as ReplResult;
-use single_key_tank::client::TankClient;
-use single_key_tank::data::ScubaData;
+use tank::client::TankClient;
+use tank::data::ScubaData;
 use std::sync::Arc;
 use uuid::Uuid;
 

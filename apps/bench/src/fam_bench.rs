@@ -2,9 +2,9 @@
 use chrono::offset::Utc;
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
-use single_key_tank::client::Error;
-use single_key_tank::client::TankClient;
-use single_key_tank::data::ScubaData;
+use tank::client::Error;
+use tank::client::TankClient;
+use tank::data::ScubaData;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -107,6 +107,7 @@ impl FamilyApp {
             // linearizability
             true,
             true,
+            false,
             false,
             // benchmark args
             num_core_send,

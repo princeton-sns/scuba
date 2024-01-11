@@ -533,7 +533,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -792,7 +792,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -806,7 +806,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -819,7 +819,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -830,7 +830,7 @@ version = "0.1.0"
 dependencies = [
  "itertools 0.10.5",
  "reedline-repl-rs",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -847,7 +847,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -859,7 +859,7 @@ dependencies = [
  "itertools 0.10.5",
  "reedline-repl-rs",
  "serde_json",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -873,7 +873,7 @@ dependencies = [
  "reedline-repl-rs",
  "serde",
  "serde_json",
- "single-key-tank",
+ "tank",
  "tokio",
  "uuid",
 ]
@@ -1913,24 +1913,6 @@ dependencies = [
  "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "multi-key-tank"
-version = "0.1.0"
-dependencies = [
- "async-condvar-fair",
- "async-trait",
- "futures",
- "itertools 0.10.5",
- "parking_lot",
- "reqwest",
- "scuba-core",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -3028,25 +3010,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "single-key-tank"
-version = "0.1.0"
-dependencies = [
- "async-condvar-fair",
- "async-trait",
- "bincode",
- "futures",
- "itertools 0.10.5",
- "parking_lot",
- "reqwest",
- "scuba-core",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3167,6 +3130,25 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "tank"
+version = "0.1.0"
+dependencies = [
+ "async-condvar-fair",
+ "async-trait",
+ "bincode",
+ "futures",
+ "itertools 0.10.5",
+ "parking_lot",
+ "reqwest",
+ "scuba-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -614,46 +614,221 @@ impl TankClient {
 
     fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
         let mut recipients = Vec::new();
+        // FIXME break up among "shards", e.g. every operation should
+        // have it's own set of recipients
         for op in msg {
-            // FIXME support more than just UpdateData operation types in
-            // transactions
-            if let Operation::UpdateData(_, data) = op {
-                let mut group_ids = Vec::<&String>::new();
-                let perm = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .get_perm(data.perm_id())
-                    .unwrap()
-                    .clone();
-                match perm.owners() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-                match perm.writers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-                match perm.readers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
+            println!("OP: {:?}", &op);
+            // FIXME support all operation types in transactions
+            match op {
+                Operation::SetPerm(_, perm) => {
+                    let mut group_ids = Vec::<&String>::new();
+                    println!("collect_rcpt() - SetPerm");
+                    println!("perm_id: {}", perm.perm_id());
+                    match perm.owners() {
+                        Some(group_id) => group_ids.push(group_id),
+                        None => {}
+                    }
+                    match perm.writers() {
+                        Some(group_id) => group_ids.push(group_id),
+                        None => {}
+                    }
+                    match perm.readers() {
+                        Some(group_id) => group_ids.push(group_id),
+                        None => {}
+                    }
 
-                let device_ids = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .resolve_group_ids(group_ids)
-                    .into_iter()
-                    .collect::<Vec<String>>();
+                    let device_ids = self
+                        .device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .resolve_group_ids(group_ids)
+                        .into_iter()
+                        .collect::<Vec<String>>();
 
-                recipients.extend(device_ids);
+                    recipients.extend(device_ids);
+                }
+                Operation::SetGroup(_, group) => {
+                    println!("collect_rcpt() - SetGroup");
+                    for perm_id in group.perm_ids() {
+                        let mut group_ids = Vec::<&String>::new();
+                        println!("perm_id: {}", &perm_id);
+                        let perm = self
+                            .device
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .meta_store
+                            .read()
+                            .get_perm(perm_id)
+                            .unwrap()
+                            .clone();
+                        match perm.owners() {
+                            Some(group_id) => group_ids.push(group_id),
+                            None => {}
+                        }
+                        match perm.writers() {
+                            Some(group_id) => group_ids.push(group_id),
+                            None => {}
+                        }
+                        match perm.readers() {
+                            Some(group_id) => group_ids.push(group_id),
+                            None => {}
+                        }
+
+                        let device_ids = self
+                            .device
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .meta_store
+                            .read()
+                            .resolve_group_ids(group_ids)
+                            .into_iter()
+                            .collect::<Vec<String>>();
+
+                        recipients.extend(device_ids);
+                    }
+                }
+                Operation::AddParent(group_id, parent_id) => {
+                    println!("collect_rcpt() - AddParent");
+                    let mut group_ids = Vec::<String>::new();
+
+                    // get group perms
+                    // TODO i'm expecting this to fail since the group
+                    // hasn't actually been set yet
+                    let group = self
+                        .device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .get_group(&group_id)
+                        .unwrap()
+                        .clone();
+                    for group_perm_id in group.perm_ids() {
+                        let group_perm = self
+                            .device
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .meta_store
+                            .read()
+                            .get_perm(group_perm_id)
+                            .unwrap()
+                            .clone();
+                        match group_perm.owners() {
+                            Some(group_id) => group_ids.push(group_id.clone()),
+                            None => {}
+                        }
+                        match group_perm.writers() {
+                            Some(group_id) => group_ids.push(group_id.clone()),
+                            None => {}
+                        }
+                        match group_perm.readers() {
+                            Some(group_id) => group_ids.push(group_id.clone()),
+                            None => {}
+                        }
+                    }
+
+                    // get parent perms
+                    let parent = self
+                        .device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .get_group(&parent_id)
+                        .unwrap()
+                        .clone();
+                    for parent_perm_id in parent.perm_ids() {
+                        let parent_perm = self
+                            .device
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .meta_store
+                            .read()
+                            .get_perm(parent_perm_id)
+                            .unwrap()
+                            .clone();
+                        match parent_perm.owners() {
+                            Some(group_id) => group_ids.push(group_id.clone()),
+                            None => {}
+                        }
+                        match parent_perm.writers() {
+                            Some(group_id) => group_ids.push(group_id.clone()),
+                            None => {}
+                        }
+                        match parent_perm.readers() {
+                            Some(group_id) => group_ids.push(group_id.clone()),
+                            None => {}
+                        }
+                    }
+
+                    let group_id_refs: Vec<&String> = group_ids
+                        .iter()
+                        .map(|x| x as &String)
+                        .collect();
+
+                    let device_ids = self
+                        .device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .resolve_group_ids(group_id_refs)
+                        .into_iter()
+                        .collect::<Vec<String>>();
+
+                    recipients.extend(device_ids);
+                }
+                Operation::UpdateData(_, data) => {
+                    let mut group_ids = Vec::<&String>::new();
+                    println!("collect_rcpt() - UpdateData");
+                    println!("perm_id: {}", data.perm_id());
+                    let perm = self
+                        .device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .get_perm(data.perm_id())
+                        .unwrap()
+                        .clone();
+                    match perm.owners() {
+                        Some(group_id) => group_ids.push(group_id),
+                        None => {}
+                    }
+                    match perm.writers() {
+                        Some(group_id) => group_ids.push(group_id),
+                        None => {}
+                    }
+                    match perm.readers() {
+                        Some(group_id) => group_ids.push(group_id),
+                        None => {}
+                    }
+
+                    let device_ids = self
+                        .device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .resolve_group_ids(group_ids)
+                        .into_iter()
+                        .collect::<Vec<String>>();
+
+                    recipients.extend(device_ids);
+                }
+                _ => {}
             }
         }
 
@@ -1770,6 +1945,8 @@ impl TankClient {
     pub async fn end_transaction(&self) {
         let (ops, prev_seq_number) =
             self.tx_coordinator.write().as_mut().unwrap().exit_tx();
+        println!("ops: {:?}", &ops);
+        println!("prev_seq_num: {}", &prev_seq_number);
         self.initiate_transaction(self.idkey(), ops, prev_seq_number)
             .await;
     }
@@ -2490,24 +2667,6 @@ impl TankClient {
         data_id: String,
         do_readers: Vec<&String>,
     ) -> Result<(), Error> {
-        // check if can have multiple outstanding ops, or if not, check that
-        // no other ops are outstanding
-        let op_id;
-        loop {
-            let mut op_id_ctr = self.op_id_ctr.lock();
-            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
-                // release the lock
-                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
-            } else {
-                // get op_id and inc id ctr
-                op_id = op_id_ctr.0;
-                op_id_ctr.0 += 1;
-                // add op into hashset
-                op_id_ctr.1.insert(op_id);
-                break;
-            }
-        }
-
         self.add_permissions(
             data_id,
             PermType::DOReaders(
@@ -2518,7 +2677,6 @@ impl TankClient {
                     .collect::<Vec<String>>(),
             ),
             do_readers,
-            op_id,
         )
         .await
     }
@@ -2528,24 +2686,6 @@ impl TankClient {
         data_id: String,
         readers: Vec<&String>,
     ) -> Result<(), Error> {
-        // check if can have multiple outstanding ops, or if not, check that
-        // no other ops are outstanding
-        let op_id;
-        loop {
-            let mut op_id_ctr = self.op_id_ctr.lock();
-            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
-                // release the lock
-                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
-            } else {
-                // get op_id and inc id ctr
-                op_id = op_id_ctr.0;
-                op_id_ctr.0 += 1;
-                // add op into hashset
-                op_id_ctr.1.insert(op_id);
-                break;
-            }
-        }
-
         self.add_permissions(
             data_id,
             PermType::Readers(
@@ -2556,7 +2696,6 @@ impl TankClient {
                     .collect::<Vec<String>>(),
             ),
             readers,
-            op_id,
         )
         .await
     }
@@ -2565,6 +2704,26 @@ impl TankClient {
         &self,
         data_id: String,
         writers: Vec<&String>,
+    ) -> Result<(), Error> {
+        self.add_permissions(
+            data_id,
+            PermType::Writers(
+                writers
+                    .clone()
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>(),
+            ),
+            writers,
+        )
+        .await
+    }
+
+    pub async fn add_permissions(
+        &self,
+        data_id: String,
+        new_members: PermType,
+        mut new_members_refs: Vec<&String>, // FIXME one or the other
     ) -> Result<(), Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
@@ -2584,28 +2743,6 @@ impl TankClient {
             }
         }
 
-        self.add_permissions(
-            data_id,
-            PermType::Writers(
-                writers
-                    .clone()
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<String>>(),
-            ),
-            writers,
-            op_id,
-        )
-        .await
-    }
-
-    pub async fn add_permissions(
-        &self,
-        data_id: String,
-        new_members: PermType,
-        mut new_members_refs: Vec<&String>, // FIXME one or the other
-        op_id: u64,
-    ) -> Result<(), Error> {
         let device_guard = self.device.read();
         let mut data_store_guard = device_guard.as_ref().unwrap().data_store.read();
 

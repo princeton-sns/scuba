@@ -754,11 +754,11 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(PasswordManager::get_data(args, context)),
         )
         .with_command_async(
-            Command::new("get_perms").arg(Arg::new("id").required(true)),
+            Command::new("get_perms").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(PasswordManager::get_perms(args, context)),
         )
         .with_command_async(
-            Command::new("get_groups").arg(Arg::new("id").required(true)),
+            Command::new("get_groups").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(PasswordManager::get_groups(args, context)),
         )
         .with_command_async(

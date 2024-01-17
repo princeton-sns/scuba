@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{thread, time};
 use thiserror::Error;
+use async_recursion::async_recursion;
 
 use scuba_core::core::{Core, CoreClient, SequenceNumber};
 
@@ -140,7 +141,7 @@ struct Transaction {
     coordinator: String,
     recipients: Vec<String>,
     num_recipients: Option<usize>,
-    ops: Vec<Operation>,
+    ops: Vec<(Operation, Vec<String>)>,
     prepare_sequence_number: Option<SequenceNumber>,
     commit_sequence_number: Option<SequenceNumber>,
     prev_seq_number: SequenceNumber,
@@ -151,7 +152,7 @@ impl Transaction {
     fn new(
         device_id: String,
         recipients: Vec<String>,
-        ops: Vec<Operation>,
+        ops: Vec<(Operation, Vec<String>)>,
         prev_seq_number: SequenceNumber,
     ) -> Transaction {
         Transaction {
@@ -180,10 +181,9 @@ pub struct TxCoordinator {
     local_pending_tx: HashMap<SequenceNumber, (Vec<String>, Transaction)>,
     remote_pending_tx: HashMap<SequenceNumber, Transaction>,
     committed_tx: Vec<((SequenceNumber, SequenceNumber), Transaction)>,
-
-    tx_state: bool,
     /* true if currently within transaction */
-    temp_tx_ops: Vec<Operation>,
+    tx_state: bool,
+    temp_tx_ops: Vec<(Operation, Vec<String>)>,
 }
 
 // TODO: trim committed histories
@@ -213,15 +213,15 @@ impl TxCoordinator {
         return self.tx_state;
     }
 
-    fn exit_tx(&mut self) -> (Vec<Operation>, SequenceNumber) {
+    fn exit_tx(&mut self) -> (Vec<(Operation, Vec<String>)>, SequenceNumber) {
         let ops = self.temp_tx_ops.clone();
         self.temp_tx_ops = Vec::new();
         self.tx_state = false;
         return (ops, self.seq_number);
     }
 
-    fn add_op_to_cur_tx(&mut self, msg: Operation) {
-        self.temp_tx_ops.push(msg);
+    fn add_op_to_cur_tx(&mut self, msg: Operation, dst_idkeys: Vec<String>) {
+        self.temp_tx_ops.push((msg, dst_idkeys));
     }
 
     fn get_transaction(&self, tx_id: SequenceNumber) -> Result<&Transaction, Error> {
@@ -233,6 +233,15 @@ impl TxCoordinator {
         return Err(Error::TxNotFound);
     }
 
+    fn get_committed_transaction(&self, tx_id: SequenceNumber) -> Result<&Transaction, Error> {
+        for ((start_seq, _), tx) in self.committed_tx.iter() {
+            if *start_seq == tx_id {
+                return Ok(&tx);
+            }
+        }
+        return Err(Error::TxNotFound);
+    }
+
     fn start_message(
         &mut self,
         my_device_id: String,
@@ -240,6 +249,8 @@ impl TxCoordinator {
         tx_id: SequenceNumber,
         unsequenced_tx: Transaction,
     ) -> Result<(), Error> {
+        println!("in start_message");
+        println!("tx_id: {}", &tx_id);
         let mut tx = unsequenced_tx.clone();
         tx.prepare_sequence_number = Some(tx_id);
 
@@ -266,6 +277,26 @@ impl TxCoordinator {
         seq: SequenceNumber, /*use seq number of commit message when
                               * committing */
     ) -> Result<(), Error> {
+        println!();
+        println!("tx_id: {}", tx_id);
+        println!("seq: {}", &seq);
+
+        if sender == my_device_id {
+            println!("I AM COORDINATOR");
+            for tx in self.local_pending_tx.iter() {
+                println!("self.local_pending_tx: {:?}", &tx);
+                println!("--");
+            }
+            println!();
+        } else {
+            println!("I AM -NOT- COORDINATOR");
+            for tx in self.remote_pending_tx.iter() {
+                println!("self.remote_pending_tx: {:?}", &tx);
+                println!("--");
+            }
+            println!();
+        }
+
         // committing a tx i coordinated
         if sender == my_device_id {
             let q = &mut self.local_pending_tx;
@@ -326,13 +357,13 @@ impl TxCoordinator {
     fn detect_conflict(&self, msg: &Transaction) -> bool {
         let mut tx_keys = Vec::new();
 
-        for op in msg.ops.clone().into_iter() {
+        for (op, _) in msg.ops.clone().into_iter() {
             tx_keys.push(Operation::get_data_id(&op));
         }
 
         //impl for all enums -> move to func over two txs
         for tx in self.local_pending_tx.clone().into_iter() {
-            for op in tx.1 .1.ops.clone().into_iter() {
+            for (op, _) in tx.1 .1.ops.clone().into_iter() {
                 let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
@@ -341,7 +372,7 @@ impl TxCoordinator {
         }
 
         for tx in self.remote_pending_tx.clone().into_iter() {
-            for op in tx.1.ops.clone().into_iter() {
+            for (op, _) in tx.1.ops.clone().into_iter() {
                 let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
@@ -353,7 +384,7 @@ impl TxCoordinator {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
             if tx.1.prepare_sequence_number.unwrap() > msg.prev_seq_number {
-                for op in tx.1.ops.clone().into_iter() {
+                for (op, _) in tx.1.ops.clone().into_iter() {
                     let data_id = Operation::get_data_id(&op);
                     if tx_keys.contains(&data_id) {
                         return true;
@@ -612,224 +643,13 @@ impl TankClient {
 
     /* Transactions */
 
-    fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
+    fn collect_recipients(&self, msg: Vec<(Operation, Vec<String>)>) -> Vec<String> {
         let mut recipients = Vec::new();
+
         // FIXME break up among "shards", e.g. every operation should
         // have it's own set of recipients
-        for op in msg {
-            println!("OP: {:?}", &op);
-            // FIXME support all operation types in transactions
-            match op {
-                Operation::SetPerm(_, perm) => {
-                    let mut group_ids = Vec::<&String>::new();
-                    println!("collect_rcpt() - SetPerm");
-                    println!("perm_id: {}", perm.perm_id());
-                    match perm.owners() {
-                        Some(group_id) => group_ids.push(group_id),
-                        None => {}
-                    }
-                    match perm.writers() {
-                        Some(group_id) => group_ids.push(group_id),
-                        None => {}
-                    }
-                    match perm.readers() {
-                        Some(group_id) => group_ids.push(group_id),
-                        None => {}
-                    }
-
-                    let device_ids = self
-                        .device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .resolve_group_ids(group_ids)
-                        .into_iter()
-                        .collect::<Vec<String>>();
-
-                    recipients.extend(device_ids);
-                }
-                Operation::SetGroup(_, group) => {
-                    println!("collect_rcpt() - SetGroup");
-                    for perm_id in group.perm_ids() {
-                        let mut group_ids = Vec::<&String>::new();
-                        println!("perm_id: {}", &perm_id);
-                        let perm = self
-                            .device
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .meta_store
-                            .read()
-                            .get_perm(perm_id)
-                            .unwrap()
-                            .clone();
-                        match perm.owners() {
-                            Some(group_id) => group_ids.push(group_id),
-                            None => {}
-                        }
-                        match perm.writers() {
-                            Some(group_id) => group_ids.push(group_id),
-                            None => {}
-                        }
-                        match perm.readers() {
-                            Some(group_id) => group_ids.push(group_id),
-                            None => {}
-                        }
-
-                        let device_ids = self
-                            .device
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .meta_store
-                            .read()
-                            .resolve_group_ids(group_ids)
-                            .into_iter()
-                            .collect::<Vec<String>>();
-
-                        recipients.extend(device_ids);
-                    }
-                }
-                Operation::AddParent(group_id, parent_id) => {
-                    println!("collect_rcpt() - AddParent");
-                    let mut group_ids = Vec::<String>::new();
-
-                    // get group perms
-                    // TODO i'm expecting this to fail since the group
-                    // hasn't actually been set yet
-                    let group = self
-                        .device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .get_group(&group_id)
-                        .unwrap()
-                        .clone();
-                    for group_perm_id in group.perm_ids() {
-                        let group_perm = self
-                            .device
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .meta_store
-                            .read()
-                            .get_perm(group_perm_id)
-                            .unwrap()
-                            .clone();
-                        match group_perm.owners() {
-                            Some(group_id) => group_ids.push(group_id.clone()),
-                            None => {}
-                        }
-                        match group_perm.writers() {
-                            Some(group_id) => group_ids.push(group_id.clone()),
-                            None => {}
-                        }
-                        match group_perm.readers() {
-                            Some(group_id) => group_ids.push(group_id.clone()),
-                            None => {}
-                        }
-                    }
-
-                    // get parent perms
-                    let parent = self
-                        .device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .get_group(&parent_id)
-                        .unwrap()
-                        .clone();
-                    for parent_perm_id in parent.perm_ids() {
-                        let parent_perm = self
-                            .device
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .meta_store
-                            .read()
-                            .get_perm(parent_perm_id)
-                            .unwrap()
-                            .clone();
-                        match parent_perm.owners() {
-                            Some(group_id) => group_ids.push(group_id.clone()),
-                            None => {}
-                        }
-                        match parent_perm.writers() {
-                            Some(group_id) => group_ids.push(group_id.clone()),
-                            None => {}
-                        }
-                        match parent_perm.readers() {
-                            Some(group_id) => group_ids.push(group_id.clone()),
-                            None => {}
-                        }
-                    }
-
-                    let group_id_refs: Vec<&String> = group_ids
-                        .iter()
-                        .map(|x| x as &String)
-                        .collect();
-
-                    let device_ids = self
-                        .device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .resolve_group_ids(group_id_refs)
-                        .into_iter()
-                        .collect::<Vec<String>>();
-
-                    recipients.extend(device_ids);
-                }
-                Operation::UpdateData(_, data) => {
-                    let mut group_ids = Vec::<&String>::new();
-                    println!("collect_rcpt() - UpdateData");
-                    println!("perm_id: {}", data.perm_id());
-                    let perm = self
-                        .device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .get_perm(data.perm_id())
-                        .unwrap()
-                        .clone();
-                    match perm.owners() {
-                        Some(group_id) => group_ids.push(group_id),
-                        None => {}
-                    }
-                    match perm.writers() {
-                        Some(group_id) => group_ids.push(group_id),
-                        None => {}
-                    }
-                    match perm.readers() {
-                        Some(group_id) => group_ids.push(group_id),
-                        None => {}
-                    }
-
-                    let device_ids = self
-                        .device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .resolve_group_ids(group_ids)
-                        .into_iter()
-                        .collect::<Vec<String>>();
-
-                    recipients.extend(device_ids);
-                }
-                _ => {}
-            }
+        for (_, dst_idkeys) in msg {
+            recipients.extend(dst_idkeys);
         }
 
         recipients.sort();
@@ -838,71 +658,26 @@ impl TankClient {
         return recipients;
     }
 
-    fn collect_do_reader_recipients(&self, msg: Vec<Operation>) -> Option<Vec<String>> {
-        let mut recipients = Vec::new();
-        for op in msg {
-            // FIXME support more than just UpdateData operation types in
-            // transactions
-            if let Operation::UpdateData(_, data) = op {
-                let mut group_ids = Vec::<&String>::new();
-                let perm = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .get_perm(data.perm_id())
-                    .unwrap()
-                    .clone();
-                match perm.do_readers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-
-                let device_ids = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .resolve_group_ids(group_ids)
-                    .into_iter()
-                    .collect::<Vec<String>>();
-
-                recipients.extend(device_ids);
-            }
-        }
-
-        recipients.sort();
-        recipients.dedup();
-
-        if recipients.is_empty() {
-            return None;
-        }
-        return Some(recipients);
-    }
-
     async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
         let coord_guard = self.tx_coordinator.read();
         let tx = coord_guard
             .as_ref()
             .unwrap()
-            .get_transaction(tx_id)
+            .get_committed_transaction(tx_id)
             .unwrap();
-        for op in tx.ops.clone().into_iter() {
+        for (op, _) in tx.ops.clone().into_iter() {
             //call into data store to apply
             // TODO: handle errors
-            self.demux(tx_id.clone(), op);
+            self.demux(tx_id.clone(), op).await;
         }
+        println!("finished applying locally!");
         Ok(())
     }
 
     async fn initiate_transaction(
         &self,
         device_id: String,
-        ops: Vec<Operation>,
+        ops: Vec<(Operation, Vec<String>)>,
         prev_seq_number: SequenceNumber,
     ) {
         let recipients = self.collect_recipients(ops.clone());
@@ -1149,6 +924,7 @@ impl TankClient {
         }
     }
 
+    #[async_recursion]
     async fn demux(
         &self,
         seq: SequenceNumber,
@@ -1320,6 +1096,7 @@ impl TankClient {
                 Ok(())
             }
             Operation::TxStart(sender, tx) => {
+                println!("DEMUXING TxStart");
                 let res = self.tx_coordinator.write().as_mut().unwrap().start_message(
                     self.idkey(),
                     sender.clone(),
@@ -1328,10 +1105,15 @@ impl TankClient {
                 );
                 if res == Err(Error::TransactionConflictsError) {
                     self.send_abort_to_coordinator(sender, seq).await;
+                } else {
+                    if sender == self.idkey() {
+                        self.send_commit_as_coordinator(seq).await;
+                    }
                 }
                 Ok(())
             }
             Operation::TxCommit(sender, tx_id) => {
+                println!("DEMUXING TxCommit");
                 let resp = self
                     .tx_coordinator
                     .write()
@@ -1344,6 +1126,7 @@ impl TankClient {
                 Ok(())
             }
             Operation::TxAbort(sender, tx_id) => {
+                println!("DEMUXING TxAbort");
                 let resp = self.tx_coordinator.write().as_mut().unwrap().abort_message(
                     self.idkey(),
                     sender,
@@ -1945,8 +1728,9 @@ impl TankClient {
     pub async fn end_transaction(&self) {
         let (ops, prev_seq_number) =
             self.tx_coordinator.write().as_mut().unwrap().exit_tx();
-        println!("ops: {:?}", &ops);
+        println!("\nops: {:?}", &ops);
         println!("prev_seq_num: {}", &prev_seq_number);
+        println!("--");
         self.initiate_transaction(self.idkey(), ops, prev_seq_number)
             .await;
     }
@@ -1969,7 +1753,7 @@ impl TankClient {
                 .write()
                 .as_mut()
                 .unwrap()
-                .add_op_to_cur_tx(op.clone());
+                .add_op_to_cur_tx(op.clone(), dst_idkeys.clone());
             Ok(())
         } else {
             match self

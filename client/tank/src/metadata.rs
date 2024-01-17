@@ -651,8 +651,6 @@ impl MetadataStore {
         let mut resolved_ids = HashSet::<String>::new();
         let mut visited = HashSet::<&String>::new();
 
-        println!("resolve_group_ids - ids: {:?}", &ids);
-
         for id in ids {
             self.resolve_group_ids_helper(&mut resolved_ids, &mut visited, id);
         }
@@ -668,8 +666,6 @@ impl MetadataStore {
     ) {
         let mut to_visit = Vec::<&String>::new();
         to_visit.push(id);
-
-        println!("resolve_group_ids_helper - id: {}", &id);
 
         while !to_visit.is_empty() {
             let cur_id = to_visit.pop().unwrap();

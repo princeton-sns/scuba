@@ -798,6 +798,12 @@ impl CalendarApp {
         context.client.end_transaction().await;
         println!("ended first txn");
 
+        // temporary hack b/c cannot set and share data
+        // at the same time, and sharing expects that the
+        // data already exists, so must wait for set_data
+        // message to return from the server
+        std::thread::sleep(std::time::Duration::from_secs(3));
+
         res = context.client.start_transaction();
         if res.is_err() {
             return Ok(Some(String::from("Cannot start second transaction.")));
@@ -807,12 +813,6 @@ impl CalendarApp {
 
         // share appointment request with provider
         let vec = vec![provider_id];
-
-        // temporary hack b/c cannot set and share data
-        // at the same time, and sharing expects that the
-        // data already exists, so must wait for set_data
-        // message to return from the server
-        //std::thread::sleep(std::time::Duration::from_secs(1));
 
         res = context
             .client

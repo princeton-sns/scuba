@@ -163,7 +163,8 @@ impl Transaction {
             prepare_sequence_number: None,
             commit_sequence_number: None,
             prev_seq_number,
-            timeout: 400, // TODO: make this dynamic? system dependent?
+            // TODO: make this dynamic? system dependent?
+            timeout: 1000000000000000000000,
         }
     }
 
@@ -249,8 +250,6 @@ impl TxCoordinator {
         tx_id: SequenceNumber,
         unsequenced_tx: Transaction,
     ) -> Result<(), Error> {
-        println!("in start_message");
-        println!("tx_id: {}", &tx_id);
         let mut tx = unsequenced_tx.clone();
         tx.prepare_sequence_number = Some(tx_id);
 
@@ -277,26 +276,6 @@ impl TxCoordinator {
         seq: SequenceNumber, /*use seq number of commit message when
                               * committing */
     ) -> Result<(), Error> {
-        println!();
-        println!("tx_id: {}", tx_id);
-        println!("seq: {}", &seq);
-
-        if sender == my_device_id {
-            println!("I AM COORDINATOR");
-            for tx in self.local_pending_tx.iter() {
-                println!("self.local_pending_tx: {:?}", &tx);
-                println!("--");
-            }
-            println!();
-        } else {
-            println!("I AM -NOT- COORDINATOR");
-            for tx in self.remote_pending_tx.iter() {
-                println!("self.remote_pending_tx: {:?}", &tx);
-                println!("--");
-            }
-            println!();
-        }
-
         // committing a tx i coordinated
         if sender == my_device_id {
             let q = &mut self.local_pending_tx;
@@ -670,7 +649,6 @@ impl TankClient {
             // TODO: handle errors
             self.demux(tx_id.clone(), op).await;
         }
-        println!("finished applying locally!");
         Ok(())
     }
 
@@ -1728,9 +1706,6 @@ impl TankClient {
     pub async fn end_transaction(&self) {
         let (ops, prev_seq_number) =
             self.tx_coordinator.write().as_mut().unwrap().exit_tx();
-        println!("\nops: {:?}", &ops);
-        println!("prev_seq_num: {}", &prev_seq_number);
-        println!("--");
         self.initiate_transaction(self.idkey(), ops, prev_seq_number)
             .await;
     }

@@ -524,14 +524,14 @@ impl<C: CoreClient> Core<C> {
                     // No message to forward
                     Ok(None) => {}
                     // Forward message
-                    Ok(Some((seq, message))) => {
+                    Ok(Some(message)) => {
                         self.client
                             .read()
                             .await
                             .as_ref()
                             .unwrap()
                             .client_callback(
-                                seq as SequenceNumber,
+                                msg.seq_id as SequenceNumber,
                                 msg.sender.clone(),
                                 bincode::deserialize::<String>(&message).unwrap(),
                                 msg.bench,
@@ -546,7 +546,7 @@ impl<C: CoreClient> Core<C> {
                             .as_ref()
                             .unwrap()
                             .delete_messages_from_server(&ToDelete::from_seq_id(
-                                seq.try_into().unwrap(),
+                                msg.seq_id,
                             ))
                             .await
                         {

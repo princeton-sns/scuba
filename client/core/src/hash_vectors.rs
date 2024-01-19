@@ -228,7 +228,7 @@ impl HashVectors {
         sender: &DeviceId,
         common_payload: CommonPayload,
         recipient_payload: &ValidationPayload,
-    ) -> Result<Option<(usize, Vec<u8>)>, Error> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         // Recipients list is sorted sending-side
         if !common_payload.recipients.iter().is_sorted() {
             return Err(Error::InvalidRecipientsOrder);
@@ -260,7 +260,7 @@ impl HashVectors {
                     return Ok(None);
                 }
 
-                return Ok(Some((local_seq, common_payload.message)));
+                return Ok(Some(common_payload.message));
             }
             Err(err) => return Err(err),
         }

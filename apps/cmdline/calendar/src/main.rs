@@ -802,7 +802,7 @@ impl CalendarApp {
         // at the same time, and sharing expects that the
         // data already exists, so must wait for set_data
         // message to return from the server
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(1));
 
         res = context.client.start_transaction();
         if res.is_err() {

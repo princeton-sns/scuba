@@ -209,10 +209,8 @@ impl CalendarApp {
     pub async fn new() -> CalendarApp {
         let client = TankClient::new(
             None, None, false, None, None,
-            // serializability
-            true, false, true, true,
-            // benchmarking args
-            None, None, None, None, None, None, None, None, None,
+            true, false, true, true, // serializability
+            None, None, None, None, None, None, None, None, None, // benchmarking args
         )
         .await;
         Self { client }
@@ -752,14 +750,20 @@ impl CalendarApp {
         let date_str = args.get_one::<String>("date").unwrap();
         let date_res = NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
         if date_res.is_err() {
-            return Ok(Some(String::from(format!("Error parsing date: {}", date_res.err().unwrap().to_string()))));
+            return Ok(Some(String::from(format!(
+                "Error parsing date: {}",
+                date_res.err().unwrap().to_string()
+            ))));
         }
 
         // parse time
         let time_str = args.get_one::<String>("time").unwrap();
         let time_res = NaiveTime::parse_from_str(time_str, "%H:%M:%S");
         if time_res.is_err() {
-            return Ok(Some(String::from(format!("Error parsing time: {}", time_res.err().unwrap().to_string()))));
+            return Ok(Some(String::from(format!(
+                "Error parsing time: {}",
+                time_res.err().unwrap().to_string()
+            ))));
         }
 
         let mut res = context.client.start_transaction();
@@ -769,7 +773,8 @@ impl CalendarApp {
 
         println!("started first txn");
 
-        let appt = AppointmentInfo::new(date_res.unwrap(), time_res.unwrap(), notes.cloned());
+        let appt =
+            AppointmentInfo::new(date_res.unwrap(), time_res.unwrap(), notes.cloned());
         let id = Self::new_prefixed_id(&APPT_PREFIX.to_string());
         let json_string = serde_json::to_string(&appt).unwrap();
         println!("queued create appt");
@@ -814,10 +819,7 @@ impl CalendarApp {
         // share appointment request with provider
         let vec = vec![provider_id];
 
-        res = context
-            .client
-            .add_writers(id.clone(), vec.clone())
-            .await;
+        res = context.client.add_writers(id.clone(), vec.clone()).await;
         if res.is_err() {
             println!("sharing ERROR: {}", res.as_ref().err().unwrap().to_string());
             context.client.end_transaction().await;
@@ -873,7 +875,8 @@ impl CalendarApp {
 
         // update pending field on appointment
         let mut appt: AppointmentInfo =
-            serde_json::from_str(res.as_ref().unwrap().as_ref().unwrap().data_val()).unwrap();
+            serde_json::from_str(res.as_ref().unwrap().as_ref().unwrap().data_val())
+                .unwrap();
 
         // TODO check that appointment doesn't conflict with any existing busy slots
 
@@ -934,8 +937,7 @@ impl CalendarApp {
 
             // add busy slot
             let mut avail: Availability =
-                serde_json::from_str(res.unwrap().unwrap().data_val())
-                    .unwrap();
+                serde_json::from_str(res.unwrap().unwrap().data_val()).unwrap();
             avail.add_busy_slot(datetime, DEFAULT_DUR);
             let json_avail = serde_json::to_string(&avail).unwrap();
 
@@ -969,9 +971,7 @@ impl CalendarApp {
             }
         } else {
             context.client.end_transaction().await;
-            return Ok(Some(String::from(
-                "No provider role initialized.",
-            )));
+            return Ok(Some(String::from("No provider role initialized.")));
         }
     }
 

@@ -135,8 +135,7 @@ impl<C: CoreClient> ServerCommImpl<C> {
                             core.server_comm_callback(Err(err)).await;
                         }
                     }
-                    Ok(None) => {
-                    }
+                    Ok(None) => {}
                     Ok(Some(event)) => {
                         match event {
                             SSE::Comment(_) => {}

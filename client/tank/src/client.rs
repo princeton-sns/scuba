@@ -1,4 +1,5 @@
 use async_condvar_fair::Condvar;
+use async_recursion::async_recursion;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{thread, time};
 use thiserror::Error;
-use async_recursion::async_recursion;
 
 use scuba_core::core::{Core, CoreClient, SequenceNumber};
 
@@ -234,7 +234,10 @@ impl TxCoordinator {
         return Err(Error::TxNotFound);
     }
 
-    fn get_committed_transaction(&self, tx_id: SequenceNumber) -> Result<&Transaction, Error> {
+    fn get_committed_transaction(
+        &self,
+        tx_id: SequenceNumber,
+    ) -> Result<&Transaction, Error> {
         for ((start_seq, _), tx) in self.committed_tx.iter() {
             if *start_seq == tx_id {
                 return Ok(&tx);

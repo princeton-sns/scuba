@@ -849,135 +849,129 @@ impl CalendarApp {
             )));
         }
 
-        let mut res = context.client.start_transaction();
-        if res.is_err() {
+        let id = args.get_one::<String>("id").unwrap().to_string();
+
+        let mut empty_res = context.client.start_transaction();
+        if empty_res.is_err() {
             return Ok(Some(String::from("Cannot start transaction.")));
         }
 
-        let id = args.get_one::<String>("id").unwrap().to_string();
-        match context.client.get_data(&id).await {
-            Ok(Some(appt_obj)) => {
-                // update pending field on appointment
-                let mut appt: AppointmentInfo =
-                    serde_json::from_str(appt_obj.data_val()).unwrap();
+        let mut res = context.client.get_data(&id).await;
+        if res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Error getting appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        } else if res.as_ref().unwrap().is_none() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Appointment with id {} does not exist.",
+                id,
+            ))));
+        }
 
-                // TODO check that appointment doesn't conflict with any
-                // existing busy slots
+        // update pending field on appointment
+        let mut appt: AppointmentInfo =
+            serde_json::from_str(res.as_ref().unwrap().as_ref().unwrap().data_val()).unwrap();
 
-                appt.pending = false;
-                let json_string = serde_json::to_string(&appt).unwrap();
+        // TODO check that appointment doesn't conflict with any existing busy slots
 
-                // confirm appointment
-                let mut res = context
-                    .client
-                    .set_data(
-                        id.clone(),
-                        APPT_PREFIX.to_owned(),
-                        json_string,
-                        None,
-                        None,
-                        false,
-                    )
-                    .await;
-                if res.is_err() {
+        appt.pending = false;
+        let json_string = serde_json::to_string(&appt).unwrap();
+
+        // confirm appointment
+        empty_res = context
+            .client
+            .set_data(
+                id.clone(),
+                APPT_PREFIX.to_owned(),
+                json_string,
+                None,
+                None,
+                false,
+            )
+            .await;
+        if empty_res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Could not update appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        }
+
+        // update availability
+        let datetime = NaiveDateTime::new(appt.date, appt.time);
+
+        res = context.client.get_data(&ROLES_PREFIX.to_owned()).await;
+        if res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Error getting roles: {}",
+                res.err().unwrap().to_string()
+            ))));
+        } else if res.as_ref().unwrap().is_none() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from("Roles do not exist.")));
+        }
+
+        // get availability id
+        let mut roles: Roles =
+            serde_json::from_str(res.unwrap().unwrap().data_val()).unwrap();
+
+        if let Some(provider_role) = roles.provider {
+            let mut res = context
+                .client
+                .get_data(&provider_role.availability_id)
+                .await;
+            if res.is_err() {
+                context.client.end_transaction().await;
+                return Ok(Some(String::from(format!(
+                    "Error getting availability: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
+
+            // add busy slot
+            let mut avail: Availability =
+                serde_json::from_str(res.unwrap().unwrap().data_val())
+                    .unwrap();
+            avail.add_busy_slot(datetime, DEFAULT_DUR);
+            let json_avail = serde_json::to_string(&avail).unwrap();
+
+            // set new avail obj
+            match context
+                .client
+                .set_data(
+                    provider_role.availability_id,
+                    AVAIL_PREFIX.to_string(),
+                    json_avail,
+                    None,
+                    None,
+                    false,
+                )
+                .await
+            {
+                Ok(_) => {
                     context.client.end_transaction().await;
-                    return Ok(Some(String::from(format!(
-                        "Could not update appointment: {}",
-                        res.err().unwrap().to_string()
-                    ))));
+                    Ok(Some(String::from(format!(
+                        "Confirmed appointment with id {}",
+                        id
+                    ))))
                 }
-
-                // update availability
-                let datetime = NaiveDateTime::new(appt.date, appt.time);
-
-                match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
-                    Ok(Some(roles_obj)) => {
-                        // get availability id
-                        let mut roles: Roles =
-                            serde_json::from_str(roles_obj.data_val()).unwrap();
-
-                        if let Some(provider_role) = roles.provider {
-                            let mut res = context
-                                .client
-                                .get_data(&provider_role.availability_id)
-                                .await;
-                            if res.is_err() {
-                                context.client.end_transaction().await;
-                                return Ok(Some(String::from(format!(
-                                    "Error getting availability: {}",
-                                    res.err().unwrap().to_string()
-                                ))));
-                            }
-
-                            // add busy slot
-                            let mut avail: Availability =
-                                serde_json::from_str(res.unwrap().unwrap().data_val())
-                                    .unwrap();
-                            avail.add_busy_slot(datetime, DEFAULT_DUR);
-                            let json_avail = serde_json::to_string(&avail).unwrap();
-
-                            // set new avail obj
-                            match context
-                                .client
-                                .set_data(
-                                    provider_role.availability_id,
-                                    AVAIL_PREFIX.to_string(),
-                                    json_avail,
-                                    None,
-                                    None,
-                                    false,
-                                )
-                                .await
-                            {
-                                Ok(_) => {
-                                    context.client.end_transaction().await;
-                                    Ok(Some(String::from(format!(
-                                        "Confirmed appointment with id {}",
-                                        id
-                                    ))))
-                                }
-                                Err(err) => {
-                                    context.client.end_transaction().await;
-                                    Ok(Some(String::from(format!(
-                                        "Could not modify availability: {}",
-                                        err
-                                    ))))
-                                }
-                            }
-                        } else {
-                            context.client.end_transaction().await;
-                            return Ok(Some(String::from(
-                                "No provider role initialized.",
-                            )));
-                        }
-                    }
-                    Ok(None) => {
-                        context.client.end_transaction().await;
-                        Ok(Some(String::from("Roles do not exist.")))
-                    }
-                    Err(err) => {
-                        context.client.end_transaction().await;
-                        Ok(Some(String::from(format!(
-                            "Error getting roles: {}",
-                            err.to_string()
-                        ))))
-                    }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not modify availability: {}",
+                        err
+                    ))))
                 }
             }
-            Ok(None) => {
-                context.client.end_transaction().await;
-                Ok(Some(String::from(format!(
-                    "Appointment with id {} does not exist.",
-                    id,
-                ))))
-            }
-            Err(err) => {
-                context.client.end_transaction().await;
-                Ok(Some(String::from(format!(
-                    "Error getting appointment: {}",
-                    err.to_string()
-                ))))
-            }
+        } else {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(
+                "No provider role initialized.",
+            )));
         }
     }
 

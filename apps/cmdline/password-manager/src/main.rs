@@ -122,9 +122,9 @@ struct PasswordManager {
 impl PasswordManager {
     pub async fn new() -> PasswordManager {
         let client = TankClient::new(
-            None, None, false, None, None, // linearizability
-            true, true, false, false, // benchmark args
-            None, None, None, None, None, None, None, None, None,
+            None, None, false, None, None,
+            true, true, false, false, // linearizability
+            None, None, None, None, None, None, None, None, None, // benchmark args
         )
         .await;
         Self { client }

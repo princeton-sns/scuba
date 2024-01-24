@@ -1,4 +1,5 @@
 use async_condvar_fair::Condvar;
+use async_recursion::async_recursion;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,10 @@ use crate::metadata::{Group, PermType, PermissionSet};
  * - [x] get_all_perms()
  * - [x] get_group()
  * - [x] get_all_groups()
+ *
+ * TODO should Operations should be extended to include Get* calls for strict
+ * serializability? Otherwise, read-only transactions will not be sent to the
+ * server for ordering, which violates strict serializability
  */
 
 #[derive(Debug, PartialEq, Error)]
@@ -140,7 +145,7 @@ struct Transaction {
     coordinator: String,
     recipients: Vec<String>,
     num_recipients: Option<usize>,
-    ops: Vec<Operation>,
+    ops: Vec<(Operation, Vec<String>)>,
     prepare_sequence_number: Option<SequenceNumber>,
     commit_sequence_number: Option<SequenceNumber>,
     prev_seq_number: SequenceNumber,
@@ -151,7 +156,7 @@ impl Transaction {
     fn new(
         device_id: String,
         recipients: Vec<String>,
-        ops: Vec<Operation>,
+        ops: Vec<(Operation, Vec<String>)>,
         prev_seq_number: SequenceNumber,
     ) -> Transaction {
         Transaction {
@@ -162,7 +167,8 @@ impl Transaction {
             prepare_sequence_number: None,
             commit_sequence_number: None,
             prev_seq_number,
-            timeout: 400, // TODO: make this dynamic? system dependent?
+            // TODO: make this dynamic? system dependent?
+            timeout: 100000000000000000000000,
         }
     }
 
@@ -180,10 +186,9 @@ pub struct TxCoordinator {
     local_pending_tx: HashMap<SequenceNumber, (Vec<String>, Transaction)>,
     remote_pending_tx: HashMap<SequenceNumber, Transaction>,
     committed_tx: Vec<((SequenceNumber, SequenceNumber), Transaction)>,
-
-    tx_state: bool,
     /* true if currently within transaction */
-    temp_tx_ops: Vec<Operation>,
+    tx_state: bool,
+    temp_tx_ops: Vec<(Operation, Vec<String>)>,
 }
 
 // TODO: trim committed histories
@@ -213,15 +218,15 @@ impl TxCoordinator {
         return self.tx_state;
     }
 
-    fn exit_tx(&mut self) -> (Vec<Operation>, SequenceNumber) {
+    fn exit_tx(&mut self) -> (Vec<(Operation, Vec<String>)>, SequenceNumber) {
         let ops = self.temp_tx_ops.clone();
         self.temp_tx_ops = Vec::new();
         self.tx_state = false;
         return (ops, self.seq_number);
     }
 
-    fn add_op_to_cur_tx(&mut self, msg: Operation) {
-        self.temp_tx_ops.push(msg);
+    fn add_op_to_cur_tx(&mut self, msg: Operation, dst_idkeys: Vec<String>) {
+        self.temp_tx_ops.push((msg, dst_idkeys));
     }
 
     fn get_transaction(&self, tx_id: SequenceNumber) -> Result<&Transaction, Error> {
@@ -229,6 +234,18 @@ impl TxCoordinator {
             return Ok(&self.local_pending_tx.get(&tx_id).unwrap().1);
         } else if self.remote_pending_tx.contains_key(&tx_id) {
             return Ok(&self.remote_pending_tx.get(&tx_id).unwrap());
+        }
+        return Err(Error::TxNotFound);
+    }
+
+    fn get_committed_transaction(
+        &self,
+        tx_id: SequenceNumber,
+    ) -> Result<&Transaction, Error> {
+        for ((start_seq, _), tx) in self.committed_tx.iter() {
+            if *start_seq == tx_id {
+                return Ok(&tx);
+            }
         }
         return Err(Error::TxNotFound);
     }
@@ -263,7 +280,7 @@ impl TxCoordinator {
         my_device_id: String,
         sender: String,
         tx_id: &SequenceNumber,
-        seq: SequenceNumber, /*use seq number of commit message when
+        seq: SequenceNumber, /* use seq number of commit message when
                               * committing */
     ) -> Result<(), Error> {
         // committing a tx i coordinated
@@ -273,6 +290,12 @@ impl TxCoordinator {
             tx.commit_sequence_number = Some(seq);
             q.remove(tx_id);
             if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
+                println!("TIMEOUT (coord = self)");
+                println!("cur_seq: {}", &seq);
+                println!("prep_seq: {}", &tx.prepare_sequence_number.unwrap_or_default());
+                println!("to_offset: {}", &tx.timeout);
+                println!("to_seq: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout);
+                println!("diff: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout - seq);
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -282,6 +305,12 @@ impl TxCoordinator {
             let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
             tx.commit_sequence_number = Some(seq);
             if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
+                println!("TIMEOUT (coord = other)");
+                println!("cur_seq: {}", &seq);
+                println!("prep_seq: {}", &tx.prepare_sequence_number.unwrap_or_default());
+                println!("to_offset: {}", &tx.timeout);
+                println!("to_seq: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout);
+                println!("diff: {}", tx.prepare_sequence_number.unwrap_or_default() - seq + tx.timeout);
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -326,13 +355,13 @@ impl TxCoordinator {
     fn detect_conflict(&self, msg: &Transaction) -> bool {
         let mut tx_keys = Vec::new();
 
-        for op in msg.ops.clone().into_iter() {
+        for (op, _) in msg.ops.clone().into_iter() {
             tx_keys.push(Operation::get_data_id(&op));
         }
 
         //impl for all enums -> move to func over two txs
         for tx in self.local_pending_tx.clone().into_iter() {
-            for op in tx.1 .1.ops.clone().into_iter() {
+            for (op, _) in tx.1 .1.ops.clone().into_iter() {
                 let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
@@ -341,7 +370,7 @@ impl TxCoordinator {
         }
 
         for tx in self.remote_pending_tx.clone().into_iter() {
-            for op in tx.1.ops.clone().into_iter() {
+            for (op, _) in tx.1.ops.clone().into_iter() {
                 let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
@@ -353,7 +382,7 @@ impl TxCoordinator {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
             if tx.1.prepare_sequence_number.unwrap() > msg.prev_seq_number {
-                for op in tx.1.ops.clone().into_iter() {
+                for (op, _) in tx.1.ops.clone().into_iter() {
                     let data_id = Operation::get_data_id(&op);
                     if tx_keys.contains(&data_id) {
                         return true;
@@ -523,6 +552,7 @@ impl TankClient {
         turn_encryption_off: bool,
         test_wait_num_callbacks: Option<u64>,
         sec_wait_to_apply: Option<u64>,
+        // consistency args
         block_writes: bool,
         sync_reads: bool,
         mult_outstanding: bool,
@@ -612,49 +642,13 @@ impl TankClient {
 
     /* Transactions */
 
-    fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
+    fn collect_recipients(&self, msg: Vec<(Operation, Vec<String>)>) -> Vec<String> {
         let mut recipients = Vec::new();
-        for op in msg {
-            // FIXME support more than just UpdateData operation types in
-            // transactions
-            if let Operation::UpdateData(_, data) = op {
-                let mut group_ids = Vec::<&String>::new();
-                let perm = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .get_perm(data.perm_id())
-                    .unwrap()
-                    .clone();
-                match perm.owners() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-                match perm.writers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-                match perm.readers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
 
-                let device_ids = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .resolve_group_ids(group_ids)
-                    .into_iter()
-                    .collect::<Vec<String>>();
-
-                recipients.extend(device_ids);
-            }
+        // FIXME break up among "shards", e.g. every operation should
+        // have it's own set of recipients
+        for (_, dst_idkeys) in msg {
+            recipients.extend(dst_idkeys);
         }
 
         recipients.sort();
@@ -663,63 +657,17 @@ impl TankClient {
         return recipients;
     }
 
-    fn collect_do_reader_recipients(&self, msg: Vec<Operation>) -> Option<Vec<String>> {
-        let mut recipients = Vec::new();
-        for op in msg {
-            // FIXME support more than just UpdateData operation types in
-            // transactions
-            if let Operation::UpdateData(_, data) = op {
-                let mut group_ids = Vec::<&String>::new();
-                let perm = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .get_perm(data.perm_id())
-                    .unwrap()
-                    .clone();
-                match perm.do_readers() {
-                    Some(group_id) => group_ids.push(group_id),
-                    None => {}
-                }
-
-                let device_ids = self
-                    .device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .meta_store
-                    .read()
-                    .resolve_group_ids(group_ids)
-                    .into_iter()
-                    .collect::<Vec<String>>();
-
-                recipients.extend(device_ids);
-            }
-        }
-
-        recipients.sort();
-        recipients.dedup();
-
-        if recipients.is_empty() {
-            return None;
-        }
-        return Some(recipients);
-    }
-
     async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
         let coord_guard = self.tx_coordinator.read();
         let tx = coord_guard
             .as_ref()
             .unwrap()
-            .get_transaction(tx_id)
+            .get_committed_transaction(tx_id)
             .unwrap();
-        for op in tx.ops.clone().into_iter() {
+        for (op, _) in tx.ops.clone().into_iter() {
             //call into data store to apply
             // TODO: handle errors
-            self.demux(tx_id.clone(), op);
+            self.demux(tx_id.clone(), op).await;
         }
         Ok(())
     }
@@ -727,7 +675,7 @@ impl TankClient {
     async fn initiate_transaction(
         &self,
         device_id: String,
-        ops: Vec<Operation>,
+        ops: Vec<(Operation, Vec<String>)>,
         prev_seq_number: SequenceNumber,
     ) {
         let recipients = self.collect_recipients(ops.clone());
@@ -974,6 +922,7 @@ impl TankClient {
         }
     }
 
+    #[async_recursion]
     async fn demux(
         &self,
         seq: SequenceNumber,
@@ -1153,6 +1102,10 @@ impl TankClient {
                 );
                 if res == Err(Error::TransactionConflictsError) {
                     self.send_abort_to_coordinator(sender, seq).await;
+                } else {
+                    if sender == self.idkey() {
+                        self.send_commit_as_coordinator(seq).await;
+                    }
                 }
                 Ok(())
             }
@@ -1202,12 +1155,14 @@ impl TankClient {
 
     // Doesn't make sense to sync this read, since the idkey is needed to send
     // the sync message anyway
+    // TODO but maybe sync anyway
     pub fn idkey(&self) -> String {
         self.core.as_ref().unwrap().idkey()
     }
 
     // Also doesn't make sense to sync this read, since there's no way to
     // change this after a device is initialized (at the moment)
+    // TODO but maybe sync anyway
     pub fn linked_name(&self) -> String {
         self.device
             .read()
@@ -1246,9 +1201,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1301,9 +1256,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1353,14 +1308,13 @@ impl TankClient {
             .get_all_subgroups(&linked_name);
 
         match self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![idkey],
-                &Operation::to_string(&Operation::UpdateLinked(
+                &Operation::UpdateLinked(
                     self.core.as_ref().unwrap().idkey(),
                     linked_name,
                     linked_members_to_add,
-                ))
-                .unwrap(),
+                ),
                 false,
             )
             .await
@@ -1392,6 +1346,7 @@ impl TankClient {
             .to_string();
 
         // send all groups and to new members
+        // FIXME send_or_add_to_txn?
         match self
             .send_message(
                 vec![sender],
@@ -1450,6 +1405,7 @@ impl TankClient {
 
         /////////
 
+        // FIXME send_or_add_to_txn?
         let res = self
             .send_message(
                 vec![self.idkey()],
@@ -1508,9 +1464,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1567,14 +1523,13 @@ impl TankClient {
             .get_all_subgroups(&linked_name);
 
         match self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![contact_idkey],
-                &Operation::to_string(&Operation::AddContact(
+                &Operation::AddContact(
                     self.core.as_ref().unwrap().idkey(),
                     linked_name,
                     linked_device_groups,
-                ))
-                .unwrap(),
+                ),
                 false,
             )
             .await
@@ -1615,6 +1570,7 @@ impl TankClient {
             .read()
             .get_all_subgroups(&linked_name);
 
+        // FIXME send_or_add_to_txn
         match self
             .send_message(
                 vec![sender],
@@ -1792,7 +1748,7 @@ impl TankClient {
                 .write()
                 .as_mut()
                 .unwrap()
-                .add_op_to_cur_tx(op.clone());
+                .add_op_to_cur_tx(op.clone(), dst_idkeys.clone());
             Ok(())
         } else {
             match self
@@ -1830,9 +1786,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1886,9 +1842,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1946,9 +1902,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2002,9 +1958,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2062,9 +2018,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2118,9 +2074,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2395,9 +2351,9 @@ impl TankClient {
         }
         // FIXME better way to do this
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 bench,
             )
             .await;
@@ -2490,24 +2446,6 @@ impl TankClient {
         data_id: String,
         do_readers: Vec<&String>,
     ) -> Result<(), Error> {
-        // check if can have multiple outstanding ops, or if not, check that
-        // no other ops are outstanding
-        let op_id;
-        loop {
-            let mut op_id_ctr = self.op_id_ctr.lock();
-            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
-                // release the lock
-                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
-            } else {
-                // get op_id and inc id ctr
-                op_id = op_id_ctr.0;
-                op_id_ctr.0 += 1;
-                // add op into hashset
-                op_id_ctr.1.insert(op_id);
-                break;
-            }
-        }
-
         self.add_permissions(
             data_id,
             PermType::DOReaders(
@@ -2518,7 +2456,6 @@ impl TankClient {
                     .collect::<Vec<String>>(),
             ),
             do_readers,
-            op_id,
         )
         .await
     }
@@ -2528,24 +2465,6 @@ impl TankClient {
         data_id: String,
         readers: Vec<&String>,
     ) -> Result<(), Error> {
-        // check if can have multiple outstanding ops, or if not, check that
-        // no other ops are outstanding
-        let op_id;
-        loop {
-            let mut op_id_ctr = self.op_id_ctr.lock();
-            if !self.mult_outstanding && op_id_ctr.1.len() != 0 {
-                // release the lock
-                let _ = self.op_id_ctr_cv.wait(op_id_ctr).await;
-            } else {
-                // get op_id and inc id ctr
-                op_id = op_id_ctr.0;
-                op_id_ctr.0 += 1;
-                // add op into hashset
-                op_id_ctr.1.insert(op_id);
-                break;
-            }
-        }
-
         self.add_permissions(
             data_id,
             PermType::Readers(
@@ -2556,7 +2475,6 @@ impl TankClient {
                     .collect::<Vec<String>>(),
             ),
             readers,
-            op_id,
         )
         .await
     }
@@ -2565,6 +2483,26 @@ impl TankClient {
         &self,
         data_id: String,
         writers: Vec<&String>,
+    ) -> Result<(), Error> {
+        self.add_permissions(
+            data_id,
+            PermType::Writers(
+                writers
+                    .clone()
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>(),
+            ),
+            writers,
+        )
+        .await
+    }
+
+    pub async fn add_permissions(
+        &self,
+        data_id: String,
+        new_members: PermType,
+        mut new_members_refs: Vec<&String>, // FIXME one or the other
     ) -> Result<(), Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
@@ -2584,28 +2522,6 @@ impl TankClient {
             }
         }
 
-        self.add_permissions(
-            data_id,
-            PermType::Writers(
-                writers
-                    .clone()
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<String>>(),
-            ),
-            writers,
-            op_id,
-        )
-        .await
-    }
-
-    pub async fn add_permissions(
-        &self,
-        data_id: String,
-        new_members: PermType,
-        mut new_members_refs: Vec<&String>, // FIXME one or the other
-        op_id: u64,
-    ) -> Result<(), Error> {
         let device_guard = self.device.read();
         let mut data_store_guard = device_guard.as_ref().unwrap().data_store.read();
 

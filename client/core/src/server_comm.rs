@@ -28,11 +28,11 @@ pub use scuba_server_lib::shard::client_protocol::{
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToDelete {
-    seq_id: u64,
+    seq_id: u128,
 }
 
 impl ToDelete {
-    pub fn from_seq_id(seq_id: u64) -> Self {
+    pub fn from_seq_id(seq_id: u128) -> Self {
         Self { seq_id }
     }
 }
@@ -129,55 +129,35 @@ impl<C: CoreClient> ServerCommImpl<C> {
 
             let mut next_epoch = 0;
             loop {
-                //println!("IN LOOP");
                 match listener.as_mut().try_next().await {
                     Err(err) => {
-                        //println!("got ERR from server: {:?}", err);
                         if let Some(ref core) = core_option {
                             core.server_comm_callback(Err(err)).await;
                         }
                     }
-                    Ok(None) => {
-                        //println!("got NONE from server")
-                    }
+                    Ok(None) => {}
                     Ok(Some(event)) => {
                         match event {
                             SSE::Comment(_) => {}
                             SSE::Event(event) => {
                                 match event.event_type.as_str() {
                                     "otkey" => {
-                                        //        println!(
-                                        //   "got OTKEY event from server -
-                                        // {:?}",
-                                        //   task_idkey
-                                        //);
                                         if let Some(ref core) = core_option {
                                             core.server_comm_callback(Ok(Event::Otkey))
                                                 .await;
                                         }
                                     }
-                                    "msg" => {
-                                        //println!("got MSG event from
-                                        // server");
-                                        if let Some(ref core) = core_option {
-                                            core.server_comm_callback(Ok(Event::Msg(
-                                                serde_json::from_str(event.data.as_str())
-                                                    .unwrap(),
-                                            )))
-                                            .await;
-                                        }
-                                    }
                                     "epoch_message_batch" => {
-                                        // println!("got EpochMessageBatch event
-                                        // from server");
                                         if let Some(ref core) = core_option {
                                             let emb: MessageBatch =
                                                 serde_json::from_str(&event.data)
                                                     .unwrap();
                                             // TODO: handle lost epochs
-                                            //println!("MessageBatch for epochs
-                                            // {} to {}", emb.start_epoch_id,
-                                            // emb.end_epoch_id);
+                                            //println!(
+                                            //    "MessageBatch for epochs {} to {}",
+                                            //    emb.start_epoch_id,
+                                            //    emb.end_epoch_id
+                                            //);
 
                                             let attestation = Attestation::from_bytes(
                                                 &emb.attestation,

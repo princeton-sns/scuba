@@ -18,7 +18,7 @@ use uuid::Uuid;
  *     confirm + update their own availability
  *   - [ ] patient requests a prioritized list of appointment times which the provider
  *     can automatically confirm/deny based on the highest-pri slot that is available
- *   - [ ] provider puts the appointment confirmation and availability update in a
+ *   - [ ] provider executes the appointment confirmation and availability update in a
  *     transaction (serializability)
  * - [x] providers share their availability with all patients
  * - [x] appointments are private to provider and the patient whom the appointment is
@@ -38,6 +38,7 @@ use uuid::Uuid;
 // or
 // #[serde(skip_serializing_if = "path")] on all fields (still cumbersome),
 // calling simple function w bool if only want struct name
+// TODO remove roles and just have patient/provider objects
 const ROLES_PREFIX: &str = "roles";
 const APPT_PREFIX: &str = "appointment";
 const AVAIL_PREFIX: &str = "availability";
@@ -207,9 +208,9 @@ struct CalendarApp {
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
         let client = TankClient::new(
-            None, None, false, None, None, // serializability
-            true, false, true, true, // benchmarking args
-            None, None, None, None, None, None, None, None, None,
+            None, None, false, None, None,
+            false, false, true, true, // serializability
+            None, None, None, None, None, None, None, None, None, // benchmarking args
         )
         .await;
         Self { client }
@@ -242,6 +243,11 @@ impl CalendarApp {
     }
 
     pub async fn init_new_device(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         context.client.create_standalone_device().await;
 
         let roles_id = ROLES_PREFIX.to_owned();
@@ -260,11 +266,17 @@ impl CalendarApp {
             )
             .await
         {
-            Ok(_) => Ok(Some(String::from("Standalone device created."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not create device: {}",
-                err.to_string()
-            )))),
+            Ok(_) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Standalone device created.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Could not create device: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
@@ -272,45 +284,68 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         match context
             .client
             .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
-            Ok(_) => Ok(Some(String::from("Linked device created!"))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not create linked device: {}",
-                err.to_string()
-            )))),
+            Ok(_) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Linked device created!")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Could not create linked device: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
-    pub fn get_name(
-        _args: ArgMatches,
+    pub async fn get_name(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
         }
 
+        context.client.end_transaction().await;
         Ok(Some(String::from(format!(
             "Name: {}",
             context.client.linked_name()
         ))))
     }
 
-    pub fn get_idkey(
-        _args: ArgMatches,
+    pub async fn get_idkey(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
         }
 
+        context.client.end_transaction().await;
         Ok(Some(String::from(format!(
             "Idkey: {}",
             context.client.idkey()
@@ -320,13 +355,20 @@ impl CalendarApp {
     pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
         }
 
         let linked_devices = context.client.get_linked_devices().await.unwrap();
+        context.client.end_transaction().await;
         Ok(Some(itertools::join(linked_devices, "\n")))
     }
 
@@ -336,7 +378,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -346,14 +394,20 @@ impl CalendarApp {
 
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
         match context.client.add_contact(idkey.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Patient with idkey <{}> added",
-                idkey
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not add patient: {}",
-                err.to_string()
-            )))),
+            Ok(_) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Patient with idkey <{}> added",
+                    idkey
+                ))))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Could not add patient: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
@@ -362,7 +416,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -381,24 +441,37 @@ impl CalendarApp {
                         .add_do_readers(provider_role.availability_id, vec)
                         .await
                     {
-                        Ok(_) => Ok(Some(String::from(format!(
-                            "Availability shared with patient {}",
-                            patient
-                        )))),
-                        Err(err) => Ok(Some(String::from(format!(
-                            "Could not share availability: {}",
-                            err.to_string()
-                        )))),
+                        Ok(_) => {
+                            context.client.end_transaction().await;
+                            Ok(Some(String::from(format!(
+                                "Availability shared with patient {}",
+                                patient
+                            ))))
+                        }
+                        Err(err) => {
+                            context.client.end_transaction().await;
+                            Ok(Some(String::from(format!(
+                                "Could not share availability: {}",
+                                err.to_string()
+                            ))))
+                        }
                     }
                 } else {
+                    context.client.end_transaction().await;
                     return Ok(Some(String::from("No provider role initialized.")));
                 }
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
@@ -406,7 +479,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -414,18 +493,28 @@ impl CalendarApp {
 
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_data(id).await {
-                Ok(Some(data)) => Ok(Some(String::from(format!("{}", data)))),
-                Ok(None) => Ok(Some(String::from(format!(
-                    "Data with id {} does not exist",
-                    id
-                )))),
-                Err(err) => Ok(Some(String::from(format!(
-                    "Could not get data: {}",
-                    err.to_string()
-                )))),
+                Ok(Some(data)) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!("{}", data))))
+                }
+                Ok(None) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Data with id {} does not exist",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not get data: {}",
+                        err.to_string()
+                    ))))
+                }
             }
         } else {
             let data = context.client.get_all_data().await.unwrap();
+            context.client.end_transaction().await;
             Ok(Some(itertools::join(data, "\n")))
         }
     }
@@ -434,7 +523,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -442,18 +537,28 @@ impl CalendarApp {
 
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_perm(id).await {
-                Ok(Some(perm)) => Ok(Some(String::from(format!("{}", perm)))),
-                Ok(None) => Ok(Some(String::from(format!(
-                    "Perm with id {} does not exist",
-                    id
-                )))),
-                Err(err) => Ok(Some(String::from(format!(
-                    "Could not get perm: {}",
-                    err.to_string()
-                )))),
+                Ok(Some(perm)) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!("{}", perm))))
+                }
+                Ok(None) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Perm with id {} does not exist",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not get perm: {}",
+                        err.to_string()
+                    ))))
+                }
             }
         } else {
             let perms = context.client.get_all_perms().await.unwrap();
+            context.client.end_transaction().await;
             Ok(Some(itertools::join(perms, "\n")))
         }
     }
@@ -462,7 +567,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -470,24 +581,40 @@ impl CalendarApp {
 
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_group(id).await {
-                Ok(Some(group)) => Ok(Some(String::from(format!("{}", group)))),
-                Ok(None) => Ok(Some(String::from(format!(
-                    "Group with id {} does not exist",
-                    id
-                )))),
-                Err(err) => Ok(Some(String::from(format!(
-                    "Could not get group: {}",
-                    err.to_string()
-                )))),
+                Ok(Some(group)) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!("{}", group))))
+                }
+                Ok(None) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Group with id {} does not exist",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not get group: {}",
+                        err.to_string()
+                    ))))
+                }
             }
         } else {
             let groups = context.client.get_all_groups().await.unwrap();
+            context.client.end_transaction().await;
             Ok(Some(itertools::join(groups, "\n")))
         }
     }
 
     pub async fn get_roles(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -497,20 +624,33 @@ impl CalendarApp {
             Ok(Some(roles_obj)) => {
                 let mut roles: Roles =
                     serde_json::from_str(roles_obj.data_val()).unwrap();
+                context.client.end_transaction().await;
                 Ok(Some(String::from(format!("{:?}", roles))))
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
     pub async fn init_provider_role(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -541,6 +681,7 @@ impl CalendarApp {
                     )
                     .await;
                 if res.is_err() {
+                    context.client.end_transaction().await;
                     return Ok(Some(String::from(format!(
                         "Error creating provider availability: {}",
                         res.err().unwrap().to_string()
@@ -573,25 +714,43 @@ impl CalendarApp {
                     )
                     .await
                 {
-                    Ok(_) => Ok(Some(String::from("Created provider role."))),
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error creating provider role: {}",
-                        err.to_string()
-                    )))),
+                    Ok(_) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from("Created provider role.")))
+                    }
+                    Err(err) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from(format!(
+                            "Error creating provider role: {}",
+                            err.to_string()
+                        ))))
+                    }
                 }
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
     pub async fn init_patient_role(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -617,21 +776,34 @@ impl CalendarApp {
                     )
                     .await
                 {
-                    Ok(_) => Ok(Some(String::from("Created patient role."))),
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error creating patient role: {}",
-                        err.to_string()
-                    )))),
+                    Ok(_) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from("Created patient role.")))
+                    }
+                    Err(err) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from(format!(
+                            "Error creating patient role: {}",
+                            err.to_string()
+                        ))))
+                    }
                 }
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
+    /*
     pub async fn get_availability_id(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -662,8 +834,10 @@ impl CalendarApp {
             )))),
         }
     }
+    */
 
     // Called by either patient or provider
+    /*
     pub async fn get_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -691,6 +865,7 @@ impl CalendarApp {
             )))),
         }
     }
+    */
 
     /*
     // TODO
@@ -747,69 +922,85 @@ impl CalendarApp {
 
         // parse date
         let date_str = args.get_one::<String>("date").unwrap();
-        match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-            Ok(date) => {
-                // parse time
-                let time_str = args.get_one::<String>("time").unwrap();
-                match NaiveTime::parse_from_str(time_str, "%H:%M:%S") {
-                    Ok(time) => {
-                        let appt = AppointmentInfo::new(date, time, notes.cloned());
-                        let id = Self::new_prefixed_id(&APPT_PREFIX.to_string());
-                        let json_string = serde_json::to_string(&appt).unwrap();
-
-                        // store appointment request
-                        match context
-                            .client
-                            .set_data(
-                                id.clone(),
-                                APPT_PREFIX.to_owned(),
-                                json_string,
-                                None,
-                                None,
-                                false,
-                            )
-                            .await
-                        {
-                            Ok(_) => {
-                                // share appointment request with provider
-                                let vec = vec![provider_id];
-
-                                // temporary hack b/c cannot set and share data
-                                // at the same time, and sharing expects that
-                                // the
-                                // data already exists, so must wait for
-                                // set_data
-                                // message to return from the server
-                                std::thread::sleep(std::time::Duration::from_secs(1));
-
-                                match context
-                                    .client
-                                    .add_writers(id.clone(), vec.clone())
-                                    .await
-                                {
-                                    Ok(_) => Ok(Some(String::from(format!(
-                                        "Successfully requested appointment with id {}",
-                                        id.clone()
-                                    )))),
-                                    Err(err) => Ok(Some(String::from(format!(
-                                        "Could not share appointment: {}",
-                                        err.to_string()
-                                    )))),
-                                }
-                            }
-                            Err(err) => Ok(Some(String::from(format!(
-                                "Could not store appointment: {}",
-                                err.to_string()
-                            )))),
-                        }
-                    }
-                    Err(err) => {
-                        Ok(Some(String::from(format!("Error parsing time: {}", err))))
-                    }
-                }
-            }
-            Err(err) => Ok(Some(String::from(format!("Error parsing date: {}", err)))),
+        let date_res = NaiveDate::parse_from_str(date_str, "%Y-%m-%d");
+        if date_res.is_err() {
+            return Ok(Some(String::from(format!(
+                "Error parsing date: {}",
+                date_res.err().unwrap().to_string()
+            ))));
         }
+
+        // parse time
+        let time_str = args.get_one::<String>("time").unwrap();
+        let time_res = NaiveTime::parse_from_str(time_str, "%H:%M:%S");
+        if time_res.is_err() {
+            return Ok(Some(String::from(format!(
+                "Error parsing time: {}",
+                time_res.err().unwrap().to_string()
+            ))));
+        }
+
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start first transaction.")));
+        }
+
+        let appt =
+            AppointmentInfo::new(date_res.unwrap(), time_res.unwrap(), notes.cloned());
+        let id = Self::new_prefixed_id(&APPT_PREFIX.to_string());
+        let json_string = serde_json::to_string(&appt).unwrap();
+
+        // store appointment request
+        res = context
+            .client
+            .set_data(
+                id.clone(),
+                APPT_PREFIX.to_owned(),
+                json_string,
+                None,
+                None,
+                false,
+            )
+            .await;
+        if res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Could not store appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        }
+
+        context.client.end_transaction().await;
+
+        // temporary hack b/c cannot set and share data
+        // at the same time, and sharing expects that the
+        // data already exists, so must wait for set_data
+        // message to return from the server
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start second transaction.")));
+        }
+
+        // share appointment request with provider
+        let vec = vec![provider_id];
+
+        res = context.client.add_writers(id.clone(), vec.clone()).await;
+        if res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Could not share appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        }
+
+        context.client.end_transaction().await;
+
+        Ok(Some(String::from(format!(
+            "Successfully requested appointment with id {}",
+            id.clone()
+        ))))
     }
 
     // Called by provider
@@ -824,110 +1015,126 @@ impl CalendarApp {
         }
 
         let id = args.get_one::<String>("id").unwrap().to_string();
-        match context.client.get_data(&id).await {
-            Ok(Some(appt_obj)) => {
-                // update pending field on appointment
-                let mut appt: AppointmentInfo =
-                    serde_json::from_str(appt_obj.data_val()).unwrap();
 
-                // TODO check that appointment doesn't conflict with any
-                // existing busy slots
+        let mut empty_res = context.client.start_transaction();
+        if empty_res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
 
-                appt.pending = false;
-                let json_string = serde_json::to_string(&appt).unwrap();
-
-                // TODO put following operations into a transaction
-
-                // confirm appointment
-                let mut res = context
-                    .client
-                    .set_data(
-                        id.clone(),
-                        APPT_PREFIX.to_owned(),
-                        json_string,
-                        None,
-                        None,
-                        false,
-                    )
-                    .await;
-                if res.is_err() {
-                    return Ok(Some(String::from(format!(
-                        "Could not update appointment: {}",
-                        res.err().unwrap().to_string()
-                    ))));
-                }
-
-                // update availability
-                let datetime = NaiveDateTime::new(appt.date, appt.time);
-
-                match context.client.get_data(&ROLES_PREFIX.to_owned()).await {
-                    Ok(Some(roles_obj)) => {
-                        // get availability id
-                        let mut roles: Roles =
-                            serde_json::from_str(roles_obj.data_val()).unwrap();
-
-                        if let Some(provider_role) = roles.provider {
-                            let mut res = context
-                                .client
-                                .get_data(&provider_role.availability_id)
-                                .await;
-                            if res.is_err() {
-                                return Ok(Some(String::from(format!(
-                                    "Error getting availability: {}",
-                                    res.err().unwrap().to_string()
-                                ))));
-                            }
-
-                            // add busy slot
-                            let mut avail: Availability =
-                                serde_json::from_str(res.unwrap().unwrap().data_val())
-                                    .unwrap();
-                            avail.add_busy_slot(datetime, DEFAULT_DUR);
-                            let json_avail = serde_json::to_string(&avail).unwrap();
-
-                            // set new avail obj
-                            match context
-                                .client
-                                .set_data(
-                                    provider_role.availability_id,
-                                    AVAIL_PREFIX.to_string(),
-                                    json_avail,
-                                    None,
-                                    None,
-                                    false,
-                                )
-                                .await
-                            {
-                                Ok(_) => Ok(Some(String::from(format!(
-                                    "Confirmed appointment with id {}",
-                                    id
-                                )))),
-                                Err(err) => Ok(Some(String::from(format!(
-                                    "Could not modify availability: {}",
-                                    err
-                                )))),
-                            }
-                        } else {
-                            return Ok(Some(String::from(
-                                "No provider role initialized.",
-                            )));
-                        }
-                    }
-                    Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error getting roles: {}",
-                        err.to_string()
-                    )))),
-                }
-            }
-            Ok(None) => Ok(Some(String::from(format!(
+        let mut res = context.client.get_data(&id).await;
+        if res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Error getting appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        } else if res.as_ref().unwrap().is_none() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
                 "Appointment with id {} does not exist.",
                 id,
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting appointment: {}",
-                err.to_string()
-            )))),
+            ))));
+        }
+
+        // update pending field on appointment
+        let mut appt: AppointmentInfo =
+            serde_json::from_str(res.as_ref().unwrap().as_ref().unwrap().data_val())
+                .unwrap();
+
+        // TODO check that appointment doesn't conflict with any existing busy slots
+
+        appt.pending = false;
+        let json_string = serde_json::to_string(&appt).unwrap();
+
+        // confirm appointment
+        empty_res = context
+            .client
+            .set_data(
+                id.clone(),
+                APPT_PREFIX.to_owned(),
+                json_string,
+                None,
+                None,
+                false,
+            )
+            .await;
+        if empty_res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Could not update appointment: {}",
+                res.err().unwrap().to_string()
+            ))));
+        }
+
+        // update availability
+        let datetime = NaiveDateTime::new(appt.date, appt.time);
+
+        res = context.client.get_data(&ROLES_PREFIX.to_owned()).await;
+        if res.is_err() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from(format!(
+                "Error getting roles: {}",
+                res.err().unwrap().to_string()
+            ))));
+        } else if res.as_ref().unwrap().is_none() {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from("Roles do not exist.")));
+        }
+
+        // get availability id
+        let mut roles: Roles =
+            serde_json::from_str(res.unwrap().unwrap().data_val()).unwrap();
+
+        if let Some(provider_role) = roles.provider {
+            let mut res = context
+                .client
+                .get_data(&provider_role.availability_id)
+                .await;
+            if res.is_err() {
+                context.client.end_transaction().await;
+                return Ok(Some(String::from(format!(
+                    "Error getting availability: {}",
+                    res.err().unwrap().to_string()
+                ))));
+            }
+
+            // add busy slot
+            let mut avail: Availability =
+                serde_json::from_str(res.unwrap().unwrap().data_val()).unwrap();
+            avail.add_busy_slot(datetime, DEFAULT_DUR);
+            let json_avail = serde_json::to_string(&avail).unwrap();
+
+            // set new avail obj
+            match context
+                .client
+                .set_data(
+                    provider_role.availability_id,
+                    AVAIL_PREFIX.to_string(),
+                    json_avail,
+                    None,
+                    None,
+                    false,
+                )
+                .await
+            {
+                Ok(_) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Confirmed appointment with id {}",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not modify availability: {}",
+                        err
+                    ))))
+                }
+            }
+        } else {
+            context.client.end_transaction().await;
+            return Ok(Some(String::from("No provider role initialized.")));
         }
     }
 
@@ -965,8 +1172,8 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(CalendarApp::init_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), CalendarApp::check_device)
-        .with_command(Command::new("get_name"), CalendarApp::get_name)
-        .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
+        .with_command_async(Command::new("get_name"), |_, context| Box::pin(CalendarApp::get_name(context)))
+        .with_command_async(Command::new("get_idkey"), |_, context| Box::pin(CalendarApp::get_idkey(context)))
         .with_command_async(
             Command::new("add_patient").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_patient(args, context)),
@@ -994,11 +1201,11 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(CalendarApp::get_data(args, context)),
         )
         .with_command_async(
-            Command::new("get_perms").arg(Arg::new("id").required(true)),
+            Command::new("get_perms").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(CalendarApp::get_perms(args, context)),
         )
         .with_command_async(
-            Command::new("get_groups").arg(Arg::new("id").required(true)),
+            Command::new("get_groups").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(CalendarApp::get_groups(args, context)),
         )
         .with_command_async(Command::new("get_roles"), |_, context| {
@@ -1030,13 +1237,13 @@ async fn main() -> ReplResult<()> {
             //)
             |_, context| Box::pin(CalendarApp::init_provider_role(context)),
         )
-        .with_command_async(Command::new("get_availability_id"), |_, context| {
-            Box::pin(CalendarApp::get_availability_id(context))
-        })
-        .with_command_async(
-            Command::new("get_appointment").arg(Arg::new("id").required(true)),
-            |args, context| Box::pin(CalendarApp::get_appointment(args, context)),
-        )
+        //.with_command_async(Command::new("get_availability_id"), |_, context| {
+        //    Box::pin(CalendarApp::get_availability_id(context))
+        //})
+        //.with_command_async(
+        //    Command::new("get_appointment").arg(Arg::new("id").required(true)),
+        //    |args, context| Box::pin(CalendarApp::get_appointment(args, context)),
+        //)
         //.with_command(
         //    Command::new("get_provider_appointments").arg(
         //        Arg::new("provider_id")

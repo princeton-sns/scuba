@@ -47,7 +47,7 @@ Each application client can be spun up by running `cargo run` in the relevant su
 - Providers share their overall availability with all patients
 - Providers either confirm or deny requested appointments
 - When a provider confirms an appointment, they also atomically update their availability object for all patients
-- TODO Should use transactional TANK to achieve **serializability** (currently using single-key TANK)
+- Uses transactional TANK to achieve **serializability**
 
 ## Family Social Media
 

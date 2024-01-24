@@ -122,9 +122,9 @@ struct PasswordManager {
 impl PasswordManager {
     pub async fn new() -> PasswordManager {
         let client = TankClient::new(
-            None, None, false, None, None, // linearizability
-            true, true, false, false, // benchmark args
-            None, None, None, None, None, None, None, None, None,
+            None, None, false, None, None,
+            true, true, false, false, // linearizability
+            None, None, None, None, None, None, None, None, None, // benchmark args
         )
         .await;
         Self { client }
@@ -754,11 +754,11 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(PasswordManager::get_data(args, context)),
         )
         .with_command_async(
-            Command::new("get_perms").arg(Arg::new("id").required(true)),
+            Command::new("get_perms").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(PasswordManager::get_perms(args, context)),
         )
         .with_command_async(
-            Command::new("get_groups").arg(Arg::new("id").required(true)),
+            Command::new("get_groups").arg(Arg::new("id").required(false)),
             |args, context| Box::pin(PasswordManager::get_groups(args, context)),
         )
         .with_command_async(

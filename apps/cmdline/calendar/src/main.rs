@@ -475,13 +475,17 @@ impl CalendarApp {
         }
     }
 
-    // TODO added txns up to this point
-
     pub async fn get_data(
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -489,18 +493,28 @@ impl CalendarApp {
 
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_data(id).await {
-                Ok(Some(data)) => Ok(Some(String::from(format!("{}", data)))),
-                Ok(None) => Ok(Some(String::from(format!(
-                    "Data with id {} does not exist",
-                    id
-                )))),
-                Err(err) => Ok(Some(String::from(format!(
-                    "Could not get data: {}",
-                    err.to_string()
-                )))),
+                Ok(Some(data)) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!("{}", data))))
+                }
+                Ok(None) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Data with id {} does not exist",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not get data: {}",
+                        err.to_string()
+                    ))))
+                }
             }
         } else {
             let data = context.client.get_all_data().await.unwrap();
+            context.client.end_transaction().await;
             Ok(Some(itertools::join(data, "\n")))
         }
     }
@@ -509,7 +523,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -517,18 +537,28 @@ impl CalendarApp {
 
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_perm(id).await {
-                Ok(Some(perm)) => Ok(Some(String::from(format!("{}", perm)))),
-                Ok(None) => Ok(Some(String::from(format!(
-                    "Perm with id {} does not exist",
-                    id
-                )))),
-                Err(err) => Ok(Some(String::from(format!(
-                    "Could not get perm: {}",
-                    err.to_string()
-                )))),
+                Ok(Some(perm)) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!("{}", perm))))
+                }
+                Ok(None) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Perm with id {} does not exist",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not get perm: {}",
+                        err.to_string()
+                    ))))
+                }
             }
         } else {
             let perms = context.client.get_all_perms().await.unwrap();
+            context.client.end_transaction().await;
             Ok(Some(itertools::join(perms, "\n")))
         }
     }
@@ -537,7 +567,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -545,24 +581,40 @@ impl CalendarApp {
 
         if let Some(id) = args.get_one::<String>("id") {
             match context.client.get_group(id).await {
-                Ok(Some(group)) => Ok(Some(String::from(format!("{}", group)))),
-                Ok(None) => Ok(Some(String::from(format!(
-                    "Group with id {} does not exist",
-                    id
-                )))),
-                Err(err) => Ok(Some(String::from(format!(
-                    "Could not get group: {}",
-                    err.to_string()
-                )))),
+                Ok(Some(group)) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!("{}", group))))
+                }
+                Ok(None) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Group with id {} does not exist",
+                        id
+                    ))))
+                }
+                Err(err) => {
+                    context.client.end_transaction().await;
+                    Ok(Some(String::from(format!(
+                        "Could not get group: {}",
+                        err.to_string()
+                    ))))
+                }
             }
         } else {
             let groups = context.client.get_all_groups().await.unwrap();
+            context.client.end_transaction().await;
             Ok(Some(itertools::join(groups, "\n")))
         }
     }
 
     pub async fn get_roles(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -572,20 +624,33 @@ impl CalendarApp {
             Ok(Some(roles_obj)) => {
                 let mut roles: Roles =
                     serde_json::from_str(roles_obj.data_val()).unwrap();
+                context.client.end_transaction().await;
                 Ok(Some(String::from(format!("{:?}", roles))))
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
     pub async fn init_provider_role(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -616,6 +681,7 @@ impl CalendarApp {
                     )
                     .await;
                 if res.is_err() {
+                    context.client.end_transaction().await;
                     return Ok(Some(String::from(format!(
                         "Error creating provider availability: {}",
                         res.err().unwrap().to_string()
@@ -648,25 +714,43 @@ impl CalendarApp {
                     )
                     .await
                 {
-                    Ok(_) => Ok(Some(String::from("Created provider role."))),
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error creating provider role: {}",
-                        err.to_string()
-                    )))),
+                    Ok(_) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from("Created provider role.")))
+                    }
+                    Err(err) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from(format!(
+                            "Error creating provider role: {}",
+                            err.to_string()
+                        ))))
+                    }
                 }
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
     pub async fn init_patient_role(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -692,21 +776,34 @@ impl CalendarApp {
                     )
                     .await
                 {
-                    Ok(_) => Ok(Some(String::from("Created patient role."))),
-                    Err(err) => Ok(Some(String::from(format!(
-                        "Error creating patient role: {}",
-                        err.to_string()
-                    )))),
+                    Ok(_) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from("Created patient role.")))
+                    }
+                    Err(err) => {
+                        context.client.end_transaction().await;
+                        Ok(Some(String::from(format!(
+                            "Error creating patient role: {}",
+                            err.to_string()
+                        ))))
+                    }
                 }
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
+    /*
     pub async fn get_availability_id(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
@@ -737,8 +834,10 @@ impl CalendarApp {
             )))),
         }
     }
+    */
 
     // Called by either patient or provider
+    /*
     pub async fn get_appointment(
         args: ArgMatches,
         context: &mut Arc<Self>,
@@ -766,6 +865,7 @@ impl CalendarApp {
             )))),
         }
     }
+    */
 
     /*
     // TODO
@@ -1137,13 +1237,13 @@ async fn main() -> ReplResult<()> {
             //)
             |_, context| Box::pin(CalendarApp::init_provider_role(context)),
         )
-        .with_command_async(Command::new("get_availability_id"), |_, context| {
-            Box::pin(CalendarApp::get_availability_id(context))
-        })
-        .with_command_async(
-            Command::new("get_appointment").arg(Arg::new("id").required(true)),
-            |args, context| Box::pin(CalendarApp::get_appointment(args, context)),
-        )
+        //.with_command_async(Command::new("get_availability_id"), |_, context| {
+        //    Box::pin(CalendarApp::get_availability_id(context))
+        //})
+        //.with_command_async(
+        //    Command::new("get_appointment").arg(Arg::new("id").required(true)),
+        //    |args, context| Box::pin(CalendarApp::get_appointment(args, context)),
+        //)
         //.with_command(
         //    Command::new("get_provider_appointments").arg(
         //        Arg::new("provider_id")

@@ -39,6 +39,10 @@ use crate::metadata::{Group, PermType, PermissionSet};
  * - [x] get_all_perms()
  * - [x] get_group()
  * - [x] get_all_groups()
+ *
+ * TODO should Operations should be extended to include Get* calls for strict
+ * serializability? Otherwise, read-only transactions will not be sent to the
+ * server for ordering, which violates strict serializability
  */
 
 #[derive(Debug, PartialEq, Error)]
@@ -1090,7 +1094,6 @@ impl TankClient {
                 Ok(())
             }
             Operation::TxStart(sender, tx) => {
-                println!("DEMUXING TxStart");
                 let res = self.tx_coordinator.write().as_mut().unwrap().start_message(
                     self.idkey(),
                     sender.clone(),
@@ -1107,7 +1110,6 @@ impl TankClient {
                 Ok(())
             }
             Operation::TxCommit(sender, tx_id) => {
-                println!("DEMUXING TxCommit");
                 let resp = self
                     .tx_coordinator
                     .write()
@@ -1120,7 +1122,6 @@ impl TankClient {
                 Ok(())
             }
             Operation::TxAbort(sender, tx_id) => {
-                println!("DEMUXING TxAbort");
                 let resp = self.tx_coordinator.write().as_mut().unwrap().abort_message(
                     self.idkey(),
                     sender,

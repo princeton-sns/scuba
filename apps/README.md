@@ -41,13 +41,13 @@ Each application client can be spun up by running `cargo run` in the relevant su
 ## Calendar
 
 - [x] compiles
-- [ ] runs
+- [x] runs
 
 - Patient clients can request specific time slots from provider clients
 - Providers share their overall availability with all patients
 - Providers either confirm or deny requested appointments
 - When a provider confirms an appointment, they also atomically update their availability object for all patients
-- TODO Should use transactional TANK to achieve **serializability** (currently using single-key TANK)
+- Uses transactional TANK to achieve **serializability**
 
 ## Family Social Media
 

@@ -164,7 +164,7 @@ impl Transaction {
             commit_sequence_number: None,
             prev_seq_number,
             // TODO: make this dynamic? system dependent?
-            timeout: 1000000000000000000000,
+            timeout: 100000000000000000000000,
         }
     }
 
@@ -276,7 +276,7 @@ impl TxCoordinator {
         my_device_id: String,
         sender: String,
         tx_id: &SequenceNumber,
-        seq: SequenceNumber, /*use seq number of commit message when
+        seq: SequenceNumber, /* use seq number of commit message when
                               * committing */
     ) -> Result<(), Error> {
         // committing a tx i coordinated
@@ -286,6 +286,12 @@ impl TxCoordinator {
             tx.commit_sequence_number = Some(seq);
             q.remove(tx_id);
             if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
+                println!("TIMEOUT (coord = self)");
+                println!("cur_seq: {}", &seq);
+                println!("prep_seq: {}", &tx.prepare_sequence_number.unwrap_or_default());
+                println!("to_offset: {}", &tx.timeout);
+                println!("to_seq: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout);
+                println!("diff: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout - seq);
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -295,6 +301,12 @@ impl TxCoordinator {
             let mut tx = self.remote_pending_tx.remove(tx_id).unwrap();
             tx.commit_sequence_number = Some(seq);
             if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
+                println!("TIMEOUT (coord = other)");
+                println!("cur_seq: {}", &seq);
+                println!("prep_seq: {}", &tx.prepare_sequence_number.unwrap_or_default());
+                println!("to_offset: {}", &tx.timeout);
+                println!("to_seq: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout);
+                println!("diff: {}", tx.prepare_sequence_number.unwrap_or_default() - seq + tx.timeout);
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -536,6 +548,7 @@ impl TankClient {
         turn_encryption_off: bool,
         test_wait_num_callbacks: Option<u64>,
         sec_wait_to_apply: Option<u64>,
+        // consistency args
         block_writes: bool,
         sync_reads: bool,
         mult_outstanding: bool,
@@ -1141,12 +1154,14 @@ impl TankClient {
 
     // Doesn't make sense to sync this read, since the idkey is needed to send
     // the sync message anyway
+    // TODO but maybe sync anyway
     pub fn idkey(&self) -> String {
         self.core.as_ref().unwrap().idkey()
     }
 
     // Also doesn't make sense to sync this read, since there's no way to
     // change this after a device is initialized (at the moment)
+    // TODO but maybe sync anyway
     pub fn linked_name(&self) -> String {
         self.device
             .read()
@@ -1185,9 +1200,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1240,9 +1255,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1292,14 +1307,13 @@ impl TankClient {
             .get_all_subgroups(&linked_name);
 
         match self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![idkey],
-                &Operation::to_string(&Operation::UpdateLinked(
+                &Operation::UpdateLinked(
                     self.core.as_ref().unwrap().idkey(),
                     linked_name,
                     linked_members_to_add,
-                ))
-                .unwrap(),
+                ),
                 false,
             )
             .await
@@ -1331,6 +1345,7 @@ impl TankClient {
             .to_string();
 
         // send all groups and to new members
+        // FIXME send_or_add_to_txn?
         match self
             .send_message(
                 vec![sender],
@@ -1389,6 +1404,7 @@ impl TankClient {
 
         /////////
 
+        // FIXME send_or_add_to_txn?
         let res = self
             .send_message(
                 vec![self.idkey()],
@@ -1447,9 +1463,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1506,14 +1522,13 @@ impl TankClient {
             .get_all_subgroups(&linked_name);
 
         match self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![contact_idkey],
-                &Operation::to_string(&Operation::AddContact(
+                &Operation::AddContact(
                     self.core.as_ref().unwrap().idkey(),
                     linked_name,
                     linked_device_groups,
-                ))
-                .unwrap(),
+                ),
                 false,
             )
             .await
@@ -1554,6 +1569,7 @@ impl TankClient {
             .read()
             .get_all_subgroups(&linked_name);
 
+        // FIXME send_or_add_to_txn
         match self
             .send_message(
                 vec![sender],
@@ -1769,9 +1785,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1825,9 +1841,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1885,9 +1901,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -1941,9 +1957,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2001,9 +2017,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2057,9 +2073,9 @@ impl TankClient {
         /////////
 
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 false,
             )
             .await;
@@ -2334,9 +2350,9 @@ impl TankClient {
         }
         // FIXME better way to do this
         let res = self
-            .send_message(
+            .send_or_add_to_txn(
                 vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                &Operation::Dummy(op_id.clone()),
                 bench,
             )
             .await;

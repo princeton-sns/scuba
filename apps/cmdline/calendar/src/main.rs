@@ -209,7 +209,7 @@ impl CalendarApp {
     pub async fn new() -> CalendarApp {
         let client = TankClient::new(
             None, None, false, None, None,
-            true, false, true, true, // serializability
+            false, false, true, true, // serializability
             None, None, None, None, None, None, None, None, None, // benchmarking args
         )
         .await;
@@ -243,6 +243,11 @@ impl CalendarApp {
     }
 
     pub async fn init_new_device(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         context.client.create_standalone_device().await;
 
         let roles_id = ROLES_PREFIX.to_owned();
@@ -261,11 +266,17 @@ impl CalendarApp {
             )
             .await
         {
-            Ok(_) => Ok(Some(String::from("Standalone device created."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not create device: {}",
-                err.to_string()
-            )))),
+            Ok(_) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Standalone device created.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Could not create device: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
@@ -273,45 +284,68 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         match context
             .client
             .create_linked_device(args.get_one::<String>("idkey").unwrap().to_string())
             .await
         {
-            Ok(_) => Ok(Some(String::from("Linked device created!"))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not create linked device: {}",
-                err.to_string()
-            )))),
+            Ok(_) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Linked device created!")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Could not create linked device: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
-    pub fn get_name(
-        _args: ArgMatches,
+    pub async fn get_name(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
         }
 
+        context.client.end_transaction().await;
         Ok(Some(String::from(format!(
             "Name: {}",
             context.client.linked_name()
         ))))
     }
 
-    pub fn get_idkey(
-        _args: ArgMatches,
+    pub async fn get_idkey(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
         }
 
+        context.client.end_transaction().await;
         Ok(Some(String::from(format!(
             "Idkey: {}",
             context.client.idkey()
@@ -321,13 +355,20 @@ impl CalendarApp {
     pub async fn get_linked_devices(
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
         }
 
         let linked_devices = context.client.get_linked_devices().await.unwrap();
+        context.client.end_transaction().await;
         Ok(Some(itertools::join(linked_devices, "\n")))
     }
 
@@ -337,7 +378,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -347,14 +394,20 @@ impl CalendarApp {
 
         let idkey = args.get_one::<String>("idkey").unwrap().to_string();
         match context.client.add_contact(idkey.clone()).await {
-            Ok(_) => Ok(Some(String::from(format!(
-                "Patient with idkey <{}> added",
-                idkey
-            )))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Could not add patient: {}",
-                err.to_string()
-            )))),
+            Ok(_) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Patient with idkey <{}> added",
+                    idkey
+                ))))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Could not add patient: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
 
@@ -363,7 +416,13 @@ impl CalendarApp {
         args: ArgMatches,
         context: &mut Arc<Self>,
     ) -> ReplResult<Option<String>> {
+        let mut res = context.client.start_transaction();
+        if res.is_err() {
+            return Ok(Some(String::from("Cannot start transaction.")));
+        }
+
         if !context.exists_device() {
+            context.client.end_transaction().await;
             return Ok(Some(String::from(
                 "Device does not exist, cannot run command.",
             )));
@@ -382,26 +441,41 @@ impl CalendarApp {
                         .add_do_readers(provider_role.availability_id, vec)
                         .await
                     {
-                        Ok(_) => Ok(Some(String::from(format!(
-                            "Availability shared with patient {}",
-                            patient
-                        )))),
-                        Err(err) => Ok(Some(String::from(format!(
-                            "Could not share availability: {}",
-                            err.to_string()
-                        )))),
+                        Ok(_) => {
+                            context.client.end_transaction().await;
+                            Ok(Some(String::from(format!(
+                                "Availability shared with patient {}",
+                                patient
+                            ))))
+                        }
+                        Err(err) => {
+                            context.client.end_transaction().await;
+                            Ok(Some(String::from(format!(
+                                "Could not share availability: {}",
+                                err.to_string()
+                            ))))
+                        }
                     }
                 } else {
+                    context.client.end_transaction().await;
                     return Ok(Some(String::from("No provider role initialized.")));
                 }
             }
-            Ok(None) => Ok(Some(String::from("Roles do not exist."))),
-            Err(err) => Ok(Some(String::from(format!(
-                "Error getting roles: {}",
-                err.to_string()
-            )))),
+            Ok(None) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from("Roles do not exist.")))
+            }
+            Err(err) => {
+                context.client.end_transaction().await;
+                Ok(Some(String::from(format!(
+                    "Error getting roles: {}",
+                    err.to_string()
+                ))))
+            }
         }
     }
+
+    // TODO added txns up to this point
 
     pub async fn get_data(
         args: ArgMatches,
@@ -771,13 +845,10 @@ impl CalendarApp {
             return Ok(Some(String::from("Cannot start first transaction.")));
         }
 
-        println!("started first txn");
-
         let appt =
             AppointmentInfo::new(date_res.unwrap(), time_res.unwrap(), notes.cloned());
         let id = Self::new_prefixed_id(&APPT_PREFIX.to_string());
         let json_string = serde_json::to_string(&appt).unwrap();
-        println!("queued create appt");
 
         // store appointment request
         res = context
@@ -799,9 +870,7 @@ impl CalendarApp {
             ))));
         }
 
-        println!("queued store appt");
         context.client.end_transaction().await;
-        println!("ended first txn");
 
         // temporary hack b/c cannot set and share data
         // at the same time, and sharing expects that the
@@ -814,26 +883,20 @@ impl CalendarApp {
             return Ok(Some(String::from("Cannot start second transaction.")));
         }
 
-        println!("started second txn");
-
         // share appointment request with provider
         let vec = vec![provider_id];
 
         res = context.client.add_writers(id.clone(), vec.clone()).await;
         if res.is_err() {
-            println!("sharing ERROR: {}", res.as_ref().err().unwrap().to_string());
             context.client.end_transaction().await;
-            println!("ended second txn");
             return Ok(Some(String::from(format!(
                 "Could not share appointment: {}",
                 res.err().unwrap().to_string()
             ))));
         }
 
-        println!("shared appt");
         context.client.end_transaction().await;
 
-        println!("ended second txn");
         Ok(Some(String::from(format!(
             "Successfully requested appointment with id {}",
             id.clone()
@@ -1009,8 +1072,8 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(CalendarApp::init_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), CalendarApp::check_device)
-        .with_command(Command::new("get_name"), CalendarApp::get_name)
-        .with_command(Command::new("get_idkey"), CalendarApp::get_idkey)
+        .with_command_async(Command::new("get_name"), |_, context| Box::pin(CalendarApp::get_name(context)))
+        .with_command_async(Command::new("get_idkey"), |_, context| Box::pin(CalendarApp::get_idkey(context)))
         .with_command_async(
             Command::new("add_patient").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_patient(args, context)),

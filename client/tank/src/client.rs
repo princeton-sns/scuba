@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Values;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -43,6 +43,9 @@ use crate::metadata::{Group, PermType, PermissionSet};
  * TODO should Operations should be extended to include Get* calls for strict
  * serializability? Otherwise, read-only transactions will not be sent to the
  * server for ordering, which violates strict serializability
+ *
+ * TODO also need to modify TankClient configuration to only allow one transaction
+ * at a time (for any transactional consistency models)
  */
 
 #[derive(Debug, PartialEq, Error)]
@@ -145,19 +148,21 @@ struct Transaction {
     coordinator: String,
     recipients: Vec<String>,
     num_recipients: Option<usize>,
-    ops: Vec<(Operation, Vec<String>)>,
+    ops: Vec<Operation>,
     prepare_sequence_number: Option<SequenceNumber>,
     commit_sequence_number: Option<SequenceNumber>,
     prev_seq_number: SequenceNumber,
     timeout: SequenceNumber,
+    coord_loopback: bool,
 }
 
 impl Transaction {
     fn new(
         device_id: String,
         recipients: Vec<String>,
-        ops: Vec<(Operation, Vec<String>)>,
+        ops: Vec<Operation>,
         prev_seq_number: SequenceNumber,
+        coord_loopback: bool,
     ) -> Transaction {
         Transaction {
             coordinator: device_id,
@@ -169,6 +174,7 @@ impl Transaction {
             prev_seq_number,
             // TODO: make this dynamic? system dependent?
             timeout: 100000000000000000000000,
+            coord_loopback,
         }
     }
 
@@ -355,13 +361,13 @@ impl TxCoordinator {
     fn detect_conflict(&self, msg: &Transaction) -> bool {
         let mut tx_keys = Vec::new();
 
-        for (op, _) in msg.ops.clone().into_iter() {
+        for op in msg.ops.clone().into_iter() {
             tx_keys.push(Operation::get_data_id(&op));
         }
 
         //impl for all enums -> move to func over two txs
         for tx in self.local_pending_tx.clone().into_iter() {
-            for (op, _) in tx.1 .1.ops.clone().into_iter() {
+            for op in tx.1 .1.ops.clone().into_iter() {
                 let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
@@ -370,7 +376,7 @@ impl TxCoordinator {
         }
 
         for tx in self.remote_pending_tx.clone().into_iter() {
-            for (op, _) in tx.1.ops.clone().into_iter() {
+            for op in tx.1.ops.clone().into_iter() {
                 let data_id = Operation::get_data_id(&op);
                 if tx_keys.contains(&data_id) {
                     return true;
@@ -382,7 +388,7 @@ impl TxCoordinator {
             //only iterate through committed transactions that were sequenced
             // after the prev txn accepted by the original client
             if tx.1.prepare_sequence_number.unwrap() > msg.prev_seq_number {
-                for (op, _) in tx.1.ops.clone().into_iter() {
+                for op in tx.1.ops.clone().into_iter() {
                     let data_id = Operation::get_data_id(&op);
                     if tx_keys.contains(&data_id) {
                         return true;
@@ -642,19 +648,33 @@ impl TankClient {
 
     /* Transactions */
 
-    fn collect_recipients(&self, msg: Vec<(Operation, Vec<String>)>) -> Vec<String> {
-        let mut recipients = Vec::new();
+    fn discern_shards(&self, msg: Vec<(Operation, Vec<String>)>) -> BTreeMap<Vec<String>, (Vec<Operation>, bool)> {
+        let mut txn_shards = BTreeMap::new();
+        // put all ops going to the same set of recipients together
+        for (op, mut recipients) in msg {
+            recipients.sort();
+            recipients.dedup();
 
-        // FIXME break up among "shards", e.g. every operation should
-        // have it's own set of recipients
-        for (_, dst_idkeys) in msg {
-            recipients.extend(dst_idkeys);
+            // add coordinator's idkey to txn if isn't already included so
+            // the transaction can be committed
+            let coord_loopback;
+            if recipients.contains(&self.idkey()) {
+                coord_loopback = false;
+            } else {
+                coord_loopback = true;
+                recipients.push(self.idkey());
+            }
+
+            if txn_shards.contains_key(&recipients) {
+                let (ops, _): &mut (Vec<Operation>, bool) = txn_shards.get_mut(&recipients).unwrap();
+                ops.push(op);
+                //txn_shards.insert(recipients, ops);
+            } else {
+                txn_shards.insert(recipients, (vec![op], coord_loopback));
+            }
         }
 
-        recipients.sort();
-        recipients.dedup();
-
-        return recipients;
+        return txn_shards;
     }
 
     async fn apply_locally(&self, tx_id: SequenceNumber) -> Result<(), Error> {
@@ -664,7 +684,10 @@ impl TankClient {
             .unwrap()
             .get_committed_transaction(tx_id)
             .unwrap();
-        for (op, _) in tx.ops.clone().into_iter() {
+        if tx.coord_loopback && self.idkey() == tx.coordinator {
+            return Ok(());
+        }
+        for op in tx.ops.clone().into_iter() {
             //call into data store to apply
             // TODO: handle errors
             self.demux(tx_id.clone(), op).await;
@@ -678,23 +701,28 @@ impl TankClient {
         ops: Vec<(Operation, Vec<String>)>,
         prev_seq_number: SequenceNumber,
     ) {
-        let recipients = self.collect_recipients(ops.clone());
-        let transaction =
-            Transaction::new(device_id.clone(), recipients.clone(), ops, prev_seq_number);
-        self.send_message(
-            recipients,
-            &Operation::to_string(&Operation::TxStart(device_id, transaction)).unwrap(),
-            false,
-        )
-        .await;
+        let txn_shards = self.discern_shards(ops.clone());
+        let mut txn_series = Vec::new();
+        for (recipients, (ops, coord_loopback)) in txn_shards {
+            let transaction =
+                Transaction::new(device_id.clone(), recipients.clone(), ops, prev_seq_number, coord_loopback);
+            txn_series.push((
+                recipients,
+                Operation::to_string(&Operation::TxStart(device_id.clone(), transaction)).unwrap(),
+                false,
+            ));
+        }
+        self.send_message(txn_series).await;
     }
 
     async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
         let recipients = vec![self.idkey(), sender];
         self.send_message(
-            recipients,
-            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
-            false,
+            vec![(
+                recipients,
+                Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
+                false,
+            )]
         )
         .await;
     }
@@ -708,9 +736,11 @@ impl TankClient {
             .unwrap()
             .clone();
         self.send_message(
-            tx.recipients,
-            &Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
-            false,
+            vec![(
+                tx.recipients,
+                Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
+                false,
+            )]
         )
         .await;
     }
@@ -724,9 +754,11 @@ impl TankClient {
             .unwrap()
             .clone();
         self.send_message(
-            tx.recipients,
-            &Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id)).unwrap(),
-            false,
+            vec![(
+                tx.recipients,
+                Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id)).unwrap(),
+                false,
+            )]
         )
         .await;
     }
@@ -1140,14 +1172,12 @@ impl TankClient {
     // TODO: change message to be a collection of messages
     async fn send_message(
         &self,
-        dst_idkeys: Vec<String>,
-        payload: &String,
-        bench: bool,
+        series: Vec<(Vec<String>, String, bool)>,
     ) -> reqwest::Result<reqwest::Response> {
         self.core
             .as_ref()
             .unwrap()
-            .send_message(dst_idkeys, payload, bench)
+            .send_message(series)
             .await
     }
 
@@ -1349,28 +1379,30 @@ impl TankClient {
         // FIXME send_or_add_to_txn?
         match self
             .send_message(
-                vec![sender],
-                &Operation::to_string(&Operation::ConfirmUpdateLinked(
-                    perm_linked_name,
-                    self.device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .meta_store
-                        .read()
-                        .get_all_groups()
-                        .clone(),
-                    self.device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .data_store
-                        .read()
-                        .get_all_data()
-                        .clone(),
-                ))
-                .unwrap(),
-                false,
+                vec![(
+                    vec![sender],
+                    Operation::to_string(&Operation::ConfirmUpdateLinked(
+                        perm_linked_name,
+                        self.device
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .meta_store
+                            .read()
+                            .get_all_groups()
+                            .clone(),
+                        self.device
+                            .read()
+                            .as_ref()
+                            .unwrap()
+                            .data_store
+                            .read()
+                            .get_all_data()
+                            .clone(),
+                    ))
+                    .unwrap(),
+                    false,
+                )]
             )
             .await
         {
@@ -1408,9 +1440,11 @@ impl TankClient {
         // FIXME send_or_add_to_txn?
         let res = self
             .send_message(
-                vec![self.idkey()],
-                &Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
-                false,
+                vec![(
+                    vec![self.idkey()],
+                    Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                    false,
+                )]
             )
             .await;
 
@@ -1573,13 +1607,15 @@ impl TankClient {
         // FIXME send_or_add_to_txn
         match self
             .send_message(
-                vec![sender],
-                &Operation::to_string(&Operation::ConfirmAddContact(
-                    linked_name,
-                    linked_device_groups,
-                ))
-                .unwrap(),
-                false,
+                vec![(
+                    vec![sender],
+                    Operation::to_string(&Operation::ConfirmAddContact(
+                        linked_name,
+                        linked_device_groups,
+                    ))
+                    .unwrap(),
+                    false,
+                )]
             )
             .await
         {
@@ -1596,16 +1632,18 @@ impl TankClient {
         // TODO send to contact devices too
         match self
             .send_message(
-                self.device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .linked_devices_excluding_self(),
-                &Operation::to_string(&Operation::DeleteOtherDevice(
-                    self.core.as_ref().unwrap().idkey(),
-                ))
-                .unwrap(),
-                false,
+                vec![(
+                    self.device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .linked_devices_excluding_self(),
+                    Operation::to_string(&Operation::DeleteOtherDevice(
+                        self.core.as_ref().unwrap().idkey(),
+                    ))
+                    .unwrap(),
+                    false,
+                )]
             )
             .await
         {
@@ -1629,14 +1667,16 @@ impl TankClient {
         // TODO send to contact devices too
         match self
             .send_message(
-                self.device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .linked_devices_excluding_self_and_other(&to_delete),
-                &Operation::to_string(&Operation::DeleteOtherDevice(to_delete.clone()))
-                    .unwrap(),
-                false,
+                vec![(
+                    self.device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .linked_devices_excluding_self_and_other(&to_delete),
+                    Operation::to_string(&Operation::DeleteOtherDevice(to_delete.clone()))
+                        .unwrap(),
+                    false,
+                )]
             )
             .await
         {
@@ -1650,9 +1690,11 @@ impl TankClient {
 
                 match self
                     .send_message(
-                        vec![to_delete.clone()],
-                        &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
-                        false,
+                        vec![(
+                            vec![to_delete.clone()],
+                            Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
+                            false,
+                        )]
                     )
                     .await
                 {
@@ -1669,16 +1711,18 @@ impl TankClient {
 
         match self
             .send_message(
-                self.device
-                    .read()
-                    .as_ref()
-                    .unwrap()
-                    .linked_devices()
-                    .iter()
-                    .map(|x| x.clone())
-                    .collect::<Vec<String>>(),
-                &Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
-                false,
+                vec![(
+                    self.device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .linked_devices()
+                        .iter()
+                        .map(|x| x.clone())
+                        .collect::<Vec<String>>(),
+                    Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
+                    false,
+                )]
             )
             .await
         {
@@ -1752,7 +1796,7 @@ impl TankClient {
             Ok(())
         } else {
             match self
-                .send_message(dst_idkeys, &Operation::to_string(op).unwrap(), bench)
+                .send_message(vec![(dst_idkeys, Operation::to_string(op).unwrap(), bench)])
                 .await
             {
                 Ok(_) => Ok(()),

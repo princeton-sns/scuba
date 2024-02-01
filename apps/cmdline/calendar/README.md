@@ -20,9 +20,6 @@ Then, run the following commands, where client A and client B are the two client
 | `share_availability <name-B>` | | | |
 | `get_name` | `<name-A>` | | |
 | | | `request_appointment -p <name-A> -d YYYY-MM-DD -t HH:MM:SS` | `<appt-id>` |
-| | | `get_data <appt-id>` | `pending appt obj` |
-| `get_availability_id>` | `<avail-id>` | | |
-| | | `get_data <avail-id>` | `empty avail obj` |
+| | | `get_data` | `pending appt obj + empty avail obj` |
 | `confim_appointment <appt-id>` | | | |
-| | | `get_data <appt-id>` | `confirmed appt obj` |
-| | | `get_data <avail-id>` | `avail obj with one occupied slot` |
+| | | `get_data` | `confirmed appt obj + avail obj with one occupied slot` |

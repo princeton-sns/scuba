@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Values;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -648,9 +648,8 @@ impl TankClient {
 
     /* Transactions */
 
-    fn discern_shards(&self, msg: Vec<(Operation, Vec<String>)>) -> HashMap<Vec<String>, (Vec<Operation>, bool)> {
-        // FIXME preserve order of ops in msg
-        let mut txn_shards = HashMap::new();
+    fn discern_shards(&self, msg: Vec<(Operation, Vec<String>)>) -> BTreeMap<Vec<String>, (Vec<Operation>, bool)> {
+        let mut txn_shards = BTreeMap::new();
         // put all ops going to the same set of recipients together
         for (op, mut recipients) in msg {
             recipients.sort();

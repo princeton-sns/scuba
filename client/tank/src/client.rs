@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Values;
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -298,10 +298,19 @@ impl TxCoordinator {
             if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
                 println!("TIMEOUT (coord = self)");
                 println!("cur_seq: {}", &seq);
-                println!("prep_seq: {}", &tx.prepare_sequence_number.unwrap_or_default());
+                println!(
+                    "prep_seq: {}",
+                    &tx.prepare_sequence_number.unwrap_or_default()
+                );
                 println!("to_offset: {}", &tx.timeout);
-                println!("to_seq: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout);
-                println!("diff: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout - seq);
+                println!(
+                    "to_seq: {}",
+                    tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+                );
+                println!(
+                    "diff: {}",
+                    tx.prepare_sequence_number.unwrap_or_default() + tx.timeout - seq
+                );
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -313,10 +322,19 @@ impl TxCoordinator {
             if seq > tx.prepare_sequence_number.unwrap_or_default() + tx.timeout {
                 println!("TIMEOUT (coord = other)");
                 println!("cur_seq: {}", &seq);
-                println!("prep_seq: {}", &tx.prepare_sequence_number.unwrap_or_default());
+                println!(
+                    "prep_seq: {}",
+                    &tx.prepare_sequence_number.unwrap_or_default()
+                );
                 println!("to_offset: {}", &tx.timeout);
-                println!("to_seq: {}", tx.prepare_sequence_number.unwrap_or_default() + tx.timeout);
-                println!("diff: {}", tx.prepare_sequence_number.unwrap_or_default() - seq + tx.timeout);
+                println!(
+                    "to_seq: {}",
+                    tx.prepare_sequence_number.unwrap_or_default() + tx.timeout
+                );
+                println!(
+                    "diff: {}",
+                    tx.prepare_sequence_number.unwrap_or_default() - seq + tx.timeout
+                );
                 return Err(Error::Timeout);
             } else {
                 self.committed_tx.push(((*tx_id, seq), tx));
@@ -648,7 +666,10 @@ impl TankClient {
 
     /* Transactions */
 
-    fn discern_shards(&self, msg: Vec<(Operation, Vec<String>)>) -> BTreeMap<Vec<String>, (Vec<Operation>, bool)> {
+    fn discern_shards(
+        &self,
+        msg: Vec<(Operation, Vec<String>)>,
+    ) -> BTreeMap<Vec<String>, (Vec<Operation>, bool)> {
         let mut txn_shards = BTreeMap::new();
         // put all ops going to the same set of recipients together
         for (op, mut recipients) in msg {
@@ -666,7 +687,8 @@ impl TankClient {
             }
 
             if txn_shards.contains_key(&recipients) {
-                let (ops, _): &mut (Vec<Operation>, bool) = txn_shards.get_mut(&recipients).unwrap();
+                let (ops, _): &mut (Vec<Operation>, bool) =
+                    txn_shards.get_mut(&recipients).unwrap();
                 ops.push(op);
                 //txn_shards.insert(recipients, ops);
             } else {
@@ -704,11 +726,17 @@ impl TankClient {
         let txn_shards = self.discern_shards(ops.clone());
         let mut txn_series = Vec::new();
         for (recipients, (ops, coord_loopback)) in txn_shards {
-            let transaction =
-                Transaction::new(device_id.clone(), recipients.clone(), ops, prev_seq_number, coord_loopback);
+            let transaction = Transaction::new(
+                device_id.clone(),
+                recipients.clone(),
+                ops,
+                prev_seq_number,
+                coord_loopback,
+            );
             txn_series.push((
                 recipients,
-                Operation::to_string(&Operation::TxStart(device_id.clone(), transaction)).unwrap(),
+                Operation::to_string(&Operation::TxStart(device_id.clone(), transaction))
+                    .unwrap(),
                 false,
             ));
         }
@@ -717,13 +745,11 @@ impl TankClient {
 
     async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
         let recipients = vec![self.idkey(), sender];
-        self.send_message(
-            vec![(
-                recipients,
-                Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
-                false,
-            )]
-        )
+        self.send_message(vec![(
+            recipients,
+            Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
+            false,
+        )])
         .await;
     }
 
@@ -735,13 +761,11 @@ impl TankClient {
             .get_transaction(tx_id)
             .unwrap()
             .clone();
-        self.send_message(
-            vec![(
-                tx.recipients,
-                Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
-                false,
-            )]
-        )
+        self.send_message(vec![(
+            tx.recipients,
+            Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
+            false,
+        )])
         .await;
     }
 
@@ -753,13 +777,11 @@ impl TankClient {
             .get_transaction(tx_id)
             .unwrap()
             .clone();
-        self.send_message(
-            vec![(
-                tx.recipients,
-                Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id)).unwrap(),
-                false,
-            )]
-        )
+        self.send_message(vec![(
+            tx.recipients,
+            Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id)).unwrap(),
+            false,
+        )])
         .await;
     }
 
@@ -1174,11 +1196,7 @@ impl TankClient {
         &self,
         series: Vec<(Vec<String>, String, bool)>,
     ) -> reqwest::Result<reqwest::Response> {
-        self.core
-            .as_ref()
-            .unwrap()
-            .send_message(series)
-            .await
+        self.core.as_ref().unwrap().send_message(series).await
     }
 
     /* Remaining top-level functionality */
@@ -1378,32 +1396,30 @@ impl TankClient {
         // send all groups and to new members
         // FIXME send_or_add_to_txn?
         match self
-            .send_message(
-                vec![(
-                    vec![sender],
-                    Operation::to_string(&Operation::ConfirmUpdateLinked(
-                        perm_linked_name,
-                        self.device
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .meta_store
-                            .read()
-                            .get_all_groups()
-                            .clone(),
-                        self.device
-                            .read()
-                            .as_ref()
-                            .unwrap()
-                            .data_store
-                            .read()
-                            .get_all_data()
-                            .clone(),
-                    ))
-                    .unwrap(),
-                    false,
-                )]
-            )
+            .send_message(vec![(
+                vec![sender],
+                Operation::to_string(&Operation::ConfirmUpdateLinked(
+                    perm_linked_name,
+                    self.device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .meta_store
+                        .read()
+                        .get_all_groups()
+                        .clone(),
+                    self.device
+                        .read()
+                        .as_ref()
+                        .unwrap()
+                        .data_store
+                        .read()
+                        .get_all_data()
+                        .clone(),
+                ))
+                .unwrap(),
+                false,
+            )])
             .await
         {
             Ok(_) => {
@@ -1439,13 +1455,11 @@ impl TankClient {
 
         // FIXME send_or_add_to_txn?
         let res = self
-            .send_message(
-                vec![(
-                    vec![self.idkey()],
-                    Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
-                    false,
-                )]
-            )
+            .send_message(vec![(
+                vec![self.idkey()],
+                Operation::to_string(&Operation::Dummy(op_id.clone())).unwrap(),
+                false,
+            )])
             .await;
 
         if res.is_err() {
@@ -1606,17 +1620,15 @@ impl TankClient {
 
         // FIXME send_or_add_to_txn
         match self
-            .send_message(
-                vec![(
-                    vec![sender],
-                    Operation::to_string(&Operation::ConfirmAddContact(
-                        linked_name,
-                        linked_device_groups,
-                    ))
-                    .unwrap(),
-                    false,
-                )]
-            )
+            .send_message(vec![(
+                vec![sender],
+                Operation::to_string(&Operation::ConfirmAddContact(
+                    linked_name,
+                    linked_device_groups,
+                ))
+                .unwrap(),
+                false,
+            )])
             .await
         {
             Ok(_) => Ok(()),
@@ -1631,20 +1643,18 @@ impl TankClient {
     pub async fn delete_self_device(&self) -> Result<(), Error> {
         // TODO send to contact devices too
         match self
-            .send_message(
-                vec![(
-                    self.device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .linked_devices_excluding_self(),
-                    Operation::to_string(&Operation::DeleteOtherDevice(
-                        self.core.as_ref().unwrap().idkey(),
-                    ))
-                    .unwrap(),
-                    false,
-                )]
-            )
+            .send_message(vec![(
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .linked_devices_excluding_self(),
+                Operation::to_string(&Operation::DeleteOtherDevice(
+                    self.core.as_ref().unwrap().idkey(),
+                ))
+                .unwrap(),
+                false,
+            )])
             .await
         {
             Ok(_) => {
@@ -1666,18 +1676,16 @@ impl TankClient {
     pub async fn delete_other_device(&self, to_delete: String) -> Result<(), Error> {
         // TODO send to contact devices too
         match self
-            .send_message(
-                vec![(
-                    self.device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .linked_devices_excluding_self_and_other(&to_delete),
-                    Operation::to_string(&Operation::DeleteOtherDevice(to_delete.clone()))
-                        .unwrap(),
-                    false,
-                )]
-            )
+            .send_message(vec![(
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .linked_devices_excluding_self_and_other(&to_delete),
+                Operation::to_string(&Operation::DeleteOtherDevice(to_delete.clone()))
+                    .unwrap(),
+                false,
+            )])
             .await
         {
             Ok(_) => {
@@ -1689,13 +1697,11 @@ impl TankClient {
                     .map_err(Error::from);
 
                 match self
-                    .send_message(
-                        vec![(
-                            vec![to_delete.clone()],
-                            Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
-                            false,
-                        )]
-                    )
+                    .send_message(vec![(
+                        vec![to_delete.clone()],
+                        Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
+                        false,
+                    )])
                     .await
                 {
                     Ok(_) => Ok(()),
@@ -1710,20 +1716,18 @@ impl TankClient {
         // TODO notify contacts
 
         match self
-            .send_message(
-                vec![(
-                    self.device
-                        .read()
-                        .as_ref()
-                        .unwrap()
-                        .linked_devices()
-                        .iter()
-                        .map(|x| x.clone())
-                        .collect::<Vec<String>>(),
-                    Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
-                    false,
-                )]
-            )
+            .send_message(vec![(
+                self.device
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .linked_devices()
+                    .iter()
+                    .map(|x| x.clone())
+                    .collect::<Vec<String>>(),
+                Operation::to_string(&Operation::DeleteSelfDevice).unwrap(),
+                false,
+            )])
             .await
         {
             Ok(_) => Ok(()),
@@ -1796,7 +1800,11 @@ impl TankClient {
             Ok(())
         } else {
             match self
-                .send_message(vec![(dst_idkeys, Operation::to_string(op).unwrap(), bench)])
+                .send_message(vec![(
+                    dst_idkeys,
+                    Operation::to_string(op).unwrap(),
+                    bench,
+                )])
                 .await
             {
                 Ok(_) => Ok(()),

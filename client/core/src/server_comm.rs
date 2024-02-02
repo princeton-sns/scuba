@@ -50,7 +50,10 @@ impl From<OtkeyResponse> for String {
 
 #[async_trait]
 pub trait ServerComm {
-    async fn send_message(&self, series: LinkedList<EncryptedOutboxMessage>) -> Result<Response>;
+    async fn send_message(
+        &self,
+        series: LinkedList<EncryptedOutboxMessage>,
+    ) -> Result<Response>;
 
     async fn get_otkey_from_server(&self, dst_idkey: &String) -> Result<OtkeyResponse>;
 
@@ -230,7 +233,10 @@ impl<C: CoreClient> ServerCommImpl<C> {
 
 #[async_trait]
 impl<C: CoreClient> ServerComm for ServerCommImpl<C> {
-    async fn send_message(&self, series: LinkedList<EncryptedOutboxMessage>) -> Result<Response> {
+    async fn send_message(
+        &self,
+        series: LinkedList<EncryptedOutboxMessage>,
+    ) -> Result<Response> {
         self.client
             .post(self.base_url.join("/message-bin").expect("").as_str())
             .header("Content-Type", "application/json")

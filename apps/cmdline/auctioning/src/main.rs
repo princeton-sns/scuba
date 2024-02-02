@@ -177,9 +177,10 @@ struct AuctioningApp {
 impl AuctioningApp {
     pub async fn new() -> AuctioningApp {
         let client = TankClient::new(
-            None, None, false, None, None,
-            true, false, false, false, // sequential consistency
-            None, None, None, None, None, None, None, None, None, // benchmarking args
+            None, None, false, None, None, true, false, false,
+            false, // sequential consistency
+            None, None, None, None, None, None, None, None,
+            None, // benchmarking args
         )
         .await;
         Self { client }

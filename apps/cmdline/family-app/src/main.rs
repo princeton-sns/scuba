@@ -171,9 +171,10 @@ struct FamilyApp {
 impl FamilyApp {
     pub async fn new() -> FamilyApp {
         let client = TankClient::new(
-            None, None, false, None, None,
-            false, false, true, false, // causal consistency
-            None, None, None, None, None, None, None, None, None, // benchmarking args
+            None, None, false, None, None, false, false, true,
+            false, // causal consistency
+            None, None, None, None, None, None, None, None,
+            None, // benchmarking args
         )
         .await;
         Self { client }

@@ -1,7 +1,7 @@
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque, LinkedList};
+use std::collections::{BTreeMap, LinkedList, VecDeque};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
@@ -159,8 +159,10 @@ impl<C: CoreClient> Core<C> {
             }
 
             let mut hash_vectors_guard = self.hash_vectors.lock().await;
-            let (common_payload, val_payloads) = hash_vectors_guard
-                .prepare_message(dst_idkeys.clone(), bincode::serialize(&payload).unwrap());
+            let (common_payload, val_payloads) = hash_vectors_guard.prepare_message(
+                dst_idkeys.clone(),
+                bincode::serialize(&payload).unwrap(),
+            );
 
             // FIXME What if common_payloads are identical?
             // If they're identical here, they can trigger a reordering detection,
@@ -212,7 +214,8 @@ impl<C: CoreClient> Core<C> {
                 //let rcpt_list_len_diff = num_common_pt_bytes - num_op_pt_bytes;
                 let rcpt_list_perc: f64 = (num_common_pt_bytes / num_op_pt_bytes) * 100.0;
                 //let symenc_len_diff = num_common_ct_bytes - num_common_pt_bytes;
-                let symenc_perc: f64 = (num_common_ct_bytes / num_common_pt_bytes) * 100.0;
+                let symenc_perc: f64 =
+                    (num_common_ct_bytes / num_common_pt_bytes) * 100.0;
                 //let total_len_diff = num_common_ct_bytes - num_op_pt_bytes;
                 let both_perc: f64 = (num_common_ct_bytes / num_op_pt_bytes) * 100.0;
                 write!(f, "---common overhead\n");

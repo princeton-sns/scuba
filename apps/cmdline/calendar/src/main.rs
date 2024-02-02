@@ -208,9 +208,10 @@ struct CalendarApp {
 impl CalendarApp {
     pub async fn new() -> CalendarApp {
         let client = TankClient::new(
-            None, None, false, None, None,
-            false, false, true, true, // serializability
-            None, None, None, None, None, None, None, None, None, // benchmarking args
+            None, None, false, None, None, false, false, true,
+            true, // serializability
+            None, None, None, None, None, None, None, None,
+            None, // benchmarking args
         )
         .await;
         Self { client }
@@ -308,9 +309,7 @@ impl CalendarApp {
         }
     }
 
-    pub async fn get_name(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn get_name(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         let mut res = context.client.start_transaction();
         if res.is_err() {
             return Ok(Some(String::from("Cannot start transaction.")));
@@ -330,9 +329,7 @@ impl CalendarApp {
         ))))
     }
 
-    pub async fn get_idkey(
-        context: &mut Arc<Self>,
-    ) -> ReplResult<Option<String>> {
+    pub async fn get_idkey(context: &mut Arc<Self>) -> ReplResult<Option<String>> {
         let mut res = context.client.start_transaction();
         if res.is_err() {
             return Ok(Some(String::from("Cannot start transaction.")));
@@ -1172,8 +1169,12 @@ async fn main() -> ReplResult<()> {
             |args, context| Box::pin(CalendarApp::init_linked_device(args, context)),
         )
         .with_command(Command::new("check_device"), CalendarApp::check_device)
-        .with_command_async(Command::new("get_name"), |_, context| Box::pin(CalendarApp::get_name(context)))
-        .with_command_async(Command::new("get_idkey"), |_, context| Box::pin(CalendarApp::get_idkey(context)))
+        .with_command_async(Command::new("get_name"), |_, context| {
+            Box::pin(CalendarApp::get_name(context))
+        })
+        .with_command_async(Command::new("get_idkey"), |_, context| {
+            Box::pin(CalendarApp::get_idkey(context))
+        })
         .with_command_async(
             Command::new("add_patient").arg(Arg::new("idkey").required(true)),
             |args, context| Box::pin(CalendarApp::add_patient(args, context)),

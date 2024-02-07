@@ -1784,16 +1784,13 @@ impl TankClient {
         op: &Operation,
         bench: bool,
     ) -> Result<(), Error> {
-        if self
-            .tx_coordinator
-            .read()
-            .as_ref()
-            .is_some() && self
-            .tx_coordinator
-            .read()
-            .as_ref()
-            .unwrap()
-            .check_tx_state()
+        if self.tx_coordinator.read().as_ref().is_some()
+            && self
+                .tx_coordinator
+                .read()
+                .as_ref()
+                .unwrap()
+                .check_tx_state()
         {
             self.tx_coordinator
                 .write()

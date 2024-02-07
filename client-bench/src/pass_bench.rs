@@ -324,29 +324,28 @@ impl PasswordManager {
 }
 
 pub async fn run() {
-    for num_clients in [2] {
-        //[1, 2, 4, 8, 16, 32] {
-        println!("Running {} clients", &num_clients);
-        let num_warmup = 2; //1000;
-        let num_runs = 2; //10000;
-        let total_runs = num_runs + num_warmup;
+    let base_dirname = "update_pass_output";
+    let mut idx = 0;
 
-        let base_dirname = "update_pass_output";
-        let mut idx = 0;
+    let mut dirname: String;
+    loop {
+        dirname = String::from(format!("./{}_{}", &base_dirname, &idx));
 
-        let mut dirname: String;
-        loop {
-            dirname = String::from(format!("./{}_{}", &base_dirname, &idx));
-
-            let res = fs::create_dir(dirname.clone());
-            if res.is_ok() {
-                break;
-            }
-
-            // if res.is_err(), dir already exists (empty or not), so let's
-            // create a fresh one for this run
-            idx += 1;
+        let res = fs::create_dir(dirname.clone());
+        if res.is_ok() {
+            break;
         }
+
+        // if res.is_err(), dir already exists (empty or not), so let's
+        // create a fresh one for this run
+        idx += 1;
+    }
+
+    for num_clients in [1, 2, 4, 8, 16, 32] {
+        println!("Running {} clients", &num_clients);
+        let num_warmup = 100;
+        let num_runs = 1000;
+        let total_runs = num_runs + num_warmup;
 
         let core_send_filename = format!(
             "{}/{}c_{}r_ts_core_send.txt",

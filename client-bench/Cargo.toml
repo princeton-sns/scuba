@@ -1,5 +1,5 @@
 [package]
-name = "bench"
+name = "client-bench"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,7 +15,7 @@ serde = { version = "1.0.152", features = ["derive"] }
 #async-condvar-fair = { version = "1.0.0", features = ["parking_lot_0_12"] }
 #bincode = "1.3.3"
 #rand = { version = "0.8.5", features = ["small_rng"] }
-tank = { path = "../../client/tank" }
+tank = { path = "../client/tank" }
 uuid = "1.3.0"
 base64ct = { version = "1.6.0", features = ["alloc"] }
 sha2 = "0.10.8"

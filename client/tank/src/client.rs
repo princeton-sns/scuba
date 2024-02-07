@@ -1778,7 +1778,6 @@ impl TankClient {
             .await;
     }
 
-    // TODO: change message to be a collection of messages
     async fn send_or_add_to_txn(
         &self,
         dst_idkeys: Vec<String>,
@@ -1786,6 +1785,10 @@ impl TankClient {
         bench: bool,
     ) -> Result<(), Error> {
         if self
+            .tx_coordinator
+            .read()
+            .as_ref()
+            .is_some() && self
             .tx_coordinator
             .read()
             .as_ref()

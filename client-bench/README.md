@@ -16,14 +16,14 @@ corresponds to the most recent benchmark results).
 
 ### Setup
 
-Create a python virtual environment. I am using python 3.8.18 so I can create
+Create a python virtual environment. I am using python 3.7.17 so I can create
 a virtual environment using:
 
 ```sh
-python3.8 -m venv venv
+python3.7 -m venv venv
 ```
 
-Note python 3.10 poses problems for tikzplotlib used in `gen_figures.ipynb`, so try to use 3.8 if possible.
+Note python 3.8 and 3.10 both pose different problems for tikzplotlib used in `gen_figures.ipynb`, so try to use 3.7.
 The virtual environment can then be activated by:
 
 ```sh
@@ -49,7 +49,7 @@ Then run jupyter notebook via:
 jupyter notebook
 ```
 
-You will likely need to install matplotlib, pandas, and tikzplotlib via pip in order for the notebooks to run:
+You will need to install matplotlib, pandas, and tikzplotlib via pip in order for the notebooks to run:
 
 ```sh
 pip install [package]
@@ -66,6 +66,5 @@ This generates two output files for each benchmark category parsed: `send_means_
 
 ### gen_figures.ipynb
 
-Before running check that all values in the second cell are correct. Then running all cells should just work.
+Before running check that all values in the second cell are correct. Then running all cells should just work. The notebook will output two `stacked_grouped_barchart.tex` files, one for send-path latencies and one for receive-path latencies.
 
-TODO where does latex/tikx come from?

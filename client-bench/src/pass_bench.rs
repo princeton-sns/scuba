@@ -337,7 +337,7 @@ pub async fn run() {
     println!("num_tank_send: {}", &num_tank_send);
     println!("num_tank_recv: {}", &num_tank_recv);
 
-    let base_dirname = "update_pass_output";
+    let base_dirname = "update_pass_data";
     let mut idx = 0;
     let mut dirname: String;
     loop {

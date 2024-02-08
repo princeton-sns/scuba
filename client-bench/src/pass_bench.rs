@@ -83,14 +83,14 @@ impl PasswordManager {
     pub async fn new(
         num_core_send: Option<usize>,
         num_core_recv: Option<usize>,
-        num_dal_send: Option<usize>,
+        num_tank_send: Option<usize>,
         total_runs: Option<usize>,
         bw_filename: Option<String>,
         core_send_filename: Option<String>,
         core_recv_filename: Option<String>,
-        dal_send_filename: Option<String>,
-        dal_recv_filename_u: Option<String>,
-        dal_recv_filename_d: Option<String>,
+        tank_send_filename: Option<String>,
+        tank_recv_filename_u: Option<String>,
+        tank_recv_filename_d: Option<String>,
         app_filename: String,
     ) -> PasswordManager {
         let client = TankClient::new(
@@ -111,13 +111,13 @@ impl PasswordManager {
             // benchmark args
             num_core_send,
             num_core_recv,
-            num_dal_send,
+            num_tank_send,
             bw_filename,
             core_send_filename,
             core_recv_filename,
-            dal_send_filename,
-            dal_recv_filename_u,
-            dal_recv_filename_d,
+            tank_send_filename,
+            tank_recv_filename_u,
+            tank_recv_filename_d,
         )
         .await;
         client.create_standalone_device().await;
@@ -249,7 +249,7 @@ impl PasswordManager {
         self.ts
             .lock()
             .await
-            .push((idx, String::from("enter DAL"), Instant::now()));
+            .push((idx, String::from("enter TANK"), Instant::now()));
         let res = self
             .client
             .set_data(
@@ -264,7 +264,7 @@ impl PasswordManager {
         self.ts
             .lock()
             .await
-            .push((idx, String::from("exit DAL"), Instant::now()));
+            .push((idx, String::from("exit TANK"), Instant::now()));
 
         self.ts
             .lock()
@@ -357,31 +357,31 @@ pub async fn run() {
         );
         let app_filename =
             format!("{}/{}c_{}r_ts_app.txt", &dirname, &num_clients, &num_runs);
-        let dal_send_filename = format!(
-            "{}/{}c_{}r_ts_dal_send.txt",
+        let tank_send_filename = format!(
+            "{}/{}c_{}r_ts_tank_send.txt",
             &dirname, &num_clients, &num_runs
         );
-        let dal_recv_filename_update = format!(
-            "{}/{}c_{}r_ts_dal_recv_update.txt",
+        let tank_recv_filename_update = format!(
+            "{}/{}c_{}r_ts_tank_recv_update.txt",
             &dirname, &num_clients, &num_runs
         );
-        let dal_recv_filename_dummy = format!(
-            "{}/{}c_{}r_ts_dal_recv_dummy.txt",
+        let tank_recv_filename_dummy = format!(
+            "{}/{}c_{}r_ts_tank_recv_dummy.txt",
             &dirname, &num_clients, &num_runs
         );
-        let dal_recv_filename_other = format!(
-            "{}/{}c_{}r_ts_dal_recv_other.txt",
+        let tank_recv_filename_other = format!(
+            "{}/{}c_{}r_ts_tank_recv_other.txt",
             &dirname, &num_clients, &num_runs
         );
 
         let num_core_send = 2 * total_runs;
         let num_core_recv = 2 * total_runs;
-        let num_dal_send = total_runs;
-        let num_dal_recv = 2 * total_runs;
+        let num_tank_send = total_runs;
+        let num_tank_recv = 2 * total_runs;
         println!("num_core_send: {}", &num_core_send);
         println!("num_core_recv: {}", &num_core_recv);
-        println!("num_dal_send: {}", &num_dal_send);
-        println!("num_dal_recv: {}", &num_dal_recv);
+        println!("num_tank_send: {}", &num_tank_send);
+        println!("num_tank_recv: {}", &num_tank_recv);
 
         let bw_out =
             format!("{}/{}c_{}r_bw_pmapp.txt", &dirname, &num_clients, &num_runs);
@@ -405,9 +405,9 @@ pub async fn run() {
             Some(bw_out),
             Some(core_send_filename.clone()),
             Some(core_recv_filename.clone()),
-            Some(dal_send_filename.clone()),
-            Some(dal_recv_filename_update.clone()),
-            Some(dal_recv_filename_dummy.clone()),
+            Some(tank_send_filename.clone()),
+            Some(tank_recv_filename_update.clone()),
+            Some(tank_recv_filename_dummy.clone()),
             app_filename.clone(),
         )
         .await;
@@ -427,9 +427,9 @@ pub async fn run() {
                 None,
                 Some(core_send_filename.clone()),
                 Some(core_recv_filename.clone()),
-                Some(dal_send_filename.clone()),
-                Some(dal_recv_filename_other.clone()),
-                Some(dal_recv_filename_other.clone()),
+                Some(tank_send_filename.clone()),
+                Some(tank_recv_filename_other.clone()),
+                Some(tank_recv_filename_other.clone()),
                 app_filename.clone(),
             )
             .await;

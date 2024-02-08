@@ -7,7 +7,10 @@ an `update_pass_output_[num]` directory, where `num` monotonically increases if
 there already exists an `update_pass_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).
 
-To run family app benchmarks, run `cargo run -- fam`.
+To run family app benchmarks, run `cargo run -- fam`. This should create
+an `edit_post_output_[num]` directory, where `num` monotonically increases if
+there already exists an `edit_post_output_[num]` directory (the highest `num`
+corresponds to the most recent benchmark results).
 
 ## Aggregating and visualizing data
 
@@ -49,6 +52,8 @@ jupyter notebook
 
 Before running check that all values in the second cell are correct. Then running
 all cells should just work (expects num clients to be 1, 2, 4, 8, 16, and 32).
+
+This generates two output files for each benchmark category parsed: `send_means_*.txt` and `recv_means_*.txt`. These files are then used by `gen_figures.ipynb` to generate stacked bar graphs. Note that `gen_figures.ipynb` expects parsed results for both benchmark categories because the resulting bar graphs depict both categories side-by-side.
 
 ### gen_figures.ipynb
 

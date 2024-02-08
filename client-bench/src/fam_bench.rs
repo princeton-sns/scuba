@@ -341,9 +341,21 @@ impl FamilyApp {
 }
 
 pub async fn run() {
+    let num_warmup = 100;
+    let num_runs = 1000;
+    let total_runs = num_runs + num_warmup;
+
+    let num_core_send = 2 * total_runs;
+    let num_core_recv = 2 * total_runs;
+    let num_tank_send = total_runs;
+    let num_tank_recv = 2 * total_runs;
+    println!("num_core_send: {}", &num_core_send);
+    println!("num_core_recv: {}", &num_core_recv);
+    println!("num_tank_send: {}", &num_tank_send);
+    println!("num_tank_recv: {}", &num_tank_recv);
+
     let base_dirname = "edit_post_output";
     let mut idx = 0;
-
     let mut dirname: String;
     loop {
         dirname = String::from(format!("./{}_{}", &base_dirname, &idx));
@@ -358,12 +370,8 @@ pub async fn run() {
         idx += 1;
     }
 
-    for num_clients in [2] {
-        //[1, 2, 4, 8, 16, 32] {
+    for num_clients in [1, 2, 4, 8, 16, 32] {
         println!("Running {} clients", &num_clients);
-        let num_warmup = 100;
-        let num_runs = 1000;
-        let total_runs = num_runs + num_warmup;
 
         let core_send_filename = format!(
             "{}/{}c_{}r_ts_core_send.txt",
@@ -391,15 +399,6 @@ pub async fn run() {
             "{}/{}c_{}r_ts_tank_recv_other.txt",
             &dirname, &num_clients, &num_runs
         );
-
-        let num_core_send = 2 * total_runs;
-        let num_core_recv = 2 * total_runs;
-        let num_tank_send = total_runs;
-        let num_tank_recv = 2 * total_runs;
-        println!("num_core_send: {}", &num_core_send);
-        println!("num_core_recv: {}", &num_core_recv);
-        println!("num_tank_send: {}", &num_tank_send);
-        println!("num_tank_recv: {}", &num_tank_recv);
 
         let bw_out = format!(
             "{}/{}c_{}r_bw_famapp.txt",

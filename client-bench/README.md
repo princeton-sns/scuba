@@ -57,14 +57,15 @@ pip install [package]
 
 TODO create requirements.txt (`pipreqs` isn't working and `pip freeze` outputs too much, maybe try `pipenv`).
 
-### parse_results.ipynb
+### Running `parse_results.ipynb`
 
 Before running check that all values in the second cell are correct. Then running
 all cells should just work (expects num clients to be 1, 2, 4, 8, 16, and 32).
 
 This generates two output files for each benchmark category parsed: `send_means_*.txt` and `recv_means_*.txt`. These files are then used by `gen_figures.ipynb` to generate stacked bar graphs. Note that `gen_figures.ipynb` expects parsed results for *both* benchmark categories so the resulting bar graphs can depict both categories side-by-side.
 
-### gen_figures.ipynb
+### Running `gen_figures.ipynb`
 
 Before running check that all values in the second cell are correct. Then running all cells should just work. The notebook will output two `stacked_grouped_barchart.tex` files, one for send-path latencies and one for receive-path latencies.
 
+### Cleaning up the latex files

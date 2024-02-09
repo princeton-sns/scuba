@@ -4,26 +4,26 @@
 
 ### Password Manager (`update_password` function)
 
-To run password manager benchmarks, run
+To run password manager benchmarks, run:
 
 ```sh
 cargo run --release -- pass
 ```
 
-This should create
+from the `client-bench` directory. This should create
 an `update_pass_output_[num]` directory, where `num` monotonically increases if
 there already exists an `update_pass_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).
 
 ### Family Social Media (`edit_post` function)
 
-To run family app benchmarks, run
+To run family app benchmarks, run:
 
 ```sh
 cargo run --release -- fam
 ```
 
-This should create
+from the `client-bench` directory. This should create
 an `edit_post_output_[num]` directory, where `num` monotonically increases if
 there already exists an `edit_post_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).
@@ -75,14 +75,14 @@ TODO create requirements.txt (`pipreqs` isn't working and `pip freeze` outputs t
 
 ### Running `parse_results.ipynb`
 
-Before running check that all values in the second cell are correct. Then running
+**Before running check that all values in the second cell are correct.** Then running
 all cells should just work (expects num clients to be 1, 2, 4, 8, 16, and 32).
 
 This generates two output files for each benchmark category parsed: `send_means_*.txt` and `recv_means_*.txt`. These files are then used by `gen_figures.ipynb` to generate stacked bar graphs. Note that `gen_figures.ipynb` expects parsed results for *both* benchmark categories so the resulting bar graphs can depict both categories side-by-side.
 
 ### Running `gen_figures.ipynb`
 
-Before running check that all values in the second cell are correct. Then running all cells should just work. The notebook will output two `stacked_grouped_barchart.tex` files, one for send-path latencies and one for receive-path latencies.
+**Before running check that all values in the second cell are correct.** Then running all cells should just work. The notebook will output two `stacked_grouped_barchart.tex` files, one for send-path latencies and one for receive-path latencies.
 
 ### Cleaning up the latex files
 

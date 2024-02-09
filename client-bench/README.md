@@ -2,12 +2,12 @@
 
 ## Generating data
 
-To run password manager benchmarks, run `cargo run -- pass`. This should create
+To run password manager benchmarks, run `cargo run --release -- pass`. This should create
 an `update_pass_output_[num]` directory, where `num` monotonically increases if
 there already exists an `update_pass_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).
 
-To run family app benchmarks, run `cargo run -- fam`. This should create
+To run family app benchmarks, run `cargo run --release -- fam`. This should create
 an `edit_post_output_[num]` directory, where `num` monotonically increases if
 there already exists an `edit_post_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).

@@ -82,8 +82,14 @@ This generates two output files for each benchmark category parsed: `send_means_
 
 ### Running `gen_figures.ipynb`
 
-**Before running check that all values in the second cell are correct.** Then running all cells should just work. The notebook will output two `stacked_grouped_barchart.tex` files, one for send-path latencies and one for receive-path latencies.
+**Before running check that all values in the second cell are correct.** Then running all cells should just work. The notebook will output two `*_bargraph.tikz.tex` files, one for send-path latencies and one for receive-path latencies.
 
-### Cleaning up the latex files
+### Manually modifying the latex files
 
-TODO
+Add:
+
+```
+reverse legend=true,
+```
+
+to the axis block in each generated `tikz.tex` file.

@@ -2,12 +2,28 @@
 
 ## Generating data
 
-To run password manager benchmarks, run `cargo run --release -- pass`. This should create
+### Password Manager (`update_password` function)
+
+To run password manager benchmarks, run
+
+```sh
+cargo run --release -- pass
+```
+
+This should create
 an `update_pass_output_[num]` directory, where `num` monotonically increases if
 there already exists an `update_pass_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).
 
-To run family app benchmarks, run `cargo run --release -- fam`. This should create
+### Family Social Media (`edit_post` function)
+
+To run family app benchmarks, run
+
+```sh
+cargo run --release -- fam
+```
+
+This should create
 an `edit_post_output_[num]` directory, where `num` monotonically increases if
 there already exists an `edit_post_output_[num]` directory (the highest `num`
 corresponds to the most recent benchmark results).
@@ -69,3 +85,5 @@ This generates two output files for each benchmark category parsed: `send_means_
 Before running check that all values in the second cell are correct. Then running all cells should just work. The notebook will output two `stacked_grouped_barchart.tex` files, one for send-path latencies and one for receive-path latencies.
 
 ### Cleaning up the latex files
+
+TODO

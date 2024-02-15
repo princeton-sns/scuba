@@ -1,5 +1,11 @@
 # Running Benchmarks
 
+## Setting up cloudlab experiment
+
+Reserve a single `m400` cloudlab machine.
+
+TODO test out cloudlab.
+
 ## Generating data
 
 ### Password Manager (`update_password` function)

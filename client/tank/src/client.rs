@@ -465,14 +465,14 @@ impl CoreClient for TankClient {
         if bench && !dummy && self.benchmark_recv_update.read().is_some() {
             self.recv_update_timestamp_vec.lock().push((
                 self.benchmark_recv_update.read().unwrap(),
-                String::from("enter recvDAL"),
+                String::from("enter recvTANK"),
                 Instant::now(),
             ));
         }
         if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
             self.recv_dummy_timestamp_vec.lock().push((
                 self.benchmark_recv_dummy.read().unwrap(),
-                String::from("enter recvDAL"),
+                String::from("enter recvTANK"),
                 Instant::now(),
             ));
         }
@@ -512,7 +512,7 @@ impl CoreClient for TankClient {
         if bench && !dummy && self.benchmark_recv_update.read().is_some() {
             self.recv_update_timestamp_vec.lock().push((
                 self.benchmark_recv_update.read().unwrap(),
-                String::from("exit recvDAL"),
+                String::from("exit recvTANK"),
                 Instant::now(),
             ));
             let mut ctr_check_guard = self.ctr_check_recv_update.lock();
@@ -537,7 +537,7 @@ impl CoreClient for TankClient {
         if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
             self.recv_dummy_timestamp_vec.lock().push((
                 self.benchmark_recv_dummy.read().unwrap(),
-                String::from("exit recvDAL"),
+                String::from("exit recvTANK"),
                 Instant::now(),
             ));
             let mut ctr_check_guard = self.ctr_check_recv_dummy.lock();
@@ -1784,16 +1784,13 @@ impl TankClient {
         op: &Operation,
         bench: bool,
     ) -> Result<(), Error> {
-        if self
-            .tx_coordinator
-            .read()
-            .as_ref()
-            .is_some() && self
-            .tx_coordinator
-            .read()
-            .as_ref()
-            .unwrap()
-            .check_tx_state()
+        if self.tx_coordinator.read().as_ref().is_some()
+            && self
+                .tx_coordinator
+                .read()
+                .as_ref()
+                .unwrap()
+                .check_tx_state()
         {
             self.tx_coordinator
                 .write()
@@ -2184,7 +2181,7 @@ impl TankClient {
         if bench && self.benchmark_send.read().is_some() {
             self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
-                String::from("enter sendDAL"),
+                String::from("enter sendTANK"),
                 Instant::now(),
             ));
         }
@@ -2426,7 +2423,7 @@ impl TankClient {
         if bench && self.benchmark_send.read().is_some() {
             self.send_timestamp_vec.lock().push((
                 self.benchmark_send.read().unwrap(),
-                String::from("exit sendDAL"),
+                String::from("exit sendTANK"),
                 Instant::now(),
             ));
             let mut ctr_check_guard = self.ctr_check_send.lock();

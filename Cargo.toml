@@ -14,5 +14,5 @@ members = [
     "server",
     "server-bench",
     "server-goose-bench",
-    "apps/bench",
+    "client-bench",
 ]

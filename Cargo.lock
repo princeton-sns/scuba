@@ -533,23 +533,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
-name = "bench"
-version = "0.1.0"
-dependencies = [
- "base64ct",
- "bincode",
- "chrono",
- "passwords",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "sha2 0.10.8",
- "tank",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -784,6 +767,23 @@ name = "clap_lex"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
+
+[[package]]
+name = "client-bench"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "bincode",
+ "chrono",
+ "passwords",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "tank",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "cmake"

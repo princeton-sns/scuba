@@ -2,9 +2,21 @@
 
 ## Setting up cloudlab experiment
 
-Reserve a single `m400` cloudlab machine.
-
-TODO test out cloudlab.
+1. Reserve a single `m400` cloudlab machine (TODO need extra storage?)
+1. `git clone` this repository in the machine's home directory.
+1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` and then run `. "$HOME/.cargo/env"`
+1. Install `tmux`
+   ```sh
+   sudo apt update
+   sudo apt upgrade (?)
+   sudo apt install tmux
+   tmux new
+   ```
+1. Install `pkg-config`: `sudo apt install pkg-config`
+1. Install `libssl-dev`: `sudo apt install libssl-dev`
+1. Install `cmake`: `sudo apt install cmake`
+1. Start the SCUBA server via [these](https://github.com/princeton-sns/scuba/blob/main/server/README.md) instructions
+1. Then follow the instructions below to run the client benchmarks for the password manager and family social media app
 
 ## Generating data
 

@@ -16,7 +16,8 @@
 1. Install `libssl-dev`: `sudo apt install libssl-dev`
 1. Install `cmake`: `sudo apt install cmake`
 1. Start the SCUBA server via [these](https://github.com/princeton-sns/scuba/blob/main/server/README.md) instructions
-1. Then follow the instructions below to run the client benchmarks for the password manager and family social media app
+1. Then follow the instructions below to run the client benchmarks.
+1. When the benchmarks have finished running, recursively `scp` the results over to your local computer so you can run the jupyter notebooks on them. 
 
 ## Generating data
 

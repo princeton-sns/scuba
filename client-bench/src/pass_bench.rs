@@ -324,8 +324,8 @@ impl PasswordManager {
 }
 
 pub async fn run() {
-    let num_warmup = 100;
-    let num_runs = 1000;
+    let num_warmup = 1000;
+    let num_runs = 10000;
     let total_runs = num_runs + num_warmup;
 
     let num_core_send = 2 * total_runs;

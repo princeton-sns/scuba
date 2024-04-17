@@ -2,22 +2,16 @@
 
 ## Setting up cloudlab experiment
 
-1. Reserve a single `m400` cloudlab machine (TODO need extra storage?)
+1. Reserve a single `m400` cloudlab machine (no temporary file system needed)
+1. `sudo apt update`
 1. `git clone` this repository in the machine's home directory.
 1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` and then run `. "$HOME/.cargo/env"`
-1. Install `tmux`
-   ```sh
-   sudo apt update
-   sudo apt upgrade (?)
-   sudo apt install tmux
-   tmux new
-   ```
-1. Install `pkg-config`: `sudo apt install pkg-config`
-1. Install `libssl-dev`: `sudo apt install libssl-dev`
-1. Install `cmake`: `sudo apt install cmake`
+1. `sudo apt install -y tmux pkg-config libssl-dev cmake vim`
+1. `tmux new`
 1. Start the SCUBA server via [these](https://github.com/princeton-sns/scuba/blob/main/server/README.md) instructions
 1. Then follow the instructions below to run the client benchmarks.
-1. When the benchmarks have finished running, recursively `scp` the results over to your local computer so you can run the jupyter notebooks on them. 
+1. When the benchmarks have finished running, recursively `scp` the results over to your local computer so you can run the jupyter notebooks on them.
+1. When parsing results/generating figures, run `parse_results.ipynb` _twice_ total (once for each function being benchmarked).
 
 ## Generating data
 

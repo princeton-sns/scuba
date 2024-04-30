@@ -1,0 +1,26 @@
+[env]
+#HOME="/home/np"
+#ANDROID_NDK_HOME="$HOME/Android/Sdk/ndk/25.2.9519653/"
+TOOLCHAIN="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64"
+#TARGET="aarch64-linux-android"
+#API="33"
+#AR="$TOOLCHAIN/bin/llvm-ar"
+#CC="$TOOLCHAIN/bin/$TARGET$API-clang"
+#AS="$CC"
+#CXX="$TOOLCHAIN/bin/$TARGET$API-clang++"
+#LD="$TOOLCHAIN/bin/ld"
+RANLIB="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
+#STRIP="$TOOLCHAIN/bin/llvm-strip"
+
+# Arm
+#[target.arm7-linux-androideabi]
+
+# Arm64
+[target.aarch64-linux-android]
+linker = "/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang"
+
+# X86
+#[target.i686-linux-android]
+
+# X86_64
+#[target.x86_64-linux-android]

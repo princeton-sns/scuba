@@ -2819,6 +2819,67 @@ impl TankClient {
     // TODO metadata_gc
 }
 
+// Expose JNI for android
+#[cfg(target_os = "android")]
+#[allow(non_snake_case)]
+pub mod android {
+    extern crate jni;
+
+    use self::jni::objects::JClass;
+    use self::jni::sys::jlong;
+    use self::jni::JNIEnv;
+    use super::*;
+    use tokio::runtime::Runtime;
+
+    #[cfg(target_pointer_width = "64")]
+    unsafe fn jlong_to_pointer<T>(val: jlong) -> *mut T {
+        core::mem::transmute::<jlong, *mut T>(val)
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    unsafe fn jlong_to_pointer<T>(val: jlong) -> *mut T {
+        core::mem::transmute::<u32, *mut T>(val as u32)
+    }
+
+    struct TankWithRuntime {
+        tank: TankClient,
+        runtime: Option<Runtime>,
+    }
+
+    impl TankWithRuntime {
+        pub fn new(
+        ) -> TankWithRuntime {
+            let runtime = Runtime::new().unwrap();
+
+            let mut tank_wrapper = runtime.block_on(async {
+                Self {
+                    tank: TankClient::new(
+                        None, None, false, None, None, true, true, false,
+                        false,
+                        None, None, None, None, None, None, None, None, None,
+                    ).await,
+                    runtime: None,
+                }
+            });
+
+            tank_wrapper.runtime = Some(runtime);
+
+            tank_wrapper
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn Java_com_example_scubaimport_TankWrapper_newTank(
+        _: JNIEnv,
+        _: JClass,
+    ) -> jlong {
+        let tank = TankWithRuntime::new();
+        let boxed_tank: Box<TankWithRuntime> = Box::new(tank);
+        let tank_ptr: *mut TankWithRuntime = Box::into_raw(boxed_tank);
+        tank_ptr as jlong
+    }
+}
+
 mod tests {
     //use crate::client::{Operation, TankClient};
     //use crate::data::ScubaData;

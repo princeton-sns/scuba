@@ -303,9 +303,9 @@ impl MetadataStore {
             Some(existing_group_id) => {
                 // add children to existing group
                 match self.get_group(existing_group_id) {
-                    Some(existing_group) => {
+                    Some(_existing_group) => {
                         for new_member in new_members.iter() {
-                            self.link_groups(existing_group_id, new_member);
+                            let _ = self.link_groups(existing_group_id, new_member);
                         }
                         // perm_set does not change b/c using existing
                         // group id
@@ -324,7 +324,7 @@ impl MetadataStore {
                 );
                 self.set_group(new_group.group_id().to_string(), new_group.clone());
                 for new_member in new_members {
-                    self.add_parent(&new_member, new_group.group_id());
+                    let _ = self.add_parent(&new_member, new_group.group_id());
                 }
 
                 // set perm
@@ -558,7 +558,7 @@ impl MetadataStore {
         if to_parent_group.children.is_none() {
             return Err(Error::GroupHasNoChildren(to_parent_id.to_string()));
         }
-        to_parent_group.add_child(to_child_id.to_string());
+        let _ = to_parent_group.add_child(to_child_id.to_string());
         self.set_group(to_parent_id.to_string(), to_parent_group);
 
         // set parent of to_child group
@@ -587,7 +587,7 @@ impl MetadataStore {
         if parent_group.children.is_none() {
             return Err(Error::GroupHasNoChildren(parent_id.to_string()));
         }
-        parent_group.remove_child(child_id);
+        let _ = parent_group.remove_child(child_id);
         self.set_group(parent_id.to_string(), parent_group);
 
         // unset parent of child group
@@ -608,7 +608,7 @@ impl MetadataStore {
         // delete from all parents' children lists
         for parent_id in &group_val.parents {
             let mut parent_group = self.get_group(&parent_id).unwrap().clone();
-            parent_group.remove_child(group_id);
+            let _ = parent_group.remove_child(group_id);
             self.set_group(parent_id.to_string(), parent_group);
         }
 
@@ -633,7 +633,7 @@ impl MetadataStore {
 
     pub fn add_members(&mut self, base_group_id: &String, ids_to_add: Vec<&String>) {
         for id_to_add in ids_to_add {
-            self.link_groups(base_group_id, id_to_add);
+            let _ = self.link_groups(base_group_id, id_to_add);
         }
     }
 
@@ -643,7 +643,7 @@ impl MetadataStore {
         ids_to_remove: Vec<&String>,
     ) {
         for id_to_remove in ids_to_remove {
-            self.unlink_groups(base_group_id, id_to_remove);
+            let _ = self.unlink_groups(base_group_id, id_to_remove);
         }
     }
 
@@ -779,9 +779,9 @@ impl MetadataStore {
         if group.remove_parent(&id_to_replace) {
             group.add_parent(replacement_id.clone());
         }
-        group.remove_child(&id_to_replace).map(|result| {
+        let _ = group.remove_child(&id_to_replace).map(|result| {
             if result {
-                group.add_child(replacement_id);
+                let _ = group.add_child(replacement_id);
             }
         });
     }

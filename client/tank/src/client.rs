@@ -3,7 +3,7 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Values;
+//use std::collections::hash_map::Values;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
@@ -135,7 +135,7 @@ impl Operation {
 
     fn get_data_id(operation: &Operation) -> String {
         match operation {
-            Operation::UpdateData(data_id, data_val) => data_id.to_string(),
+            Operation::UpdateData(data_id, _data_val) => data_id.to_string(),
             Operation::DeleteData(data_id) => data_id.to_string(),
             // TODO confirm this is never used
             _ => "".to_string(),
@@ -178,13 +178,13 @@ impl Transaction {
         }
     }
 
-    fn to_string(msg: &Transaction) -> Result<String, serde_json::Error> {
-        serde_json::to_string(msg)
-    }
+    //fn to_string(msg: &Transaction) -> Result<String, serde_json::Error> {
+    //    serde_json::to_string(msg)
+    //}
 
-    fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
-        serde_json::from_str(msg.as_str())
-    }
+    //fn from_string(msg: String) -> Result<Operation, serde_json::Error> {
+    //    serde_json::from_str(msg.as_str())
+    //}
 }
 
 pub struct TxCoordinator {
@@ -526,7 +526,7 @@ impl CoreClient for TankClient {
                     .unwrap();
                 let vec = self.recv_update_timestamp_vec.lock();
                 for entry in vec.iter() {
-                    write!(f, "{:?}\n", entry);
+                    let _ = write!(f, "{:?}\n", entry);
                 }
             } else if cur_count > 1 {
                 *self.benchmark_recv_update.write() = Some(cur_count - 1);
@@ -551,7 +551,7 @@ impl CoreClient for TankClient {
                     .unwrap();
                 let vec = self.recv_dummy_timestamp_vec.lock();
                 for entry in vec.iter() {
-                    write!(f, "{:?}\n", entry);
+                    let _ = write!(f, "{:?}\n", entry);
                 }
             } else if cur_count > 1 {
                 *self.benchmark_recv_dummy.write() = Some(cur_count - 1);
@@ -712,7 +712,7 @@ impl TankClient {
         for op in tx.ops.clone().into_iter() {
             //call into data store to apply
             // TODO: handle errors
-            self.demux(tx_id.clone(), op).await;
+            let _ = self.demux(tx_id.clone(), op).await;
         }
         Ok(())
     }
@@ -740,12 +740,12 @@ impl TankClient {
                 false,
             ));
         }
-        self.send_message(txn_series).await;
+        let _ = self.send_message(txn_series).await;
     }
 
     async fn send_abort_to_coordinator(&self, sender: String, tx_id: SequenceNumber) {
         let recipients = vec![self.idkey(), sender];
-        self.send_message(vec![(
+        let _ = self.send_message(vec![(
             recipients,
             Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
             false,
@@ -761,7 +761,7 @@ impl TankClient {
             .get_transaction(tx_id)
             .unwrap()
             .clone();
-        self.send_message(vec![(
+        let _ = self.send_message(vec![(
             tx.recipients,
             Operation::to_string(&Operation::TxAbort(self.idkey(), tx_id)).unwrap(),
             false,
@@ -777,7 +777,7 @@ impl TankClient {
             .get_transaction(tx_id)
             .unwrap()
             .clone();
-        self.send_message(vec![(
+        let _ = self.send_message(vec![(
             tx.recipients,
             Operation::to_string(&Operation::TxCommit(self.idkey(), tx_id)).unwrap(),
             false,
@@ -796,9 +796,9 @@ impl TankClient {
     ) -> Result<(), Error> {
         match operation {
             /* Test op */
-            Operation::Test(msg) => Ok(()),
+            Operation::Test(_msg) => Ok(()),
             /* Dummy op */
-            Operation::Dummy(num) => Ok(()),
+            Operation::Dummy(_num) => Ok(()),
             // TODO need manual checks
             //Operation::UpdateLinked(
             //    sender,
@@ -813,7 +813,7 @@ impl TankClient {
             //Operation::AddContact => Ok(()),
             //Operation::ConfirmAddContact => Ok(()),
             /* Special case: use pending idkey */
-            Operation::ConfirmUpdateLinked(new_linked_name, new_groups, new_data) => {
+            Operation::ConfirmUpdateLinked(_new_linked_name, _new_groups, _new_data) => {
                 let pending_idkey_opt = self
                     .device
                     .read()
@@ -836,7 +836,7 @@ impl TankClient {
                 Ok(())
             }
             /* Need metadata-mod permissions */
-            Operation::SetPerm(perm_id, perm_val) => {
+            Operation::SetPerm(perm_id, _perm_val) => {
                 // if permissions set with this id already exists, return error
                 // this prevents malicious clients from replacing an existing
                 // permissions object with one of their choosing, giving them
@@ -856,7 +856,7 @@ impl TankClient {
                 }
                 Ok(())
             }
-            Operation::AddPermMembers(perm_id, group_id_opt, new_members) => {
+            Operation::AddPermMembers(perm_id, _group_id_opt, _new_members) => {
                 // must have valid permissions given existing permissions
                 // object
                 if !self
@@ -900,15 +900,15 @@ impl TankClient {
             }
             // FIXME groups may need to be sent in a particular order in order
             // for the above check to work in a loop
-            Operation::SetGroups(groups) => Ok(()),
+            Operation::SetGroups(_groups) => Ok(()),
             //Operation::LinkGroups(parent_id, child_id) => Ok(()),
             //Operation::DeleteGroup(group_id) => Ok(()),
             // TODO do permission check
-            Operation::AddParent(group_id, parent_id) => Ok(()),
+            Operation::AddParent(_group_id, _parent_id) => Ok(()),
             //Operation::RemoveParent(group_id, parent_id) => Ok(()),
             //Operation::AddChild(group_id, child_id) => Ok(()),
             /* Need data-mod permissions */
-            Operation::UpdateData(data_id, data_val) => {
+            Operation::UpdateData(_data_id, _data_val) => {
                 // FIXME need perm owner group when data is sent to a do-reader
                 //if !self
                 //    .device
@@ -1171,7 +1171,7 @@ impl TankClient {
                     .unwrap()
                     .commit_message(self.idkey(), sender, &tx_id, seq);
                 if resp == Ok(()) {
-                    self.apply_locally(tx_id).await;
+                    let _ = self.apply_locally(tx_id).await;
                 }
                 Ok(())
             }
@@ -1378,7 +1378,7 @@ impl TankClient {
         temp_linked_name: String,
         members_to_add: HashMap<String, Group>,
     ) -> Result<(), Error> {
-        self.device
+        let _ = self.device
             .read()
             .as_ref()
             .unwrap()
@@ -1594,7 +1594,7 @@ impl TankClient {
         contact_name: String,
         contact_devices: HashMap<String, Group>,
     ) -> Result<(), Error> {
-        self.device
+        let _ = self.device
             .read()
             .as_ref()
             .unwrap()
@@ -1689,7 +1689,7 @@ impl TankClient {
             .await
         {
             Ok(_) => {
-                self.device
+                let _ = self.device
                     .read()
                     .as_ref()
                     .unwrap()
@@ -2438,7 +2438,7 @@ impl TankClient {
                     .unwrap();
                 let vec = self.send_timestamp_vec.lock();
                 for entry in vec.iter() {
-                    write!(f, "{:?}\n", entry);
+                    let _ = write!(f, "{:?}\n", entry);
                 }
             } else if cur_count > 1 {
                 *self.benchmark_send.write() = Some(cur_count - 1);
@@ -2554,7 +2554,7 @@ impl TankClient {
         &self,
         data_id: String,
         new_members: PermType,
-        mut new_members_refs: Vec<&String>, // FIXME one or the other
+        new_members_refs: Vec<&String>, // FIXME one or the other
     ) -> Result<(), Error> {
         // check if can have multiple outstanding ops, or if not, check that
         // no other ops are outstanding
@@ -2575,13 +2575,13 @@ impl TankClient {
         }
 
         let device_guard = self.device.read();
-        let mut data_store_guard = device_guard.as_ref().unwrap().data_store.read();
+        let data_store_guard = device_guard.as_ref().unwrap().data_store.read();
 
         // check that data exists
         match data_store_guard.get_data(&data_id) {
             None => return Err(Error::NonexistentData(data_id)),
             Some(data_val) => {
-                let mut meta_store_guard =
+                let meta_store_guard =
                     device_guard.as_ref().unwrap().meta_store.read();
 
                 let perm_val = meta_store_guard
@@ -2820,8 +2820,8 @@ impl TankClient {
 }
 
 mod tests {
-    use crate::client::{Operation, TankClient};
-    use crate::data::ScubaData;
+    //use crate::client::{Operation, TankClient};
+    //use crate::data::ScubaData;
 
     #[tokio::test]
     async fn test_send_one_message() {

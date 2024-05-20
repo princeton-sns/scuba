@@ -46,9 +46,9 @@ impl Crypto {
         mut pt: Vec<u8>,
     ) -> (Vec<u8>, [u8; 16], [u8; 32], [u8; 12]) {
         use aes_gcm::{
-            aead::{Aead, AeadInPlace, KeyInit, OsRng},
+            aead::{AeadInPlace, KeyInit},
             Aes256Gcm,
-            Nonce, // Or `Aes128Gcm`
+            //Nonce, // Or `Aes128Gcm`
         };
 
         // Convert the plain text to bytes and short-circuit if encryption is
@@ -87,9 +87,9 @@ impl Crypto {
         nonce: [u8; 12],
     ) -> Vec<u8> {
         use aes_gcm::{
-            aead::{Aead, AeadInPlace, KeyInit, OsRng},
+            aead::{AeadInPlace, KeyInit},
             Aes256Gcm,
-            Nonce, // Or `Aes128Gcm`
+            //Nonce, // Or `Aes128Gcm`
         };
 
         if self.turn_encryption_off {

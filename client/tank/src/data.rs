@@ -152,8 +152,8 @@ impl<T: ScubaData> DataStore<T> {
 }
 
 mod tests {
-    use crate::data::{BasicData, DataStore};
-    use std::collections::HashMap;
+    //use crate::data::{BasicData, DataStore};
+    //use std::collections::HashMap;
 
     #[test]
     fn test_new() {

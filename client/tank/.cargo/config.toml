@@ -1,7 +1,12 @@
 [env]
+#TOOLCHAIN="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64"
+#RANLIB="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
+ANDROID_NDK="/Users/np/Library/Android/sdk/ndk/27.0.11718014"
+TOOLCHAIN="/Users/np/Library/Android/sdk/ndk/27.0.11718014/toolchains/llvm/prebuilt/darwin-x86_64"
+RANLIB="/Users/np/Library/Android/sdk/ndk/27.0.11718014/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ranlib"
+
 #HOME="/home/np"
 #ANDROID_NDK_HOME="$HOME/Android/Sdk/ndk/25.2.9519653/"
-TOOLCHAIN="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64"
 #TARGET="aarch64-linux-android"
 #API="33"
 #AR="$TOOLCHAIN/bin/llvm-ar"
@@ -9,18 +14,23 @@ TOOLCHAIN="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-
 #AS="$CC"
 #CXX="$TOOLCHAIN/bin/$TARGET$API-clang++"
 #LD="$TOOLCHAIN/bin/ld"
-RANLIB="/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
 #STRIP="$TOOLCHAIN/bin/llvm-strip"
 
 # Arm
-#[target.arm7-linux-androideabi]
+#[target.armv7-linux-androideabi]
 
 # Arm64
 [target.aarch64-linux-android]
-linker = "/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang"
+# linux
+#linker = "/home/np/Android/Sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang"
+# macOS
+linker = "/Users/np/Library/Android/sdk/ndk/27.0.11718014/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android34-clang"
 
 # X86
 #[target.i686-linux-android]
 
 # X86_64
 #[target.x86_64-linux-android]
+
+[build]
+target-dir = "target"

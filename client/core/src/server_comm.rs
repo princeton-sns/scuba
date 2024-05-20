@@ -79,8 +79,8 @@ pub struct ServerCommImpl<C: CoreClient> {
 
 impl<C: CoreClient> ServerCommImpl<C> {
     pub async fn new<'a>(
-        ip_arg: Option<&'a str>,
-        port_arg: Option<&'a str>,
+        _ip_arg: Option<&'a str>,
+        _port_arg: Option<&'a str>,
         idkey: String,
         core_option: Option<Arc<Core<C>>>,
     ) -> Self {

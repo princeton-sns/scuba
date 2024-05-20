@@ -60,10 +60,10 @@ impl<T: ScubaData> Device<T> {
             ),
         );
         // link linked and device groups
-        meta_store.link_groups(&linked_name, &idkey);
+        let _ = meta_store.link_groups(&linked_name, &idkey);
 
         // add linked_group as owner in permissions set
-        meta_store.add_permissions(
+        let _ = meta_store.add_permissions(
             linked_perm_set.perm_id(),
             None,
             PermType::Owners(vec![linked_name.clone()]),
@@ -110,9 +110,9 @@ impl<T: ScubaData> Device<T> {
         self.pending_link_idkey.read().clone()
     }
 
-    fn set_pending_link_idkey(&self, idkey: String) {
-        *self.pending_link_idkey.write() = Some(idkey);
-    }
+    //fn set_pending_link_idkey(&self, idkey: String) {
+    //    *self.pending_link_idkey.write() = Some(idkey);
+    //}
 
     fn clear_pending_link_idkey(&self) {
         *self.pending_link_idkey.write() = None;
@@ -146,12 +146,12 @@ impl<T: ScubaData> Device<T> {
 
         // merge temp_linked_name group into perm_linked_name group
         for parent in temp_linked_group.parents() {
-            self.meta_store
+            let _ = self.meta_store
                 .write()
                 .add_parent(&perm_linked_name, parent);
         }
         for child in temp_linked_group.children().as_ref().unwrap() {
-            self.meta_store.write().add_child(&perm_linked_name, child);
+            let _ = self.meta_store.write().add_child(&perm_linked_name, child);
         }
 
         Ok(())
@@ -246,7 +246,7 @@ impl<T: ScubaData> Device<T> {
         // remove child link to this device from
         // every parent (should have no children)
         for parent in device_group.parents().iter() {
-            self.meta_store.write().remove_child(parent, &to_delete);
+            let _ = self.meta_store.write().remove_child(parent, &to_delete);
         }
 
         self.meta_store.write().delete_group(&to_delete);
@@ -256,9 +256,9 @@ impl<T: ScubaData> Device<T> {
 }
 
 mod tests {
-    use crate::data::BasicData;
-    use crate::devices::Device;
-    use std::collections::HashSet;
+    //use crate::data::BasicData;
+    //use crate::devices::Device;
+    //use std::collections::HashSet;
 
     #[test]
     fn test_new_standalone() {

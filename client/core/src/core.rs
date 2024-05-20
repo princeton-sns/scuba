@@ -203,10 +203,10 @@ impl<C: CoreClient> Core<C> {
                     .create(true)
                     .open(filename)
                     .unwrap();
-                write!(f, "--------------------------\n");
-                write!(f, "op: {}\n", payload);
-                write!(f, "sender: {}\n", self.idkey());
-                write!(f, "#recipients: {}\n", &dst_idkeys.len());
+                let _ = write!(f, "--------------------------\n");
+                let _ = write!(f, "op: {}\n", payload);
+                let _ = write!(f, "sender: {}\n", self.idkey());
+                let _ = write!(f, "#recipients: {}\n", &dst_idkeys.len());
                 let num_op_pt_bytes = bincode::serialize(&payload).unwrap().len() as f64;
                 let num_common_pt_bytes =
                     bincode::serialize(&common_payload).unwrap().len() as f64;
@@ -218,16 +218,16 @@ impl<C: CoreClient> Core<C> {
                     (num_common_ct_bytes / num_common_pt_bytes) * 100.0;
                 //let total_len_diff = num_common_ct_bytes - num_op_pt_bytes;
                 let both_perc: f64 = (num_common_ct_bytes / num_op_pt_bytes) * 100.0;
-                write!(f, "---common overhead\n");
-                write!(f, "#op_pt_bytes: {}\n", &num_op_pt_bytes);
-                write!(f, "#common_pt_bytes: {}\n", &num_common_pt_bytes);
-                write!(f, "#common_ct_bytes: {}\n", &num_common_ct_bytes);
+                let _ = write!(f, "---common overhead\n");
+                let _ = write!(f, "#op_pt_bytes: {}\n", &num_op_pt_bytes);
+                let _ = write!(f, "#common_pt_bytes: {}\n", &num_common_pt_bytes);
+                let _ = write!(f, "#common_ct_bytes: {}\n", &num_common_ct_bytes);
                 //write!(f, "rcpt_list_len_diff: {}\n", &rcpt_list_len_diff);
-                write!(f, "rcpt_list %: {}\n", &rcpt_list_perc);
+                let _ = write!(f, "rcpt_list %: {}\n", &rcpt_list_perc);
                 //write!(f, "symenc_len_diff: {}\n", &symenc_len_diff);
-                write!(f, "symenc %: {}\n", &symenc_perc);
+                let _ = write!(f, "symenc %: {}\n", &symenc_perc);
                 //write!(f, "total_len_diff: {}\n", &total_len_diff);
-                write!(f, "both %: {}\n", &both_perc);
+                let _ = write!(f, "both %: {}\n", &both_perc);
             }
 
             if bench && self.benchmark_send.read().await.is_some() {
@@ -263,14 +263,14 @@ impl<C: CoreClient> Core<C> {
                         .create(true)
                         .open(filename)
                         .unwrap();
-                    write!(f, "---per recipient overhead\n");
+                    let _ = write!(f, "---per recipient overhead\n");
                     if idkey.clone() == self.idkey() {
-                        write!(f, "RCPT == SELF: {}\n", &idkey);
+                        let _ = write!(f, "RCPT == SELF: {}\n", &idkey);
                     } else {
-                        write!(f, "RCPT == OTHER: {}\n", &idkey);
+                        let _ = write!(f, "RCPT == OTHER: {}\n", &idkey);
                     }
-                    write!(f, "val_pt: {:?}\n", &val_payload);
-                    write!(f, "perrcpt_pt: {:?}\n", &perrcpt_pt);
+                    let _ = write!(f, "val_pt: {:?}\n", &val_payload);
+                    let _ = write!(f, "perrcpt_pt: {:?}\n", &perrcpt_pt);
                     let num_val_pt_bytes =
                         bincode::serialize(&val_payload).unwrap().len() as f64;
                     let num_perrcpt_pt_bytes =
@@ -280,19 +280,19 @@ impl<C: CoreClient> Core<C> {
                     // num_perrcpt_pt_bytes;
                     let perrcpt_perc: f64 =
                         (num_perrcpt_ct_bytes / num_perrcpt_pt_bytes) * 100.0;
-                    write!(f, "#val_pt_bytes: {}\n", &num_val_pt_bytes);
-                    write!(f, "#perrcpt_pt_bytes: {}\n", &num_perrcpt_pt_bytes);
-                    write!(f, "#perrcpt_ct_bytes: {}\n", &num_perrcpt_ct_bytes);
+                    let _ = write!(f, "#val_pt_bytes: {}\n", &num_val_pt_bytes);
+                    let _ = write!(f, "#perrcpt_pt_bytes: {}\n", &num_perrcpt_pt_bytes);
+                    let _ = write!(f, "#perrcpt_ct_bytes: {}\n", &num_perrcpt_ct_bytes);
+                    let _ = write!(f, "perrcpt %: {}\n", &perrcpt_perc);
                     //write!(f, "num_perrcpt_len_diff: {}\n",
                     // &num_perrcpt_len_diff);
-                    write!(f, "perrcpt %: {}\n", &perrcpt_perc);
                     // storage measurements
                     let sessionlock = self.crypto.sessions.lock();
                     if let Some(val) = sessionlock.get(&idkey) {
                         let session = &val.1[0];
                         let pickled = session.pickle(olm_rs::PicklingMode::Unencrypted);
-                        write!(f, "--storage overhead\n");
-                        write!(f, "pickled session len: {:?}\n", &pickled.len());
+                        let _ = write!(f, "--storage overhead\n");
+                        let _ = write!(f, "pickled session len: {:?}\n", &pickled.len());
                     }
                 }
 
@@ -338,7 +338,7 @@ impl<C: CoreClient> Core<C> {
                         .unwrap();
                     let vec = self.send_timestamp_vec.lock().await;
                     for entry in vec.iter() {
-                        write!(f, "{:?}\n", entry);
+                        let _ = write!(f, "{:?}\n", entry);
                     }
                 } else if cur_count > 1 {
                     *self.benchmark_send.write().await = Some(cur_count - 1);
@@ -518,7 +518,7 @@ impl<C: CoreClient> Core<C> {
                             .unwrap();
                         let vec = self.recv_timestamp_vec.lock().await;
                         for entry in vec.iter() {
-                            write!(f, "{:?}\n", entry);
+                            let _ = write!(f, "{:?}\n", entry);
                         }
                     } else if cur_count > 1 {
                         *self.benchmark_recv.write().await = Some(cur_count - 1);
@@ -599,10 +599,10 @@ pub mod stream_client {
     impl CoreClient for StreamClient {
         async fn client_callback(
             &self,
-            seq: crate::core::SequenceNumber,
+            _seq: crate::core::SequenceNumber,
             sender: String,
             message: String,
-            bench: bool,
+            _bench: bool,
         ) {
             use futures::SinkExt;
             self.sender

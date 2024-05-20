@@ -239,7 +239,7 @@ impl HashVectors {
             common_payload.recipients,
             common_payload.message.clone(),
         ) {
-            Ok(local_seq) => {
+            Ok(_local_seq) => {
                 let validation_payload = match (
                     recipient_payload.validation_seq,
                     recipient_payload.validation_digest,

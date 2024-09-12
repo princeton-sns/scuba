@@ -457,45 +457,6 @@ impl NoiseKVClient {
         client
     }
 
-    //fn exists_device(&self) -> bool {
-    //    match self.device.read().as_ref() {
-    //        Some(_) => true,
-    //        None => false,
-    //    }
-    //}
-
-    pub fn idkey(&self) -> String {
-        self.core.as_ref().unwrap().idkey()
-    }
-
-    pub fn linked_name(&self) -> String {
-        self.device
-            .read()
-            .as_ref()
-            .unwrap()
-            .linked_name
-            .read()
-            .clone()
-    }
-
-    /* Sending-side function */
-
-    // TODO: change message to be a collection of messages
-    async fn send_message(
-        &self,
-        dst_idkeys: Vec<String>,
-        dst_idkeys_do_readers: Option<Vec<String>>,
-        payload: &String,
-    ) -> reqwest::Result<reqwest::Response> {
-        // FIXME: pass option
-        //let do_readers = dst_idkeys_do_readers.unwrap_or_default();
-        self.core
-            .as_ref()
-            .unwrap()
-            .send_message(dst_idkeys, dst_idkeys_do_readers.unwrap_or_default(), payload)
-            .await
-    }
-
     /* Transactions */
     fn collect_recipients(&self, msg: Vec<Operation>) -> Vec<String> {
         let mut recipients = Vec::new();
@@ -1082,7 +1043,39 @@ impl NoiseKVClient {
         }
     }
 
+    /* Sending-side function */
+
+    // TODO: change message to be a collection of messages
+    async fn send_message(
+        &self,
+        dst_idkeys: Vec<String>,
+        dst_idkeys_do_readers: Option<Vec<String>>,
+        payload: &String,
+    ) -> reqwest::Result<reqwest::Response> {
+        // FIXME: pass option
+        //let do_readers = dst_idkeys_do_readers.unwrap_or_default();
+        self.core
+            .as_ref()
+            .unwrap()
+            .send_message(dst_idkeys, dst_idkeys_do_readers.unwrap_or_default(), payload)
+            .await
+    }
+
     /* Remaining top-level functionality */
+
+    pub fn idkey(&self) -> String {
+        self.core.as_ref().unwrap().idkey()
+    }
+
+    pub fn linked_name(&self) -> String {
+        self.device
+            .read()
+            .as_ref()
+            .unwrap()
+            .linked_name
+            .read()
+            .clone()
+    }
 
     /*
      * Creating/linking devices

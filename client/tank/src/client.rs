@@ -569,6 +569,18 @@ impl CoreClient for TankClient {
     }
 }
 
+pub struct BenchArgs {
+   core_benchmark_sends: Option<usize>,
+   core_benchmark_recvs: Option<usize>,
+   benchmark_runs: Option<usize>,
+   bandwidth_filename: Option<String>,
+   core_send_filename: Option<String>,
+   core_recv_filename: Option<String>,
+   send_filename: Option<String>,
+   recv_update_filename: Option<String>,
+   recv_dummy_filename: Option<String>,
+}
+
 impl TankClient {
     pub async fn new<'a>(
         ip_arg: Option<&'a str>,
@@ -581,16 +593,17 @@ impl TankClient {
         sync_reads: bool,
         mult_outstanding: bool,
         multikey: bool,
+        bench_args: Option<BenchArgs>,
         // benchmarking args
-        core_benchmark_sends: Option<usize>,
-        core_benchmark_recvs: Option<usize>,
-        benchmark_runs: Option<usize>,
-        bandwidth_filename: Option<String>,
-        core_send_filename: Option<String>,
-        core_recv_filename: Option<String>,
-        send_filename: Option<String>,
-        recv_update_filename: Option<String>,
-        recv_dummy_filename: Option<String>,
+        //core_benchmark_sends: Option<usize>,
+        //core_benchmark_recvs: Option<usize>,
+        //benchmark_runs: Option<usize>,
+        //bandwidth_filename: Option<String>,
+        //core_send_filename: Option<String>,
+        //core_recv_filename: Option<String>,
+        //send_filename: Option<String>,
+        //recv_update_filename: Option<String>,
+        //recv_dummy_filename: Option<String>,
     ) -> TankClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let tx_coordinator;

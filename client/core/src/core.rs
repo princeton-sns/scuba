@@ -60,14 +60,14 @@ pub struct BenchArgs {
 
 pub struct BenchFields {
     bandwidth_filename: Option<String>,
-    benchmark_send: usize, //Arc<RwLock<usize>>,
-    benchmark_recv: usize, //Arc<RwLock<usize>>,
+    benchmark_send: usize,
+    benchmark_recv: usize,
     send_filename: String,
     recv_filename: String,
-    send_timestamp_vec: Vec<(usize, String, Instant)>, //Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    recv_timestamp_vec: Vec<(usize, String, Instant)>, //Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    ctr_check_send: usize, //Arc<Mutex<usize>>,
-    ctr_check_recv: usize, //Arc<Mutex<usize>>,
+    send_timestamp_vec: Vec<(usize, String, Instant)>,
+    recv_timestamp_vec: Vec<(usize, String, Instant)>,
+    ctr_check_send: usize,
+    ctr_check_recv: usize,
 }
 
 impl BenchFields {
@@ -76,18 +76,14 @@ impl BenchFields {
     ) -> BenchFields {
         BenchFields {
             bandwidth_filename: args.bandwidth_filename,
-            benchmark_send: args.benchmark_sends, //Arc::new(RwLock::new(args.benchmark_sends)),
-            benchmark_recv: args.benchmark_recvs, //Arc::new(RwLock::new(args.benchmark_recvs)),
+            benchmark_send: args.benchmark_sends,
+            benchmark_recv: args.benchmark_recvs,
             send_filename: args.send_filename,
             recv_filename: args.recv_filename,
-            send_timestamp_vec: //Arc::new(Mutex::new(
-                Vec::<(usize, String, Instant)>::new(),
-            //)),
-            recv_timestamp_vec: //Arc::new(Mutex::new(
-                Vec::<(usize, String, Instant)>::new(),
-            //)),
-            ctr_check_send: 0, //Arc::new(Mutex::new(0)),
-            ctr_check_recv: 0, //Arc::new(Mutex::new(0)),
+            send_timestamp_vec: Vec::<(usize, String, Instant)>::new(),
+            recv_timestamp_vec: Vec::<(usize, String, Instant)>::new(),
+            ctr_check_send: 0,
+            ctr_check_recv: 0,
         }
     }
 }
@@ -301,6 +297,7 @@ impl<C: CoreClient> Core<C> {
         // increment counter
         bench_fields.as_mut().unwrap().ctr_check_send += 1;
         let cur_count = bench_fields.as_ref().unwrap().benchmark_send;
+        // log if done
         if cur_count == 1 {
             let mut f = File::options()
                 .append(true)
@@ -333,6 +330,7 @@ impl<C: CoreClient> Core<C> {
         // increment counter
         bench_fields.as_mut().unwrap().ctr_check_recv += 1;
         let cur_count = bench_fields.as_ref().unwrap().benchmark_recv;
+        // log if done
         if cur_count == 1 {
             let mut f = File::options()
                 .append(true)

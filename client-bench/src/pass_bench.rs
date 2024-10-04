@@ -6,8 +6,7 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
-use tank::client::Error;
-use tank::client::TankClient;
+use tank::client::{BenchArgs, Error, TankClient};
 use tank::data::ScubaData;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
@@ -81,18 +80,15 @@ struct PasswordManager {
 
 impl PasswordManager {
     pub async fn new(
-        num_core_send: Option<usize>,
-        num_core_recv: Option<usize>,
-        num_tank_send: Option<usize>,
-        total_runs: Option<usize>,
-        bw_filename: Option<String>,
-        core_send_filename: Option<String>,
-        core_recv_filename: Option<String>,
-        tank_send_filename: Option<String>,
-        tank_recv_filename_u: Option<String>,
-        tank_recv_filename_d: Option<String>,
+        bench_args: Option<BenchArgs>,
         app_filename: String,
     ) -> PasswordManager {
+        let total_runs;
+        match bench_args {
+            Some(ref args) => total_runs = Some(args.benchmark_runs),
+            None => total_runs = None,
+        }
+
         let client = TankClient::new(
             None,
             None,
@@ -109,15 +105,7 @@ impl PasswordManager {
             false,
             false,
             // benchmark args
-            num_core_send,
-            num_core_recv,
-            num_tank_send,
-            bw_filename,
-            core_send_filename,
-            core_recv_filename,
-            tank_send_filename,
-            tank_recv_filename_u,
-            tank_recv_filename_d,
+            bench_args,
         )
         .await;
         client.create_standalone_device().await;
@@ -397,17 +385,19 @@ pub async fn run() {
         );
 
         let mut clients = HashMap::new();
+        let args = BenchArgs::new(
+            num_core_send,
+            num_core_recv,
+            total_runs,
+            None, // Some(bw_out),
+            core_send_filename.clone(),
+            core_recv_filename.clone(),
+            tank_send_filename.clone(),
+            tank_recv_filename_update.clone(),
+            tank_recv_filename_dummy.clone(),
+        );
         let sender = PasswordManager::new(
-            Some(num_core_send),
-            Some(num_core_recv),
-            Some(total_runs),
-            Some(total_runs),
-            Some(bw_out),
-            Some(core_send_filename.clone()),
-            Some(core_recv_filename.clone()),
-            Some(tank_send_filename.clone()),
-            Some(tank_recv_filename_update.clone()),
-            Some(tank_recv_filename_dummy.clone()),
+            Some(args),
             app_filename.clone(),
         )
         .await;
@@ -421,15 +411,6 @@ pub async fn run() {
         for i in 1..num_clients {
             let client = PasswordManager::new(
                 None,
-                None,
-                None,
-                None,
-                None,
-                Some(core_send_filename.clone()),
-                Some(core_recv_filename.clone()),
-                Some(tank_send_filename.clone()),
-                Some(tank_recv_filename_other.clone()),
-                Some(tank_recv_filename_other.clone()),
                 app_filename.clone(),
             )
             .await;

@@ -419,6 +419,79 @@ impl TxCoordinator {
 }
 
 #[derive(Clone)]
+pub struct BenchArgs {
+    core_benchmark_sends: usize,
+    core_benchmark_recvs: usize,
+    pub benchmark_runs: usize,
+    bandwidth_filename: Option<String>,
+    core_send_filename: String,
+    core_recv_filename: String,
+    send_filename: String,
+    recv_update_filename: String,
+    recv_dummy_filename: String,
+}
+
+impl BenchArgs {
+    pub fn new(
+        core_benchmark_sends: usize,
+        core_benchmark_recvs: usize,
+        benchmark_runs: usize,
+        bandwidth_filename: Option<String>,
+        core_send_filename: String,
+        core_recv_filename: String,
+        send_filename: String,
+        recv_update_filename: String,
+        recv_dummy_filename: String,
+    ) -> BenchArgs {
+        BenchArgs {
+            core_benchmark_sends,
+            core_benchmark_recvs,
+            benchmark_runs,
+            bandwidth_filename,
+            core_send_filename,
+            core_recv_filename,
+            send_filename,
+            recv_update_filename,
+            recv_dummy_filename,
+        }
+    }
+}
+
+struct BenchFields {
+    benchmark_send: usize,
+    benchmark_recv_update: usize,
+    benchmark_recv_dummy: usize,
+    send_timestamp_vec: Vec<(usize, String, Instant)>,
+    recv_update_timestamp_vec: Vec<(usize, String, Instant)>,
+    recv_dummy_timestamp_vec: Vec<(usize, String, Instant)>,
+    ctr_check_send: usize,
+    ctr_check_recv_update: usize,
+    ctr_check_recv_dummy: usize,
+    send_filename: String,
+    recv_update_filename: String,
+    recv_dummy_filename: String,
+}
+
+impl BenchFields {
+    pub fn new(args: BenchArgs) -> BenchFields {
+        BenchFields {
+            benchmark_send: args.benchmark_runs,
+            benchmark_recv_update: args.benchmark_runs,
+            benchmark_recv_dummy: args.benchmark_runs,
+            send_timestamp_vec: Vec::<(usize, String, Instant)>::new(),
+            recv_update_timestamp_vec: Vec::<(usize, String, Instant)>::new(),
+            recv_dummy_timestamp_vec: Vec::<(usize, String, Instant)>::new(),
+            ctr_check_send: 0,
+            ctr_check_recv_update: 0,
+            ctr_check_recv_dummy: 0,
+            send_filename: args.send_filename,
+            recv_update_filename: args.recv_update_filename,
+            recv_dummy_filename: args.recv_dummy_filename,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct TankClient {
     core: Option<Arc<Core<TankClient>>>,
     // TODO remove pub
@@ -433,19 +506,7 @@ pub struct TankClient {
     tx_coordinator: Arc<RwLock<Option<TxCoordinator>>>,
     op_id_ctr: Arc<Mutex<(u64, HashSet<u64>)>>,
     op_id_ctr_cv: Arc<Condvar>,
-    // benchmarking fields
-    benchmark_send: Arc<RwLock<Option<usize>>>,
-    benchmark_recv_update: Arc<RwLock<Option<usize>>>,
-    benchmark_recv_dummy: Arc<RwLock<Option<usize>>>,
-    send_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    recv_update_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    recv_dummy_timestamp_vec: Arc<Mutex<Vec<(usize, String, Instant)>>>,
-    ctr_check_send: Arc<Mutex<usize>>,
-    ctr_check_recv_update: Arc<Mutex<usize>>,
-    ctr_check_recv_dummy: Arc<Mutex<usize>>,
-    send_filename: Option<String>,
-    recv_update_filename: Option<String>,
-    recv_dummy_filename: Option<String>,
+    bench_fields: Arc<Mutex<Option<BenchFields>>>,
 }
 
 #[async_trait]
@@ -461,21 +522,7 @@ impl CoreClient for TankClient {
         if message.contains("UpdateData") {
             dummy = false;
         }
-
-        if bench && !dummy && self.benchmark_recv_update.read().is_some() {
-            self.recv_update_timestamp_vec.lock().push((
-                self.benchmark_recv_update.read().unwrap(),
-                String::from("enter recvTANK"),
-                Instant::now(),
-            ));
-        }
-        if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
-            self.recv_dummy_timestamp_vec.lock().push((
-                self.benchmark_recv_dummy.read().unwrap(),
-                String::from("enter recvTANK"),
-                Instant::now(),
-            ));
-        }
+        self.timestamp_recv(bench, dummy, "enter recvTANK").await;
 
         if self.sec_wait_to_apply.is_some() {
             thread::sleep(time::Duration::from_secs(self.sec_wait_to_apply.unwrap()));
@@ -509,55 +556,7 @@ impl CoreClient for TankClient {
             ),
         };
 
-        if bench && !dummy && self.benchmark_recv_update.read().is_some() {
-            self.recv_update_timestamp_vec.lock().push((
-                self.benchmark_recv_update.read().unwrap(),
-                String::from("exit recvTANK"),
-                Instant::now(),
-            ));
-            let mut ctr_check_guard = self.ctr_check_recv_update.lock();
-            *ctr_check_guard += 1;
-            let cur_count = self.benchmark_recv_update.read().unwrap();
-            if cur_count == 1 {
-                let mut f = File::options()
-                    .append(true)
-                    .create(true)
-                    .open(&self.recv_update_filename.as_ref().unwrap())
-                    .unwrap();
-                let vec = self.recv_update_timestamp_vec.lock();
-                for entry in vec.iter() {
-                    let _ = write!(f, "{:?}\n", entry);
-                }
-            } else if cur_count > 1 {
-                *self.benchmark_recv_update.write() = Some(cur_count - 1);
-            }
-            //println!("dal ctr_check_recv_update: {:?}", ctr_check_guard);
-        }
-
-        if bench && dummy && self.benchmark_recv_dummy.read().is_some() {
-            self.recv_dummy_timestamp_vec.lock().push((
-                self.benchmark_recv_dummy.read().unwrap(),
-                String::from("exit recvTANK"),
-                Instant::now(),
-            ));
-            let mut ctr_check_guard = self.ctr_check_recv_dummy.lock();
-            *ctr_check_guard += 1;
-            let cur_count = self.benchmark_recv_dummy.read().unwrap();
-            if cur_count == 1 {
-                let mut f = File::options()
-                    .append(true)
-                    .create(true)
-                    .open(&self.recv_dummy_filename.as_ref().unwrap())
-                    .unwrap();
-                let vec = self.recv_dummy_timestamp_vec.lock();
-                for entry in vec.iter() {
-                    let _ = write!(f, "{:?}\n", entry);
-                }
-            } else if cur_count > 1 {
-                *self.benchmark_recv_dummy.write() = Some(cur_count - 1);
-            }
-            //println!("dal ctr_check_recv_dummy: {:?}", ctr_check_guard);
-        }
+        self.timestamp_inc_log_recv(bench, dummy, "exit recvTANK").await;
 
         let mut ctr = self.ctr.lock();
         if *ctr != 0 {
@@ -567,18 +566,6 @@ impl CoreClient for TankClient {
             self.ctr_cv.notify_all();
         }
     }
-}
-
-pub struct BenchArgs {
-   core_benchmark_sends: Option<usize>,
-   core_benchmark_recvs: Option<usize>,
-   benchmark_runs: Option<usize>,
-   bandwidth_filename: Option<String>,
-   core_send_filename: Option<String>,
-   core_recv_filename: Option<String>,
-   send_filename: Option<String>,
-   recv_update_filename: Option<String>,
-   recv_dummy_filename: Option<String>,
 }
 
 impl TankClient {
@@ -594,16 +581,6 @@ impl TankClient {
         mult_outstanding: bool,
         multikey: bool,
         bench_args: Option<BenchArgs>,
-        // benchmarking args
-        //core_benchmark_sends: Option<usize>,
-        //core_benchmark_recvs: Option<usize>,
-        //benchmark_runs: Option<usize>,
-        //bandwidth_filename: Option<String>,
-        //core_send_filename: Option<String>,
-        //core_recv_filename: Option<String>,
-        //send_filename: Option<String>,
-        //recv_update_filename: Option<String>,
-        //recv_dummy_filename: Option<String>,
     ) -> TankClient {
         let ctr_val = test_wait_num_callbacks.unwrap_or(0);
         let tx_coordinator;
@@ -612,6 +589,25 @@ impl TankClient {
         } else {
             tx_coordinator = Arc::new(RwLock::new(None));
         }
+
+        let bench_fields_opt;
+        let bench_args_opt;
+        if bench_args.is_some() {
+            let bench_args_unwrapped = bench_args.unwrap();
+            bench_fields_opt = Some(BenchFields::new(bench_args_unwrapped.clone()));
+            bench_args_opt = Some(scuba_core::core::BenchArgs::new(
+                bench_args_unwrapped.bandwidth_filename,
+                bench_args_unwrapped.core_benchmark_sends,
+                bench_args_unwrapped.core_benchmark_recvs,
+                bench_args_unwrapped.core_send_filename,
+                bench_args_unwrapped.core_recv_filename,
+            ));
+        } else {
+            bench_fields_opt = None;
+            bench_args_opt = None;
+        }
+        let bench_fields = Arc::new(Mutex::new(bench_fields_opt));
+
         let mut client = TankClient {
             core: None,
             device: Arc::new(RwLock::new(None)),
@@ -624,26 +620,7 @@ impl TankClient {
             tx_coordinator,
             op_id_ctr: Arc::new(Mutex::new((0, HashSet::new()))),
             op_id_ctr_cv: Arc::new(Condvar::new()),
-            benchmark_send: Arc::new(RwLock::new(benchmark_runs)),
-            benchmark_recv_update: Arc::new(RwLock::new(benchmark_runs)),
-            benchmark_recv_dummy: Arc::new(RwLock::new(benchmark_runs)),
-            send_timestamp_vec: Arc::new(Mutex::new(
-                Vec::<(usize, String, Instant)>::new(),
-            )),
-            recv_update_timestamp_vec: Arc::new(Mutex::new(Vec::<(
-                usize,
-                String,
-                Instant,
-            )>::new())),
-            recv_dummy_timestamp_vec: Arc::new(Mutex::new(
-                Vec::<(usize, String, Instant)>::new(),
-            )),
-            send_filename,
-            recv_update_filename,
-            recv_dummy_filename,
-            ctr_check_send: Arc::new(Mutex::new(0)),
-            ctr_check_recv_update: Arc::new(Mutex::new(0)),
-            ctr_check_recv_dummy: Arc::new(Mutex::new(0)),
+            bench_fields,
         };
 
         let core = Core::new(
@@ -651,11 +628,7 @@ impl TankClient {
             port_arg,
             turn_encryption_off,
             Some(Arc::new(client.clone())),
-            bandwidth_filename,
-            core_benchmark_sends,
-            core_benchmark_recvs,
-            core_send_filename,
-            core_recv_filename,
+            bench_args_opt,
         )
         .await;
 
@@ -675,6 +648,143 @@ impl TankClient {
         client.core = Some(core.clone());
         core.set_client(Arc::new(client.clone())).await;
         client
+    }
+
+    /* Benchmarking code */
+
+    // TODO move tank bmark fields into core and use core's timestamp_send impl
+    // b/c currently they are identical except one is on tank and one is on core
+    async fn timestamp_send(&self, bench: bool, msg: &'static str) {
+        let bench_fields = &mut self.bench_fields.lock();
+        if !bench || bench_fields.is_none() {
+            return;
+        }
+
+        let bmark_send = bench_fields.as_ref().unwrap().benchmark_send.clone();
+        bench_fields.as_mut().unwrap().send_timestamp_vec.push((
+            bmark_send,
+            String::from(msg),
+            Instant::now(),
+        ));
+    }
+
+    // FIXME diff from core b/c dummy + non-dummy
+    async fn timestamp_recv(&self, bench: bool, dummy: bool, msg: &'static str) {
+        let bench_fields = &mut self.bench_fields.lock();
+        if !bench || bench_fields.is_none() {
+            return;
+        }
+
+        if dummy {
+            let bmark_recv = bench_fields.as_ref().unwrap().benchmark_recv_dummy.clone();
+            bench_fields.as_mut().unwrap().recv_dummy_timestamp_vec.push((
+                bmark_recv,
+                String::from(msg),
+                Instant::now(),
+            ));
+        } else {
+            let bmark_recv = bench_fields.as_ref().unwrap().benchmark_recv_update.clone();
+            bench_fields.as_mut().unwrap().recv_update_timestamp_vec.push((
+                bmark_recv,
+                String::from(msg),
+                Instant::now(),
+            ));
+        }
+    }
+
+    async fn timestamp_inc_log_send(&self, bench: bool, msg: &'static str) {
+        let bench_fields = &mut self.bench_fields.lock();
+        if !bench || bench_fields.is_none() {
+            return;
+        }
+
+        let bmark_send = bench_fields.as_ref().unwrap().benchmark_send.clone();
+        // record timestamp
+        bench_fields.as_mut().unwrap().send_timestamp_vec.push((
+            bmark_send,
+            String::from(msg),
+            Instant::now(),
+        ));
+
+        // increment counter
+        bench_fields.as_mut().unwrap().ctr_check_send += 1;
+        let cur_count = bench_fields.as_ref().unwrap().benchmark_send;
+        // log if done
+        if cur_count == 1 {
+            let mut f = File::options()
+                .append(true)
+                .create(true)
+                .open(bench_fields.as_ref().unwrap().send_filename.clone())
+                .unwrap();
+            for entry in bench_fields.as_ref().unwrap().send_timestamp_vec.iter() {
+                let _ = write!(f, "{:?}\n", entry);
+            }
+        } else if cur_count > 1 {
+            bench_fields.as_mut().unwrap().benchmark_send -= 1;
+        }
+        //println!("dal ctr_check_send: {:?}", ctr_check_guard);
+    }
+
+    // FIXME diff from core b/c dummy + non-dummy
+    async fn timestamp_inc_log_recv(&self, bench: bool, dummy: bool, msg: &'static str) {
+        let bench_fields = &mut self.bench_fields.lock();
+        if !bench || bench_fields.is_none() {
+            return;
+        }
+
+        if dummy {
+            let bmark_recv = bench_fields.as_ref().unwrap().benchmark_recv_dummy.clone();
+            // record timestamp
+            bench_fields.as_mut().unwrap().recv_dummy_timestamp_vec.push((
+                bmark_recv,
+                String::from(msg),
+                Instant::now(),
+            ));
+
+            // increment counter
+            bench_fields.as_mut().unwrap().ctr_check_recv_dummy += 1;
+            let cur_count = bench_fields.as_ref().unwrap().benchmark_recv_dummy;
+            // log if done
+            if cur_count == 1 {
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(bench_fields.as_ref().unwrap().recv_dummy_filename.clone())
+                    .unwrap();
+                for entry in bench_fields.as_ref().unwrap().recv_dummy_timestamp_vec.iter() {
+                    let _ = write!(f, "{:?}\n", entry);
+                }
+            } else if cur_count > 1 {
+                bench_fields.as_mut().unwrap().benchmark_recv_dummy -= 1;
+            }
+            //println!("dal ctr_check_recv: {:?}", ctr_check_guard);
+        } else {
+            let bmark_recv = bench_fields.as_ref().unwrap().benchmark_recv_update.clone();
+            // record timestamp
+            bench_fields.as_mut().unwrap().recv_update_timestamp_vec.push((
+                bmark_recv,
+                String::from(msg),
+                Instant::now(),
+            ));
+
+            // increment counter
+            bench_fields.as_mut().unwrap().ctr_check_recv_update += 1;
+            let cur_count = bench_fields.as_ref().unwrap().benchmark_recv_update;
+            // log if done
+            if cur_count == 1 {
+                let mut f = File::options()
+                    .append(true)
+                    .create(true)
+                    .open(bench_fields.as_ref().unwrap().recv_update_filename.clone())
+                    .unwrap();
+                for entry in bench_fields.as_ref().unwrap().recv_update_timestamp_vec.iter() {
+                    let _ = write!(f, "{:?}\n", entry);
+                }
+            } else if cur_count > 1 {
+                bench_fields.as_mut().unwrap().benchmark_recv_update -= 1;
+            }
+            //println!("dal ctr_check_recv: {:?}", ctr_check_guard);
+        }
     }
 
     /* Transactions */
@@ -2191,13 +2301,8 @@ impl TankClient {
         add_perm_op_id: Option<u64>,
         bench: bool,
     ) -> Result<(), Error> {
-        if bench && self.benchmark_send.read().is_some() {
-            self.send_timestamp_vec.lock().push((
-                self.benchmark_send.read().unwrap(),
-                String::from("enter sendTANK"),
-                Instant::now(),
-            ));
-        }
+        self.timestamp_send(bench, "enter sendTANK").await;
+
         let op_id;
         if add_perm_op_id.is_none() {
             // check if can have multiple outstanding ops, or if not, check that
@@ -2379,13 +2484,8 @@ impl TankClient {
             None => {}
         }
 
-        if bench && self.benchmark_send.read().is_some() {
-            self.send_timestamp_vec.lock().push((
-                self.benchmark_send.read().unwrap(),
-                String::from("enter CORE"),
-                Instant::now(),
-            ));
-        }
+        self.timestamp_send(bench, "enter CORE").await;
+
         let res = self
             .send_or_add_to_txn(
                 // includes idkeys of _all_ permissions
@@ -2396,24 +2496,15 @@ impl TankClient {
                 bench,
             )
             .await;
-        if bench && self.benchmark_send.read().is_some() {
-            self.send_timestamp_vec.lock().push((
-                self.benchmark_send.read().unwrap(),
-                String::from("exit CORE"),
-                Instant::now(),
-            ));
-        }
+
+        self.timestamp_send(bench, "exit CORE").await;
+
         if res.is_err() {
             return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
 
-        if bench && self.benchmark_send.read().is_some() {
-            self.send_timestamp_vec.lock().push((
-                self.benchmark_send.read().unwrap(),
-                String::from("enter CORE"),
-                Instant::now(),
-            ));
-        }
+        self.timestamp_send(bench, "enter CORE").await;
+
         // FIXME better way to do this
         let res = self
             .send_or_add_to_txn(
@@ -2422,42 +2513,14 @@ impl TankClient {
                 bench,
             )
             .await;
-        if bench && self.benchmark_send.read().is_some() {
-            self.send_timestamp_vec.lock().push((
-                self.benchmark_send.read().unwrap(),
-                String::from("exit LASTCORE"),
-                Instant::now(),
-            ));
-        }
+
+        self.timestamp_send(bench, "exit LASTCORE").await;
 
         if res.is_err() {
             return Err(Error::SendFailed(res.err().unwrap().to_string()));
         }
-        if bench && self.benchmark_send.read().is_some() {
-            self.send_timestamp_vec.lock().push((
-                self.benchmark_send.read().unwrap(),
-                String::from("exit sendTANK"),
-                Instant::now(),
-            ));
-            let mut ctr_check_guard = self.ctr_check_send.lock();
-            *ctr_check_guard += 1;
-            let cur_count = self.benchmark_send.read().unwrap();
-            if cur_count == 1 {
-                // write sends
-                let mut f = File::options()
-                    .append(true)
-                    .create(true)
-                    .open(&self.send_filename.as_ref().unwrap())
-                    .unwrap();
-                let vec = self.send_timestamp_vec.lock();
-                for entry in vec.iter() {
-                    let _ = write!(f, "{:?}\n", entry);
-                }
-            } else if cur_count > 1 {
-                *self.benchmark_send.write() = Some(cur_count - 1);
-            }
-            //println!("dal ctr_check_send: {:?}", ctr_check_guard);
-        }
+
+        self.timestamp_inc_log_send(bench, "exit sendTANK").await;
 
         ////////
 

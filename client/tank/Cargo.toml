@@ -5,8 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[lib]
-crate-type = ["cdylib"]
+# below does not work for apps/bench but was added for android
+#[lib]
+#crate-type = ["cdylib"]
 
 [dependencies]
 uuid = { version = "1.2.2", features = ["v4", "fast-rng"] }

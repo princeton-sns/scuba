@@ -58,7 +58,25 @@ pub struct BenchArgs {
     recv_filename: String,
 }
 
-pub struct BenchFields {
+impl BenchArgs {
+    pub fn new(
+        bandwidth_filename: Option<String>,
+        benchmark_sends: usize,
+        benchmark_recvs: usize,
+        send_filename: String,
+        recv_filename: String,
+    ) -> BenchArgs {
+        BenchArgs {
+            bandwidth_filename,
+            benchmark_sends,
+            benchmark_recvs,
+            send_filename,
+            recv_filename,
+        }
+    }
+}
+
+struct BenchFields {
     bandwidth_filename: Option<String>,
     benchmark_send: usize,
     benchmark_recv: usize,
@@ -71,9 +89,7 @@ pub struct BenchFields {
 }
 
 impl BenchFields {
-    pub fn new(
-        args: BenchArgs,
-    ) -> BenchFields {
+    pub fn new(args: BenchArgs) -> BenchFields {
         BenchFields {
             bandwidth_filename: args.bandwidth_filename,
             benchmark_send: args.benchmark_sends,
@@ -353,7 +369,7 @@ impl<C: CoreClient> Core<C> {
         let mut encrypted_series = LinkedList::new();
 
         for (dst_idkeys, payload, bench) in series {
-            self.timestamp_send(bench, "enter POVS");
+            self.timestamp_send(bench, "enter POVS").await;
 
             loop {
                 let init = self.init.lock();
@@ -390,7 +406,7 @@ impl<C: CoreClient> Core<C> {
 
             core::mem::drop(hash_vectors_guard);
 
-            self.timestamp_send(bench, "enter SYMENC");
+            self.timestamp_send(bench, "enter SYMENC").await;
 
             // symmetrically encrypt common_payload once
             let (common_ct, tag, key, nonce) = self
@@ -399,7 +415,7 @@ impl<C: CoreClient> Core<C> {
 
             self.write_common_bandwidth(&payload, &dst_idkeys, &common_payload, &common_ct).await;
 
-            self.timestamp_send(bench, "enter SESSENC");
+            self.timestamp_send(bench, "enter SESSENC").await;
 
             // Can't use .iter().map().collect() due to async/await
             let mut encrypted_per_recipient_payloads = BTreeMap::new();
@@ -483,7 +499,7 @@ impl<C: CoreClient> Core<C> {
                 }
             }
             Ok(Event::Msg(msg)) => {
-                self.timestamp_recv(msg.bench, "enter SESSDECR");
+                self.timestamp_recv(msg.bench, "enter SESSDECR").await;
 
                 let decrypted_per_recipient = self.crypto.session_decrypt(
                     &msg.sender,
@@ -491,7 +507,7 @@ impl<C: CoreClient> Core<C> {
                     msg.enc_recipient.ciphertext,
                 );
 
-                self.timestamp_recv(msg.bench, "enter SYMDECR");
+                self.timestamp_recv(msg.bench, "enter SYMDECR").await;
 
                 let per_recipient_payload: PerRecipientPayload =
                     bincode::deserialize(&decrypted_per_recipient).unwrap();
@@ -504,7 +520,7 @@ impl<C: CoreClient> Core<C> {
                 let common_payload: CommonPayload =
                     bincode::deserialize(&decrypted_common).unwrap();
 
-                self.timestamp_recv(msg.bench, "enter POVS");
+                self.timestamp_recv(msg.bench, "enter POVS").await;
 
                 // If an incoming message is to be forwarded to the client
                 // callback, the lock on hash_vectors below is not released

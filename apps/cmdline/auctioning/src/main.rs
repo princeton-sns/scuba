@@ -179,7 +179,6 @@ impl AuctioningApp {
         let client = TankClient::new(
             None, None, false, None, None, true, false, false,
             false, // sequential consistency
-            None, None, None, None, None, None, None, None,
             None, // benchmarking args
         )
         .await;

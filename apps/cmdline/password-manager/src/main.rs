@@ -124,7 +124,7 @@ impl PasswordManager {
         let client = TankClient::new(
             None, None, false, None, None, true, true, false,
             false, // linearizability
-            None, None, None, None, None, None, None, None, None, // benchmark args
+            None,
         )
         .await;
         Self { client }

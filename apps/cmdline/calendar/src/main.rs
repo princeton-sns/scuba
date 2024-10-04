@@ -210,7 +210,6 @@ impl CalendarApp {
         let client = TankClient::new(
             None, None, false, None, None, false, false, true,
             true, // serializability
-            None, None, None, None, None, None, None, None,
             None, // benchmarking args
         )
         .await;

@@ -2826,7 +2826,7 @@ pub mod android {
     extern crate jni;
 
     use self::jni::objects::JClass;
-    use self::jni::sys::jlong;
+    use self::jni::sys::{jlong, jint};
     use self::jni::JNIEnv;
     use super::*;
     use tokio::runtime::Runtime;
@@ -2849,6 +2849,7 @@ pub mod android {
     impl TankWithRuntime {
         pub fn new(
         ) -> TankWithRuntime {
+            panic!("hello world panic");
             let runtime = Runtime::new().unwrap();
 
             let mut tank_wrapper = runtime.block_on(async {
@@ -2872,11 +2873,12 @@ pub mod android {
     pub unsafe extern "C" fn Java_com_example_scubaimport_TankWrapper_newTank(
         _: JNIEnv,
         _: JClass,
-    ) -> jlong {
-        let tank = TankWithRuntime::new();
-        let boxed_tank: Box<TankWithRuntime> = Box::new(tank);
-        let tank_ptr: *mut TankWithRuntime = Box::into_raw(boxed_tank);
-        tank_ptr as jlong
+    ) -> jint { //jlong {
+        //let tank = TankWithRuntime::new();
+        6 as jint //0 as jlong
+        //let boxed_tank: Box<TankWithRuntime> = Box::new(tank);
+        //let tank_ptr: *mut TankWithRuntime = Box::into_raw(boxed_tank);
+        //tank_ptr as jlong
     }
 }
 

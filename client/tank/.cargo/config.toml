@@ -33,4 +33,4 @@ linker = "/Users/np/Library/Android/sdk/ndk/27.0.11718014/toolchains/llvm/prebui
 #[target.x86_64-linux-android]
 
 [build]
-target-dir = "target"
+target-dir = "../target"

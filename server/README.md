@@ -1,16 +1,9 @@
 # Run commands
 
-Before running, make sure the `epoch_log.txt` file nor `persist-outbox` directory
-exist, removing them if they do via:
-
-```sh
-rm -rf epoch_log.txt && rm -rf persist-outbox/
-```
-
 To start the sequencer, run: 
 
 ```sh
-cargo run --release sequencer --port 8082 --shard-count 1
+rm -rf epoch_log.txt && rm -rf persist-outbox/ && cargo run --release sequencer --port 8082 --shard-count 1
 ```
 
 To start the shards, run:

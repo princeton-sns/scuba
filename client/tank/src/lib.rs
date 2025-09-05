@@ -1,4 +1,4 @@
-#![feature(async_closure)]
+//#![feature(async_closure)]
 
 // TODO client -> driver, devices -> client
 pub mod client;

@@ -396,6 +396,7 @@ pub async fn run() {
             tank_recv_filename_update.clone(),
             tank_recv_filename_dummy.clone(),
         );
+        //println!("args: {:?}", &args);
         let sender = PasswordManager::new(
             Some(args),
             app_filename.clone(),

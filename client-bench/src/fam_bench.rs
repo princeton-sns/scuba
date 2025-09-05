@@ -1,3 +1,7 @@
+#![allow(unused_assignments)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
+
 //use passwords::PasswordGenerator;
 use chrono::offset::Utc;
 use chrono::DateTime;
@@ -415,6 +419,7 @@ pub async fn run() {
             tank_recv_filename_update.clone(),
             tank_recv_filename_dummy.clone(),
         );
+        //println!("args: {:?}", &args);
         let sender = FamilyApp::new(
             Some(args),
             app_filename.clone(),

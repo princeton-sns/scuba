@@ -1,3 +1,6 @@
+#![allow(unused_must_use)]
+#![allow(unused_allocation)]
+
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -436,7 +439,7 @@ impl<C: CoreClient> Core<C> {
                     )
                     .await;
 
-                self.write_perrcpt_bandwidth(idkey.clone(), &val_payload, &perrcpt_pt, &ciphertext);
+                self.write_perrcpt_bandwidth(idkey.clone(), &val_payload, &perrcpt_pt, &ciphertext).await;
 
                 // Ensure we're never encrypting to the same key twice
                 assert!(encrypted_per_recipient_payloads
@@ -462,7 +465,7 @@ impl<C: CoreClient> Core<C> {
                 }
             }
 
-            self.timestamp_inc_log_send(bench, "exit CORE");
+            self.timestamp_inc_log_send(bench, "exit CORE").await;
         }
 
         self.server_comm
@@ -601,7 +604,7 @@ impl<C: CoreClient> Core<C> {
                     }
                 }
 
-                self.timestamp_inc_log_recv(msg.bench, "exit CORE");
+                self.timestamp_inc_log_recv(msg.bench, "exit CORE").await;
 
                 match parsed_res {
                     // No message to forward

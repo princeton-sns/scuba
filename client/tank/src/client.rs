@@ -418,7 +418,7 @@ impl TxCoordinator {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BenchArgs {
     core_benchmark_sends: usize,
     core_benchmark_recvs: usize,
